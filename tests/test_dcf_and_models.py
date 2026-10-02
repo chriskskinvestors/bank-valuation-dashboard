@@ -297,3 +297,20 @@ class TestRoatceBelowGrowthIsNa(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TestPeerWarrantedUsesNormalizedRoatce(unittest.TestCase):
+    """The Peer Warranted P/TBV tab prices each bank off the SAME normalized
+    ROATCE as the headline / screen fair value (REVIEW 2026-10-02 P1-6: ONB's
+    own peer row used the latest-quarter FDIC 18.55% -> 2.14x vs the headline
+    15.85% normalized -> 1.78x)."""
+
+    def test_normalized_roatce_wins_over_latest_quarter(self):
+        from analysis.dcf import rank_peer_warranted_ptbv
+        rows = rank_peer_warranted_ptbv(
+            [{"ticker": "ONB", "roatce": 18.55, "roatce_normalized": 15.85,
+              "tbvps": 14.32, "price": 24.96, "ptbv_ratio": 24.96 / 14.32}],
+            cost_of_equity_pct=10.0, terminal_growth_pct=2.5)
+        # (15.85 - 2.5) / (10 - 2.5) = 1.78 (hand)
+        self.assertAlmostEqual(rows[0]["ptbv_warranted"], 13.35 / 7.5, places=6)
+        self.assertEqual(rows[0]["roatce"], 15.85)

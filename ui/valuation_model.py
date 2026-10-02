@@ -141,10 +141,12 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     from analysis.valuation import (
         compute_roatce, compute_roatce_4q, compute_roatce_holdco,
         compute_roatce_blended, _normalized_earnings_factor,
+        _resolve_eps, _resolve_tbvps,
     )
     latest = hist[0]
-    # Trailing EPS
-    base_eps = sec.get("eps") or 0.0
+    # Trailing EPS — the release-first resolver the Company page and the
+    # screen use (the raw XBRL figure can trail the release by a quarter).
+    base_eps, eps_source, _ = _resolve_eps(ticker, sec.get("eps"), sec.get("sec_as_of"))
     # ROATCE default — the SAME input the Screen & Compare fair-value column
     # uses (audit 2026-08-20: this page seeded from the FDIC sub-bank 4Q figure
     # while the screen used the SEC holdco TTM for 326 of 364 banks, so the
@@ -153,9 +155,11 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # it resolves, else the sub-bank 75/25 blend; then one-time spikes are
     # winsorized out (CARE's loan-recovery quarter would otherwise seed ~71%).
     roatce_raw = compute_roatce_holdco(sec)
+    roatce_basis = "holdco" if roatce_raw is not None else None
     if roatce_raw is None:
         roatce_raw = compute_roatce_blended(compute_roatce(latest),
                                             compute_roatce_4q(hist))
+        roatce_basis = "fdic_blend" if roatce_raw is not None else None
     # None (not a 12 % placeholder) when neither source resolves: the seed card
     # labels this figure "trailing-4Q ROATCE from FDIC" and it drives the
     # Warranted P/TBV headline — a placeholder there is a plausible-wrong
@@ -166,34 +170,20 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # Shares
     shares = sec.get("shares_outstanding") or 0
 
-    # TBV per share. Prefer the SEC holdco reconstruction: it is the same
-    # tangible book the rest of the platform displays (preferred removed, full
-    # goodwill+other-intangibles resolution, MSRs kept in tangible equity), so
-    # the model can't seed a different TBV/share than the Company page shows for
-    # the same bank.
-    #
-    # The FDIC bank-sub fallback deducts INTAN — TOTAL intangibles, the house TCE
-    # convention (CLAUDE.md; analysis/valuation.compute_roatce). It previously
-    # deducted INTANGW, GOODWILL ONLY, which is the exact convention error
-    # AUDIT-2026-07-02 #24 fixed everywhere else: it leaves core-deposit and
-    # other intangibles inside "tangible" equity, overstating TCE and therefore
-    # TBV/share — and since the headline is warranted_price = warranted P/TBV ×
-    # TBV/share, it overstated fair value proportionally on every bank carrying
-    # non-goodwill intangibles.
-    tbvps = sec.get("tangible_book_value_per_share")
-    if tbvps is None:
-        # None (not 0) when EQTOT is absent: 0 − intangibles is a NEGATIVE
-        # TBV/share that slips past the `tbvps is None` headline gate.
-        equity = latest.get("EQTOT")
-        # max(INTAN, INTANGW), the same belt-and-braces analysis/capital_dynamics
-        # uses. INTAN (total intangibles) is the convention and normally the
-        # larger, so this resolves to it; but a record missing INTAN would
-        # otherwise deduct NOTHING and treat all equity as tangible — a bigger
-        # overstatement than the goodwill-only bug this replaced. Falling back to
-        # goodwill is the conservative floor.
-        intangibles = max(latest.get("INTAN") or 0, latest.get("INTANGW") or 0)
-        tbvps = (((equity - intangibles) * 1000 / shares)
-                 if (shares > 0 and equity is not None) else None)
+    # TBV per share: the SAME resolved value the Company page and the screen
+    # show (company-reported first, else the SEC holdco reconstruction,
+    # analysis.valuation._resolve_tbvps). No FDIC fallback: bank-sub tangible
+    # equity divided by HOLDCO shares mixes entities and ignores holdco
+    # preferred — WTFC (preferred unresolvable in XBRL) seeded $95.97 vs its
+    # reported $92.13, and with it a warranted price / verdict (REVIEW
+    # 2026-10-02 P0-1). Unresolved -> None: the input renders empty and the
+    # model refuses a headline until a value is typed. <= 0 is not a TBV/share
+    # the model can price off.
+    tbvps, tbvps_source, _ = _resolve_tbvps(
+        ticker, sec.get("tangible_book_value_per_share"),
+        sec.get("book_value_per_share"), sec_as_of=sec.get("sec_as_of"))
+    if tbvps is not None and tbvps <= 0:
+        tbvps, tbvps_source = None, None
 
     # Trailing loan growth (TTM)
     loans = [r.get("LNLSNET") for r in hist[:5] if r.get("LNLSNET") is not None]
@@ -217,8 +207,11 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         # refuses to compute a headline until a real (derived or typed) value
         # exists. Same for tbvps below (None when shares are unavailable).
         "base_eps": base_eps if base_eps else None,
+        "eps_source": eps_source,
         "roatce_pct": roatce_pct,
+        "roatce_basis": roatce_basis,
         "tbvps": tbvps,
+        "tbvps_source": tbvps_source,
         "loan_growth_trailing_pct": loan_growth_trailing,
         "payout_ratio": payout_ratio,
         "loans_per_share": loans_per_share,
@@ -255,15 +248,27 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
         return val_str
 
     # Seed-input terms (traceable to filings) + assumption terms (editable).
+    # Labels say which source the SEEDED value came from (a value the user
+    # typed over the seed is labeled as an input, not a filing).
+    edited = seed.get("edited", set())
+    _src = {"reported_8k": "company-reported (earnings release, 8-K)",
+            "company_release": "company-reported (wire earnings release)",
+            "release_ttm": "company-reported quarters (earnings releases), TTM"}
     EPS = {"label": "Base EPS (TTM, $)", "val": dol(seed["base_eps"]), "doc": eps_doc,
-           "sub": "SEC diluted EPS, trailing 12 months"}
-    ROATCE = {"label": "ROATCE (normalized, %)", "val": pct(seed["roatce_pct"]), "doc": cr_doc,
-              "sub": "trailing-4Q ROATCE from FDIC, one-time spikes winsorized"}
-    TBVPS = {"label": "TBV / share ($)", "val": dol(seed["tbvps"]), "doc": cr_doc,
-             "sub": "FDIC tangible common equity ÷ SEC shares"}
+           "sub": ("entered input" if "base_eps" in edited else
+                   _src.get(seed.get("eps_source"), "SEC diluted EPS, trailing 12 months"))}
+    ROATCE = {"label": "ROATCE (normalized, %)", "val": pct(seed["roatce_pct"]),
+              "doc": eps_doc if seed.get("roatce_basis") == "holdco" else cr_doc,
+              "sub": ("entered input" if "roatce_pct" in edited else
+                      "SEC holding-company TTM ROATCE, one-time spikes winsorized"
+                      if seed.get("roatce_basis") == "holdco" else
+                      "FDIC bank-subsidiary ROATCE (75% latest / 25% 4Q), "
+                      "one-time spikes winsorized")}
+    TBVPS = {"label": "TBV / share ($)", "val": dol(seed["tbvps"]), "doc": eps_doc,
+             "sub": ("entered input" if "tbvps" in edited else
+                     _src.get(seed.get("tbvps_source"),
+                              "SEC holding-company tangible common equity ÷ shares"))}
     GROWTH = {"label": "EPS growth (avg %)", "val": pct(seed["eps_growth_avg"]),
-              "sub": "model assumption (editable)"}
-    PAYOUT = {"label": "Payout ratio", "val": f"{seed['payout_ratio']:.0%}",
               "sub": "model assumption (editable)"}
     COE = {"label": "Cost of equity (%)", "val": pct(seed["cost_of_equity"]),
            "sub": "model assumption (editable)"}
@@ -282,7 +287,7 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
                            definition="Free cash flow to equity discounted at the cost of "
                                        "equity: present value of 5 years of FCFE plus the "
                                        "present value of the terminal value.",
-                           terms=[EPS, GROWTH, PAYOUT, COE, TG,
+                           terms=[EPS, GROWTH, COE, TG,
                                   {"label": "PV of 5-yr FCFE", "val": dol(pv_explicit)},
                                   {"label": "PV of terminal value", "val": dol(pv_terminal)}],
                            op="DCF = PV(5-yr FCFE) + PV(terminal value)")},
@@ -662,7 +667,8 @@ def render_valuation_model(ticker: str):
 
     # ── Warranted P/TBV ────────────────────────────────────────────────
     w_ptbv = warranted_ptbv(roatce_pct, cost_of_equity, terminal_growth)
-    w_fair_price = w_ptbv * tbvps if (w_ptbv is not None and tbvps) else None
+    w_fair_price = (w_ptbv * tbvps
+                    if (w_ptbv is not None and tbvps is not None and tbvps > 0) else None)
 
     # ── Headline Metrics (click any value to see its formula + sources) ──
     dcf_fv = dcf.get("fair_value_per_share")
@@ -696,7 +702,13 @@ def render_valuation_model(ticker: str):
         pv_explicit, pv_terminal,
         seed={"base_eps": base_eps, "roatce_pct": roatce_pct, "tbvps": tbvps,
               "eps_growth_avg": eps_growth_avg, "payout_ratio": payout_ratio,
-              "cost_of_equity": cost_of_equity, "terminal_growth": terminal_growth},
+              "cost_of_equity": cost_of_equity, "terminal_growth": terminal_growth,
+              "eps_source": defaults.get("eps_source"),
+              "roatce_basis": defaults.get("roatce_basis"),
+              "tbvps_source": defaults.get("tbvps_source"),
+              "edited": {k for k, v in (("base_eps", base_eps), ("roatce_pct", roatce_pct),
+                                        ("tbvps", tbvps))
+                         if v != defaults.get(k)}},
     )
 
     st.markdown("---")
@@ -1061,7 +1073,6 @@ def _render_tornado_and_irr(base_params: dict, price: float | None, *,
     labels_map = {
         "eps_growth_rates": "EPS growth rate (±3pp)",
         "loan_growth_rates": "Loan growth rate (±3pp)",
-        "payout_ratio": "Payout ratio (±15pp)",
         "cost_of_equity_pct": "Cost of equity (±1pp)",
         "terminal_growth_pct": "Terminal growth (±0.5pp)",
         "target_cet1_pct": "Target CET1 (±1pp)",

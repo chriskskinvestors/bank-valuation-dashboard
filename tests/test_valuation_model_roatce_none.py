@@ -28,6 +28,10 @@ class TestRoatceSeedNeverPlaceholder(unittest.TestCase):
         {"REPDTE": "20250630", "LNLSNET": 4_600_000},
     ]
 
+    def setUp(self):
+        from tests.test_tbv_conventions import _passthrough_resolvers
+        _passthrough_resolvers(self)
+
     def test_unresolvable_roatce_is_none(self):
         d = _derive_defaults("XYZ", self._HIST_NO_RETURN, {})
         self.assertIn("roatce_pct", d)
