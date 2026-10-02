@@ -101,8 +101,7 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
         filer_ciks = src.get("ciks", [])
         filer_names = src.get("display_names", [])
         filer = filer_names[0] if filer_names else "—"
-        # Strip the "(CIK ...)" suffix that EDGAR appends
-        filer_clean = re.sub(r"\s*\(CIK \d+\)\s*$", "", filer)
+        filer_clean = _clean_filer_name(filer)
         if filer_ciks:
             results.append({
                 "cik": filer_ciks[0],
@@ -115,6 +114,14 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
     # Period filter BEFORE the limit, so catch-up filings for old quarters
     # can't eat the candidate budget; rank order (first hit per filer) kept.
     return _current_period_filings(results, quarter)[:limit]
+
+
+def _clean_filer_name(display: str) -> str:
+    """EDGAR display name -> filer name: drop the "(CIK ...)" suffix and the
+    ticker list EDGAR puts before it ("JPMORGAN CHASE & CO  (JPM, AMJB, VYLD,
+    JPM-PC, ...)  (CIK 0000019617)" -> "JPMORGAN CHASE & CO")."""
+    s = re.sub(r"\s*\(CIK \d+\)\s*$", "", display or "")
+    return re.sub(r"\s*\([A-Z0-9.\-]+(?:,\s*[A-Z0-9.\-]+)*\)\s*$", "", s) or s
 
 
 def _current_period_filings(results: list[dict],
