@@ -552,12 +552,14 @@ def _fold_member_blocks(rows: list) -> list:
     ProductOrService member. SEC's renderer prints that concept's undimensioned
     total (1,468 / 1,400 / 1,318) on BOTH face rows, then re-renders the face
     lines once per member block (Wealth block: 364 / 328 / 300; Insurance block:
-    77 / 74 / 79). A multi-row block whose rows all repeat face lines (same
-    label and element) is such a re-rendering: its member's OWN line supplies
-    that face row's value and the block is dropped. Face rows bearing the
-    artifact signature — one element on several differently-labeled rows with
-    identical values — take the member value, or n/a when no block states it;
-    never the total."""
+    77 / 74 / 79). The signature, all three required: an element on >=2 face
+    rows with different labels and identical values, AND a multi-row member
+    block whose rows ALL carry that one element. Such a block is a
+    re-rendering — its member's OWN line supplies that face row and the block
+    drops; a face row of that element no block states is n/a, never the total.
+    Segment blocks (C / ONB loans + allowance, COF consolidated trusts, MCHB
+    per-class EPS) mix elements and are kept as before; a face total repeated
+    under two labels with no re-rendering block (COF "Total") is untouched."""
     def _is_axis(r):
         return r["header"] and _AXIS_EID.search(r.get("element_id") or "")
 
@@ -565,7 +567,14 @@ def _fold_member_blocks(rows: list) -> list:
         return rows
     first = next(k for k, r in enumerate(rows) if _is_axis(r))
     face = [r for r in rows[:first] if not r["header"]]
-    face_keys = {(_norm_label(r["label"]), r.get("element_id") or "") for r in face}
+    by_eid: dict = {}
+    for r in face:
+        if r.get("element_id"):
+            by_eid.setdefault(r["element_id"], []).append(r)
+    dup_eids = {e for e, grp in by_eid.items() if len(grp) >= 2
+                and len({_norm_label(x["label"]) for x in grp}) == len(grp)
+                and all(x["values"] == grp[0]["values"] for x in grp)}
+    artifact_eids: set = set()
     harvest: dict = {}
     out: list = []
     i, n = 0, len(rows)
@@ -581,8 +590,9 @@ def _fold_member_blocks(rows: list) -> list:
         data = [x for x in rows[i + 1:j] if not x["header"]]
         if len(data) == 1:
             out.append({**data[0], "label": r["label"]})
-        elif data and all((_norm_label(x["label"]), x.get("element_id") or "") in face_keys
-                          for x in data):
+        elif data and len({x.get("element_id") for x in data}) == 1 \
+                and data[0].get("element_id") in dup_eids:
+            artifact_eids.add(data[0]["element_id"])
             own = [x for x in data if _norm_label(x["label"]) == _norm_label(r["label"])]
             if len(own) == 1:
                 harvest[_norm_label(r["label"])] = own[0]["values"]
@@ -590,15 +600,9 @@ def _fold_member_blocks(rows: list) -> list:
             out.append(r)                        # member name as the block header
             out.extend(data)
         i = j
-    # The artifact: >=2 face rows, different labels, one element, same values.
-    by_eid: dict = {}
-    for r in face:
-        if r.get("element_id"):
-            by_eid.setdefault(r["element_id"], []).append(r)
-    suspect = {id(r) for grp in by_eid.values() if len(grp) >= 2
-               and len({_norm_label(x["label"]) for x in grp}) == len(grp)
-               and all(x["values"] == grp[0]["values"] for x in grp)
-               for r in grp}
+    if not artifact_eids:
+        return out
+    suspect = {id(r) for e in artifact_eids for r in by_eid[e]}
     return [{**r, "values": harvest.get(_norm_label(r["label"]),
                                        [None] * len(r["values"]))}
             if id(r) in suspect else r for r in out]
