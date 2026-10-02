@@ -82,6 +82,44 @@ class TestFoldMemberBlocks(unittest.TestCase):
                          [("Consolidated VIEs", True), ("Trading assets", False),
                           ("Loans", False)])
 
+    def test_member_rerendering_resolves_shared_concept_face_rows(self):
+        # HBAN FY2024 10-K R5 ($M, FY24/FY23/FY22): SEC renders the shared
+        # concept's TOTAL on both face rows, then re-renders the face lines per
+        # member. Each face row takes its member's own line; blocks drop.
+        RC = "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax"
+        rows = [
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [1468, 1400, 1318], eid=RC),
+            _row("Insurance income", [1468, 1400, 1318], eid=RC),
+            _row("Other noninterest income", [130, 160, 156],
+                 eid="us-gaap_NoninterestIncomeOtherOperatingIncome"),
+            _row("Total noninterest income", [2040, 1921, 1981], eid="us-gaap_NoninterestIncome"),
+            _row("Wealth and asset management revenue", [], header=True,
+                 eid="srt_ProductOrServiceAxis"),
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [364, 328, 300], eid=RC),
+            _row("Insurance income", [364, 328, 300], eid=RC),
+            _row("Insurance income", [], header=True, eid="srt_ProductOrServiceAxis"),
+            _row("Noninterest income:", [], header=True, eid="us-gaap_NoninterestIncomeAbstract"),
+            _row("Wealth and asset management revenue", [77, 74, 79], eid=RC),
+            _row("Insurance income", [77, 74, 79], eid=RC),
+        ]
+        out = S._fold_member_blocks(rows)
+        data = [(r["label"], r["values"]) for r in out if not r["header"]]
+        self.assertEqual(data, [
+            ("Wealth and asset management revenue", [364, 328, 300]),
+            ("Insurance income", [77, 74, 79]),
+            ("Other noninterest income", [130, 160, 156]),
+            ("Total noninterest income", [2040, 1921, 1981]),
+        ])
+        # No harvest available -> the artifact total is n/a, never shown.
+        out2 = S._fold_member_blocks(rows[:5] + [
+            _row("Other", [], header=True, eid="srt_ProductOrServiceAxis"),
+            _row("Noninterest income", [5, 6, 7], eid="us-gaap_NoninterestIncome")])
+        byl = {r["label"]: r["values"] for r in out2 if not r["header"]}
+        self.assertEqual(byl["Insurance income"], [None, None, None])
+        self.assertEqual(byl["Wealth and asset management revenue"], [None, None, None])
+
     def test_no_axis_rows_untouched(self):
         rows = [_row("Net income", [1.0]), _row("Other", [2.0])]
         self.assertIs(S._fold_member_blocks(rows), rows)

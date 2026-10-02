@@ -545,30 +545,63 @@ def _fold_member_blocks(rows: list) -> list:
     name, so that row is relabeled to the member and the block's headers are
     dropped. A block with several data rows keeps the member header as its
     section header; its repeated inner abstract headers are dropped. Rows
-    outside any block are untouched."""
-    if not any(r["header"] and _AXIS_EID.search(r.get("element_id") or "")
-               for r in rows):
+    outside any block are untouched — except the renderer artifact below.
+
+    HBAN's FY2024 10-K tags two face lines ("Wealth and asset management
+    revenue", "Insurance income") with ONE concept split only by a
+    ProductOrService member. SEC's renderer prints that concept's undimensioned
+    total (1,468 / 1,400 / 1,318) on BOTH face rows, then re-renders the face
+    lines once per member block (Wealth block: 364 / 328 / 300; Insurance block:
+    77 / 74 / 79). A multi-row block whose rows all repeat face lines (same
+    label and element) is such a re-rendering: its member's OWN line supplies
+    that face row's value and the block is dropped. Face rows bearing the
+    artifact signature — one element on several differently-labeled rows with
+    identical values — take the member value, or n/a when no block states it;
+    never the total."""
+    def _is_axis(r):
+        return r["header"] and _AXIS_EID.search(r.get("element_id") or "")
+
+    if not any(_is_axis(r) for r in rows):
         return rows
+    first = next(k for k, r in enumerate(rows) if _is_axis(r))
+    face = [r for r in rows[:first] if not r["header"]]
+    face_keys = {(_norm_label(r["label"]), r.get("element_id") or "") for r in face}
+    harvest: dict = {}
     out: list = []
     i, n = 0, len(rows)
     while i < n:
         r = rows[i]
-        if not (r["header"] and _AXIS_EID.search(r.get("element_id") or "")):
+        if not _is_axis(r):
             out.append(r)
             i += 1
             continue
         j = i + 1
-        while j < n and not (rows[j]["header"]
-                             and _AXIS_EID.search(rows[j].get("element_id") or "")):
+        while j < n and not _is_axis(rows[j]):
             j += 1
         data = [x for x in rows[i + 1:j] if not x["header"]]
         if len(data) == 1:
             out.append({**data[0], "label": r["label"]})
+        elif data and all((_norm_label(x["label"]), x.get("element_id") or "") in face_keys
+                          for x in data):
+            own = [x for x in data if _norm_label(x["label"]) == _norm_label(r["label"])]
+            if len(own) == 1:
+                harvest[_norm_label(r["label"])] = own[0]["values"]
         elif data:
             out.append(r)                        # member name as the block header
             out.extend(data)
         i = j
-    return out
+    # The artifact: >=2 face rows, different labels, one element, same values.
+    by_eid: dict = {}
+    for r in face:
+        if r.get("element_id"):
+            by_eid.setdefault(r["element_id"], []).append(r)
+    suspect = {id(r) for grp in by_eid.values() if len(grp) >= 2
+               and len({_norm_label(x["label"]) for x in grp}) == len(grp)
+               and all(x["values"] == grp[0]["values"] for x in grp)
+               for r in grp}
+    return [{**r, "values": harvest.get(_norm_label(r["label"]),
+                                       [None] * len(r["values"]))}
+            if id(r) in suspect else r for r in out]
 
 
 # ── Combined "Income AND Comprehensive Income" statements ────────────────────
@@ -1754,7 +1787,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v8:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v8: relabeled-line Q4 + header keys (after v7 untyped equity caption = $)
+    ckey = f"asreported_mq:v9:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v9: member re-rendering artifact (after v8 relabeled-line Q4 + header keys)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1868,7 +1901,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v11:{stype}:{metas[0]['accession']}:{n_years}"  # v11: header keys drop footnote/colon (after v10 untyped equity caption = $)
+    ckey = f"asreported_my:v12:{stype}:{metas[0]['accession']}:{n_years}"  # v12: member re-rendering artifact (after v11 header keys)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
