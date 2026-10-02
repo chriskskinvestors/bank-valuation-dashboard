@@ -319,7 +319,7 @@ def _grid_rows(grid: list, spans: list | None = None) -> list[tuple]:
     """(row_index, clean_label, nums, cols) for every data row of one table
     grid — _table_rows' per-table body; cols[i] is the table column nums[i]
     was read from. A value column is any column with a numeric cell in ANY
-    row — unless `spans` is given (the book-value path, _book_value_rows):
+    row — unless `spans` is given (_book_value_rows, _headline_rows):
 
     then a value column is any column with a numeric cell in a DATA row. A bare
     header year is not data, but it is kept as a column when it heads one no
@@ -330,13 +330,11 @@ def _grid_rows(grid: list, spans: list | None = None) -> list[tuple]:
     became the first "value" column and every row read [None, 23.43, …] —
     the whole table, TBVPS included, rendered n/a.
 
-    NOT applied to the headline figures (extract_earnings_figures): the same
-    fix there exposed rows its single release-wide scale and first-match
-    gates cannot vet — $-thousands flows scaled by a $-millions summary
-    table (BHB NII read as $37.9B, UCB/CSBB net income ×1000), average or
-    six-month columns inside the ±band (FCAP deposits −20%, PBHC NII +98%)
-    — measured over the 2026-09-30 sweep, 2026-10-01. Per-share book values
-    are scale-free and gated against the reconstruction / tangible < book."""
+    The headline figures took it only once they read a per-row unit and
+    gate flows against the prior quarter (2026-10-02, _headline_rows): with
+    a single release-wide scale the same fix had exposed $-thousands flows
+    scaled by a $-millions summary (BHB NII read as $37.9B, UCB/CSBB net
+    income ×1000) and average / six-month columns inside the ±band."""
     out: list[tuple] = []
     headers = ({r for r, row in enumerate(grid) if _is_year_header(row)}
                if spans is not None else set())
@@ -1080,46 +1078,282 @@ def _anchor_balance_sheet(facts) -> dict:
                 bs = f.period_end
     if bs is None:
         return {}
-    return {"total_assets": _undimensioned_total(facts, "Assets", bs),
-            "total_deposits": _undimensioned_total(facts, "Deposits", bs)}
+    out = {"total_assets": _undimensioned_total(facts, "Assets", bs),
+           "total_deposits": _undimensioned_total(facts, "Deposits", bs)}
+    # The anchor quarter's own flows — the magnitude guard for the release's
+    # net income / NII (a 10-K anchor has no 3-month duration → no guard).
+    for fig, concepts in _PRIOR_FLOW_CONCEPTS.items():
+        out["prior_" + fig] = _quarter_flow(facts, concepts, bs)
+    return out
+
+
+_PRIOR_FLOW_CONCEPTS = {
+    "net_income": ("NetIncomeLoss", "ProfitLoss"),
+    "net_interest_income": ("InterestIncomeExpenseNet",),
+}
+
+
+def _quarter_flow(facts, concepts: tuple, end: str) -> float | None:
+    """The undimensioned quarterly value of the first of `concepts` for the
+    period ending `end`: its 3-month (80–100 day) fact, else its 12-month
+    (350–380 day) fact ÷ 4 — a 10-K tags no quarter, and a Q1 release's
+    anchor IS the 10-K (CLBK, NPB). None when neither is tagged."""
+    from datetime import date
+    for c in concepts:
+        annual = None
+        for f in facts:
+            if (f.concept.split(":")[-1] == c and not f.members
+                    and f.period_end == end and f.period_start):
+                try:
+                    days = (date.fromisoformat(end)
+                            - date.fromisoformat(f.period_start)).days
+                except ValueError:
+                    continue
+                if 80 <= days <= 100:
+                    return f.value
+                if 350 <= days <= 380:
+                    annual = f.value / 4
+        if annual is not None:
+            return annual
+    return None
+
+
+# ── Per-row dollar units for the headline figures ────────────────────────────
+# A release is NOT one unit: summary pages in $ millions sit beside statements
+# in $ thousands, and one table can switch units between sections (PNC "In
+# millions" … "In billions"). The single release-wide scale read BHB's
+# $-thousands NII through its $-millions summary ($37.9B) and UCB's / CSBB's
+# net income ×1000 (2026-10-01, vs same-quarter 10-Q XBRL). Each row's scale
+# is the unit caption governing it: the nearest caption row above it in its
+# table, else the caption printed just before the table. Only unit PHRASES
+# count ("in thousands", "($ in millions", "(000s)", "$000") — release prose
+# is full of "$15.2 million".
+_UNIT_PHRASE = re.compile(
+    r"\bin\s+(thousands|millions|billions)\b"
+    r"|\(\s*\$?\s*000'?s?(?:\s+omitted)?\s*\)|\$\s?000'?s?\b"
+    r"|\bin\s+000'?s\b", re.I)              # "(dollars in 000s)" (BCTF)
+# A share-count unit is not a dollar unit: "(in millions, except per share
+# data, share count in thousands)" (PNFP) is a $-millions caption.
+_SHARE_UNIT = re.compile(
+    r"\b(?:shares?|share (?:amounts|data|counts?)|shares outstanding)\s+"
+    r"(?:are\s+)?in\s+(?:thousands|millions|billions)\b", re.I)
+_AMBIGUOUS = "ambiguous"     # a caption naming two dollar units
+
+
+def _unit_scale(text: str):
+    """The dollar scale a caption text names: 1e3 / 1e6 / 1e9, None when it
+    names none, _AMBIGUOUS when it names more than one."""
+    kinds = set()
+    for m in _UNIT_PHRASE.finditer(_SHARE_UNIT.sub(" ", text)):
+        w = m.group(0).lower()
+        kinds.add(1e9 if "billion" in w else 1e6 if "million" in w else 1e3)
+    if not kinds:
+        return None
+    return kinds.pop() if len(kinds) == 1 else _AMBIGUOUS
+
+
+def _preceding_text(table, limit: int = 400) -> str:
+    """Up to `limit` chars of document text just before `table`, stopping at
+    the previous table (a caption belongs to the table it precedes)."""
+    buf: list[str] = []
+    el = table
+    while sum(map(len, buf)) < limit:
+        prev = el.getprevious()
+        while prev is None:
+            el = el.getparent()
+            if el is None:
+                return " ".join(buf)[-limit:]
+            prev = el.getprevious()
+        el = prev
+        if not isinstance(el.tag, str):
+            continue
+        if el.tag.lower() == "table" or el.find(".//table") is not None:
+            break
+        buf.insert(0, el.text_content())
+    return " ".join(buf)[-limit:]
+
+
+# An AVERAGE balance is not the period-end balance-sheet figure: HBAN's first
+# "Total deposits" ($223.4B) sits under "Table 6 – Average Liabilities"
+# against $222.5B period-end. A table titled, or a section headed, "average
+# balance(s)" / "average assets|liabilities|deposits" governs the rows below
+# it until a period-end heading — a bare "average" does not: CLBK's deposit
+# table heads a "Weighted average rate" column beside period-end balances.
+_AVERAGE = re.compile(
+    r"(?<!on )\baverage\s*(?:daily\s*)?(?:outstanding\s*)?balances?"   # "AverageBalance" (MCHB)
+    r"|(?<!on )\baverage\s+(?:assets|liabilities|deposits)\b", re.I)
+_PERIOD_END = re.compile(
+    r"\bperiod[- ]end\b|\bend of (?:the )?period\b|\bending balances?\b", re.I)
+
+
+def _headline_rows(html_bytes: bytes) -> list[tuple]:
+    """(clean_label, nums, scale, table_no, average) for every table row —
+    _table_rows' rows and columns, each with the dollar scale of the caption
+    governing it (None = no caption, _AMBIGUOUS = a caption naming two
+    units), the index of its table, and whether an "average" title/section
+    governs it."""
+    from lxml import html as lhtml
+    out: list[tuple] = []
+    tables = lhtml.fromstring(html_bytes).findall(".//table")
+    for t, table in enumerate(tables):
+        grid, spans = _table_grid(table)
+        data = {r: (cl, nums) for r, cl, nums, _ in _grid_rows(grid, spans)}
+        before = _preceding_text(table)
+        cur = _unit_scale(before)
+        # Only the title line right above the table, not the prose before it.
+        avg = bool(_AVERAGE.search(before[-120:]))
+        for r, row in enumerate(grid):
+            # A year-header row ("(in thousands) | 2026 | 2025") is emitted as
+            # a data row but carries the caption — read it first.
+            if r not in data or _is_year_header(row):
+                text = " ".join(row)
+                found = _unit_scale(text)
+                if found is not None:
+                    cur = found
+                if _AVERAGE.search(text):
+                    avg = True
+                elif _PERIOD_END.search(text):
+                    avg = False
+            if r in data:
+                out.append((*data[r], cur, t, avg))
+    return out
+
+
+def _uncaptioned_scales(hrows: list[tuple], anchor: dict):
+    """(per-table scale, release scale) for rows with NO caption. A table
+    whose own total-assets / deposits row anchors to the 10-Q proves its unit
+    (BSBK/CMTV print raw-dollar summaries beside captioned $-thousands
+    statements; HWC's uncaptioned summary sits in a $K/$M release). Failing
+    that, the release scale: the anchored scale when every captioned row
+    agrees with it, else the captions' single unit when unanimous, else None
+    — an uncaptioned row in a mixed-unit release has no knowable scale."""
+    by_table: dict = {}
+    for cl, nums, _, t, _ in hrows:
+        by_table.setdefault(t, []).append((cl, nums))
+    tables = {t: _detect_scale(rs, anchor)[0] for t, rs in by_table.items()}
+    captioned = {s for _, _, s, _, _ in hrows if s is not None and s != _AMBIGUOUS}
+    anchored, _ = _detect_scale([(cl, nums) for cl, nums, *_ in hrows], anchor)
+    if anchored is not None:
+        release = anchored if captioned <= {anchored} else None
+    else:
+        release = captioned.pop() if len(captioned) == 1 else None
+    return tables, release
+
+
+# Release flow magnitude guards vs the anchor quarter's tagged flows. A scale
+# slip is ×1000, so the bands only need to be far inside that gap while
+# admitting real quarter-over-quarter moves: NII moves slowly; net income is
+# bounded by the prior quarter's NII (stable even when prior net income is
+# near zero — FNWB earned $6K in Q1, $308K in Q2), with room for brokers
+# whose net income exceeds NII (MS ~2.8×).
+_NII_BAND = (0.6, 1.6)              # × prior-quarter NII; a six-month
+                                    # (≈2×) or annual (≈4×) column fails it
+_NI_BAND_OF_NII = (0.001, 5.0)      # × prior-quarter NII
+_NI_BAND = (0.1, 10.0)              # × prior-quarter net income (no NII tag)
+# Total deposits ÷ total assets moves a few points a quarter (AROW's seasonal
+# municipal deposits: 0.888 → 0.815). A deposits (or assets) row from a
+# segment table breaks the ratio even inside the ±band — BPOP's first "Total
+# deposits" is Banco Popular de PR's $58.7B against $70.2B consolidated
+# (0.888 → 0.743) — so when both are served they must hold the prior ratio.
+_DEPOSIT_RATIO_TOL = 0.10
+
+
+def _flow_band(fig: str, anchor: dict):
+    """(lo, hi) raw-dollar band for a release flow from the anchor quarter's
+    tagged flows, or None when the anchor tagged neither."""
+    nii, ni = anchor.get("prior_net_interest_income"), anchor.get("prior_net_income")
+    if fig == "net_interest_income":
+        band, ref = _NII_BAND, nii
+    elif nii and nii > 0:
+        band, ref = _NI_BAND_OF_NII, nii
+    else:
+        band, ref = _NI_BAND, ni
+    return (band[0] * ref, band[1] * ref) if ref and ref > 0 else None
+
+
+def _too_coarse(v: float) -> bool:
+    """True when a printed amount's precision is worse than 0.5% of itself —
+    half a unit of its last printed digit. BHB's $-millions summary prints net
+    income as "15" (±$0.5M on $15.2M, 3.3%); a headline figure that coarse
+    reads as a precise $15.0M. "14.3" (0.35%) and any $-thousands figure pass."""
+    if v == 0:
+        return True
+    text = repr(abs(v))
+    decimals = 0 if float(v).is_integer() or "e" in text else len(text.split(".")[1])
+    return 0.5 * 10 ** -decimals / abs(v) > 0.005
 
 
 def extract_earnings_figures(ex991_html: bytes, anchor: dict) -> dict:
     """Headline latest-quarter figures from one EX-99.1 document, sanity-gated
-    against `anchor` (the prior 10-Q's tagged balance-sheet totals).
+    against `anchor` — the prior 10-Q's tagged balance-sheet totals and that
+    quarter's net income / NII (_anchor_balance_sheet).
 
-    Returns {figure: value | None}. Dollar values are returned in RAW DOLLARS
-    (scaled by the detected release scale); ratios as the as-printed percent
-    number (3.88 = 3.88%); EPS as dollars/share. A figure is None (n/a) unless it
-    both matched an exact label AND passed its gate — never a guess."""
-    rows = _table_rows(ex991_html)
+    Returns {figure: value | None}. Dollar values are returned in RAW DOLLARS,
+    each scaled by the unit caption governing its own row (_headline_rows) —
+    else its table's anchored unit, else the release's unanimous unit;
+    ratios as the as-printed percent number (3.88 = 3.88%); EPS as
+    dollars/share. A figure is None (n/a) unless it both matched an exact
+    label AND passed its gate — never a guess."""
+    hrows = _headline_rows(ex991_html)
     out: dict = {k: None for k in _FIG_LABELS}
 
-    scale, _anchored_on = _detect_scale(rows, anchor)
+    table_scale, release_scale = _uncaptioned_scales(hrows, anchor)
+    anchored, _ = _detect_scale([(cl, nums) for cl, nums, *_ in hrows], anchor)
 
     for fig, labels in _FIG_LABELS.items():
-        v = _first_match(rows, labels)
-        if v is None:
+        # First matching row decides (its blank latest cell → n/a, audit P3);
+        # a balance-sheet figure skips rows an "average" heading governs.
+        hit = next(((nums[0], s, t) for cl, nums, s, t, avg in hrows
+                    if cl in labels and not (avg and fig in _DOLLAR_BS)), None)
+        if hit is None or hit[0] is None or hit[1] == _AMBIGUOUS:
             continue
+        v, s, t = hit
+        if fig in _DOLLAR_BS + _DOLLAR_FLOW and _too_coarse(v):
+            continue
+        scale = s if s is not None else (table_scale.get(t) or release_scale)
         if fig in _DOLLAR_BS:
+            # The anchor band rejects a segment subtotal AND a caption the
+            # 10-Q contradicts.
             a = anchor.get(fig)
             if a is None or scale is None:
                 continue
             scaled = v * scale
-            if a * 0.7 <= scaled <= a * 1.4:    # rejects a segment subtotal
+            # To the dollar the PRIOR quarter-end's tagged total: the row's
+            # first column is the prior quarter (ASRV's "1QTR | 2QTR" table).
+            if a * 0.7 <= scaled <= a * 1.4 and abs(scaled - a) >= 0.5:
                 out[fig] = scaled
         elif fig in _DOLLAR_FLOW:
-            # No direct anchor (flows aren't a clean BS instant); require the
-            # release scale to be known and the figure positive & non-trivial.
-            if scale is None or v <= 0:
+            # No same-quarter anchor for a flow: its scale must be KNOWN, the
+            # release's consolidated balance sheet must anchor to the 10-Q
+            # (segment-heavy releases that never anchor — C, RJF — first-match
+            # a segment's flows), the figure positive and in its magnitude band.
+            band = _flow_band(fig, anchor)
+            if scale is None and band:
+                # No caption or anchored table: the prior quarter's flow is the
+                # anchor — the one scale that lands in its band (BSBK/CMTV
+                # print raw-dollar income statements without a caption).
+                fits = [c for c in (1.0, 1e3, 1e6) if band[0] <= v * c <= band[1]]
+                scale = fits[0] if len(fits) == 1 else None
+            # No band (the anchor quarter tagged no flows) → nothing would
+            # catch a year-to-date or annual first column: BCTF's "Year Ended |
+            # Quarter Ended" table put FY NII $15.2M where Q4 was $3.6M.
+            if scale is None or band is None or anchored is None or v <= 0:
                 continue
-            out[fig] = v * scale
+            prior = anchor.get("prior_" + fig)
+            if prior is not None and abs(v * scale - prior) < 0.5:
+                continue                    # the prior quarter's column
+            if band[0] <= v * scale <= band[1]:
+                out[fig] = v * scale
         elif fig in _RATIO:
             if 0 <= abs(v) <= 60:
                 out[fig] = v
         elif fig == "diluted_eps":
             if 0 < abs(v) < 100:                # excludes a share-count mis-match
                 out[fig] = v
+    ta, dep = out["total_assets"], out["total_deposits"]
+    a0, d0 = anchor.get("total_assets"), anchor.get("total_deposits")
+    if ta and dep and a0 and d0 and abs(dep / ta - d0 / a0) > _DEPOSIT_RATIO_TOL:
+        out["total_assets"] = out["total_deposits"] = None
     return out
 
 
@@ -1151,7 +1385,9 @@ def latest_earnings_8k_figures(cik) -> dict | None:
         return None
 
     # v2: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss).
-    ckey = f"earnings_8k:v2:{f8k['accession']}"
+    # v3: per-row units + prior-quarter flow bands + average/prior-column
+    #     guards (_headline_rows) — a v2 ×1000 value must not serve forever.
+    ckey = f"earnings_8k:v3:{f8k['accession']}"
     # Accession-keyed and version-prefixed = immutable; the default 24h read
     # ceiling would silently re-run the fetch+parse for every bank every day.
     payload = cache.get(ckey, max_age_s=None)

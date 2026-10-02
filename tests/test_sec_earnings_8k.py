@@ -77,7 +77,11 @@ class TestExtraction(unittest.TestCase):
             + _row("Return on average assets", "1.62")
             + _row("Return on average common equity", "10.91")
         )
-        anchor = {"total_assets": 28_109_935_000.0, "total_deposits": 22_636_740_000.0}
+        # The anchor is the PRIOR quarter's 10-Q (as in production): its
+        # balance-sheet totals and that quarter's net income / NII.
+        anchor = {"total_assets": 27_500_000_000.0, "total_deposits": 22_100_000_000.0,
+                  "prior_net_income": 104_000_000.0,
+                  "prior_net_interest_income": 238_000_000.0}
         out = extract_earnings_figures(html, anchor)
         self.assertAlmostEqual(out["total_assets"], 28_109_935_000.0)
         self.assertAlmostEqual(out["total_deposits"], 22_636_740_000.0)
@@ -96,7 +100,7 @@ class TestExtraction(unittest.TestCase):
             _row("Total assets", "37,341")           # segment, millions → $37.3B
             + _row("Total deposits", "147,815")      # consolidated, millions
         )
-        anchor = {"total_assets": 188_663_000_000.0, "total_deposits": 147_815_000_000.0}
+        anchor = {"total_assets": 188_663_000_000.0, "total_deposits": 146_200_000_000.0}
         out = extract_earnings_figures(html, anchor)
         # $37.3B is < 70% of the $188.7B anchor at every scale → n/a, never wrong.
         self.assertIsNone(out["total_assets"])

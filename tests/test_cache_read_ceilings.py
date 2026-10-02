@@ -138,8 +138,8 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
         payload = {"figures": {"diluted_eps": 1.25}, "_preliminary": True,
                    "accession": _F8K["accession_dash"], "filed": _F8K["date"],
                    "period": "2026-03-31", "doc": "ex991.htm"}
-        cache.put(f"earnings_8k:v2:{_F8K['accession']}", payload)
-        self._age(f"earnings_8k:v2:{_F8K['accession']}", 72 * 3600)
+        cache.put(f"earnings_8k:v3:{_F8K['accession']}", payload)
+        self._age(f"earnings_8k:v3:{_F8K['accession']}", 72 * 3600)
         with patch.object(se8k, "_latest_earnings_8k", return_value=_F8K), \
                 patch.object(se8k, "_ex991_document", _boom), \
                 patch.object(se8k, "_get", _boom):
