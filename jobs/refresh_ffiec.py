@@ -157,15 +157,27 @@ def _persist_deposit_cost(cert: int, rssd_id: int, period: str, df) -> str:
 def _persist_full_report(cert: int, rssd_id: int, period: str, df) -> str:
     """Store EVERY line item of the already-fetched Call Report
     (data/call_report_full — the any-field screener's source). 'ok' /
-    'no_data' / 'fail:<reason>'; never raises. A late filer's
-    previous-quarter fallback frame fails the period check (never stored
-    under the wrong quarter)."""
+    'no_data' / 'fail:<reason>'; never raises. upsert_full_report re-checks
+    that `period` is the frame's own quarter (never stored under the wrong
+    quarter)."""
     from data.call_report_full import upsert_full_report
     try:
         n = upsert_full_report(cert, rssd_id, period, df)
         return "ok" if n else "no_data"
     except Exception as e:
         return f"fail:{type(e).__name__}: {str(e)[:80]}"
+
+
+def _frame_period(df) -> str | None:
+    """The quarter the fetched Call Report frame actually IS ('MM/DD/YYYY'),
+    read from its own 'quarter' column — None when that column is absent,
+    unparseable, or holds more than one quarter."""
+    from data.call_report_full import _frame_quarters
+    quarters = _frame_quarters(df)
+    if len(quarters) != 1 or "?" in quarters:
+        return None
+    y, m, d = next(iter(quarters)).split("-")
+    return f"{m}/{d}/{y}"
 
 
 def _refresh_one(
@@ -178,7 +190,7 @@ def _refresh_one(
     from data.ffiec_client import (
         fetch_call_report, get_securities_maturity_ladder, get_loan_repricing,
     )
-    from data.call_report_store import upsert_securities_ladder
+    from data.call_report_store import _parse_period, upsert_securities_ladder
 
     no_data = {s: "no_data" for s in _SCHEDULES}
     if not cert or not rssd_id:
@@ -189,6 +201,23 @@ def _refresh_one(
             return cert, 0, "empty_call_report", no_data
     except Exception as e:
         return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", no_data
+
+    # Every persister below stamps its rows with the period it is handed, and
+    # fetch_call_report falls back one quarter for late filers — so hand them
+    # the quarter the frame actually IS, never the one requested. A late
+    # filer's prior-quarter report is stored under its own quarter; a frame
+    # whose quarter can't be determined is stored under none.
+    actual = _frame_period(df)
+    if actual is None:
+        fail = "fail:undeterminable_frame_period"
+        print(f"  [warn] cert {cert}: call report frame has no single "
+              f"determinable quarter — nothing stored", flush=True)
+        return (cert, 0, "undeterminable_frame_period",
+                {s: fail for s in _SCHEDULES})
+    if _parse_period(actual) != _parse_period(period):
+        print(f"  [info] cert {cert}: {period} not filed yet — storing its "
+              f"{actual} report under {actual}", flush=True)
+    period = actual
 
     # Schedules RI, RC-N, RC-R Part I, RI-E, and the deposit-cost split all
     # ride on the same fetched call report (never fetch twice) — persisted

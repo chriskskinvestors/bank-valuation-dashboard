@@ -238,7 +238,10 @@ def fetch_call_report(rssd_id: int, reporting_period: str | None = None) -> pd.D
 
     Auto-fallback: if the requested period returns empty (typically a 204
     because the bank hasn't filed yet — common for small community banks
-    a few weeks after quarter-end), retry the previous quarter once.
+    a few weeks after quarter-end), retry the previous quarter once. The
+    returned frame may therefore NOT be the requested quarter — anything
+    that stores it must take the period from the frame's own 'quarter'
+    column (jobs/refresh_ffiec._frame_period), never from the request.
     """
     global _schema_logged
     creds = _get_creds()

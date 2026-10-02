@@ -303,11 +303,15 @@ class TestRefreshJobWiring(_IsolatedDb):
             self.full.values(["RCONB530"], "2026-06-30", [628]),
             {628: {"RCONB530": -1_234.0}})
 
-    def test_fallback_quarter_frame_is_a_nonfatal_fail(self):
+    def test_fallback_quarter_frame_stored_under_its_own_quarter(self):
+        """A late filer's previous-quarter fallback frame is stored under
+        3/31/2026 (what it is) — never under the requested 6/30/2026."""
         _cert, _n, _err, statuses = self._run(_frame(quarter="3/31/2026"))
-        self.assertTrue(statuses["full"].startswith(
-            "fail:ValueError: period mismatch"), statuses["full"])
-        self.assertEqual(self._count(), 0)
+        self.assertEqual(statuses["full"], "ok")
+        self.assertEqual(self.full.available_report_dates(), ["2026-03-31"])
+        self.assertEqual(
+            self.full.values(["RCONB530"], "2026-03-31", [628]),
+            {628: {"RCONB530": -1_234.0}})
 
     def test_empty_fetch_reports_no_data(self):
         _cert, _n, err, statuses = self._run(pd.DataFrame())
