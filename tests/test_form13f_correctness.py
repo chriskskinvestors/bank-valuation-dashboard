@@ -596,3 +596,13 @@ class TestDetailedNotInPriorSampleLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFilerNameCleanup(unittest.TestCase):
+    def test_ticker_list_and_cik_suffix_stripped(self):
+        c = f13._clean_filer_name
+        self.assertEqual(c("JPMORGAN CHASE & CO  (JPM, AMJB, VYLD, JPM-PC, JPM-PD)  (CIK 0000019617)"),
+                         "JPMORGAN CHASE & CO")
+        self.assertEqual(c("CTC LLC  (CIK 0001445893)"), "CTC LLC")
+        self.assertEqual(c("Alphinity Investment Management Pty Ltd  (CIK 0001172661)"),
+                         "Alphinity Investment Management Pty Ltd")

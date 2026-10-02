@@ -195,7 +195,7 @@ def render_ownership(ticker: str):
     st.caption(
         "13F filings are required for institutions managing >$100M, cover equity holdings "
         "only (not derivatives), and are filed 45 days after quarter-end. Δ QoQ compares each "
-        "filer's share count to their previous 13F-HR."
+        "filer's share count to its 13F-HR for the PRIOR QUARTER (n/a when it filed none)."
     )
 
 
@@ -576,7 +576,7 @@ def render_ownership_detailed(ticker: str, metrics: dict):
     exp = pd.DataFrame(rows).rename(columns={
         "holder": "Holder", "filer_cik": "Filer CIK", "accession": "Accession",
         "shares": "Shares", "d_shares": "Δ Shares (QoQ)", "d_pct": "Δ Shares (QoQ) (%)",
-        "is_new": "New Position", "pct_cso": "% CSO (%)",
+        "is_new": "Not in Prior Sample", "pct_cso": "% CSO (%)",
         "mkt_value": "Mkt Value ($)", "reported_value": "Reported Value ($)",
         "filed": "Date Filed"})
     table_export(exp, f"ownership_detailed_{ticker}",

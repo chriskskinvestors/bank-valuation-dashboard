@@ -222,7 +222,7 @@ class TestOwnershipDetailedExport(_ExportCapture):
         rows = _grid(ws)
         self.assertEqual(rows[0], [
             "Holder", "Filer CIK", "Accession", "Shares", "Δ Shares (QoQ)",
-            "Δ Shares (QoQ) (%)", "New Position", "% CSO (%)", "Mkt Value ($)",
+            "Δ Shares (QoQ) (%)", "Not in Prior Sample", "% CSO (%)", "Mkt Value ($)",
             "Reported Value ($)", "Date Filed"])
         # Vanguard: Δ = 3.5M − 3.0M = 500,000 (+16.67%); %CSO = 3.5M/35M = 10%;
         # Mkt = 3.5M × $60 = $210,000,000.
