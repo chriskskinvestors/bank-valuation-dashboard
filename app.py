@@ -1760,8 +1760,15 @@ elif section == "Company":
 
 elif section == "Market & Macro":
     from ui.macro import render_macro_dashboard
+    from data import fred_client as _fc
+    from utils.timing import _record
+    _fc.reset_io_stats()
     with timed("macro.render"):
         render_macro_dashboard()
+    _io = _fc.io_stats()
+    # Storage share of the render: total cache-read ms, with reads vs distinct
+    # series in the label (a series read twice = memo keyed on years too).
+    _record(f"macro.fred_io[{_io['reads']} reads/{_io['series']} series]", _io["ms"])
 
 elif section == "Screen & Compare" and sc_sub == "Compare":
     # ── COMPARE: Side-by-side bank comparison (peers) ───────────────────
