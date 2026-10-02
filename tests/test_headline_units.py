@@ -246,5 +246,34 @@ class TestRowSemantics(unittest.TestCase):
         self.assertIsNone(out["net_income"])
 
 
+class TestAnchorIsThePriorPeriodic(unittest.TestCase):
+    """The anchor is the 10-Q/10-K filed BEFORE the release, whenever the
+    payload is computed. Taking the latest filing anchored a Q2 release
+    computed in October on its own Q2 10-Q, and the prior-quarter guards then
+    dropped every figure that matched it (2026-10-02, after the v3 deploy)."""
+
+    _METAS = [  # newest first, as _recent_metas returns them
+        {"form": "10-Q", "date": "2026-08-05", "accession": "q2"},
+        {"form": "10-Q", "date": "2026-05-07", "accession": "q1"},
+        {"form": "10-K", "date": "2026-02-27", "accession": "fy"},
+    ]
+
+    def _anchor_for(self, release_date):
+        from unittest.mock import patch
+        import data.sec_earnings_8k as se8k
+        with patch.object(se8k, "_recent_metas", return_value=self._METAS):
+            meta = se8k._prior_periodic(77, release_date)
+        return meta and meta["accession"]
+
+    def test_q2_release_anchors_on_q1_10q_even_after_the_q2_10q(self):
+        self.assertEqual(self._anchor_for("2026-07-22"), "q1")
+
+    def test_q1_release_anchors_on_the_10k(self):
+        self.assertEqual(self._anchor_for("2026-04-20"), "fy")
+
+    def test_nothing_filed_before_the_release_no_anchor(self):
+        self.assertIsNone(self._anchor_for("2026-01-15"))
+
+
 if __name__ == "__main__":
     unittest.main()
