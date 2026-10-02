@@ -115,14 +115,78 @@ def io_stats() -> dict:
     return {"ms": _IO["ms"], "reads": _IO["reads"], "series": len(_IO["series"])}
 
 
+# ── One-row series bundle (written by jobs/refresh_macro, read by renders) ──
+# Production, 2026-10-02: a cold Market & Macro render spent 5,301 ms of
+# 6,387 ms in 28 per-series cloud-storage reads (~190 ms each on Cloud Run).
+# refresh-macro already refreshes every series every 30 min; it now also
+# writes them all as ONE row in data.cache, which a render reads once.
+# Freshness is the per-series rule (cached_at within CACHE_TTL_SECONDS); a
+# stale or missing bundle falls back to the per-series files exactly as before.
+_BUNDLE_KEY = "fred_series_bundle:v1"
+# Module-level, not st.cache_data: the bundle is ~6 MB and st.cache_data
+# returns a deep copy on EVERY call — once per series on a cold render.
+_BUNDLE_MEMO: dict = {"loaded_at": 0.0, "series": None}
+
+
+def _bundled_series() -> dict:
+    """{series_id: {"d": [YYYY-MM-DD…], "v": [float|None…]}} from a FRESH
+    bundle, else {}. Read from the store at most once per CACHE_TTL_SECONDS
+    per process; the read is counted in the macro I/O mark."""
+    import time as _time
+    if (_BUNDLE_MEMO["series"] is not None
+            and _time.monotonic() - _BUNDLE_MEMO["loaded_at"] < CACHE_TTL_SECONDS):
+        return _BUNDLE_MEMO["series"]
+    series = {}
+    _t0 = _time.perf_counter()
+    try:
+        from data import cache
+        snap = cache.get(_BUNDLE_KEY, max_age_s=None)   # own freshness rule below
+        if _is_fresh(snap) and isinstance(snap.get("series"), dict):
+            series = snap["series"]
+    except Exception as e:
+        print(f"[FRED] series bundle unavailable: {type(e).__name__}: {e}")
+    _IO["ms"] += (_time.perf_counter() - _t0) * 1000
+    _IO["reads"] += 1
+    _BUNDLE_MEMO["loaded_at"], _BUNDLE_MEMO["series"] = _time.monotonic(), series
+    return series
+
+
+def write_series_bundle(series_ids) -> int:
+    """Persist every listed series' full history as one row (jobs/refresh_macro,
+    after it has refreshed them). Returns the number of series written; series
+    with no data are left out, so a render falls back to their file."""
+    from data import cache
+    out = {}
+    for sid in series_ids:
+        df = _series_full(sid, use_bundle=False)
+        if df is None or df.empty:
+            continue
+        out[sid] = {"d": [d.strftime("%Y-%m-%d") for d in df["date"]],
+                    "v": [None if pd.isna(v) else float(v) for v in df["value"]]}
+    if out:
+        cache.put(_BUNDLE_KEY, {"cached_at": datetime.now().isoformat(), "series": out})
+    return len(out)
+
+
 @st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
-def _series_full(series_id: str) -> pd.DataFrame:
+def _series_full(series_id: str, use_bundle: bool = True) -> pd.DataFrame:
     """The series' FULL stored history (date, value) — one cache read (or live
     fetch + persist when stale) per series per process, shared by every
     `years` window. fetch_series used to be memoised on (series_id, years)
     with the read inside, and callers ask for the same series with ten
     different `years` values: a cold Market & Macro render read 28 series 44
-    times (2026-10-02), each read a cloud-storage round trip on Cloud Run."""
+    times (2026-10-02), each read a cloud-storage round trip on Cloud Run.
+
+    Renders take the series from the one-row bundle when it is fresh.
+    use_bundle=False is for the job that WRITES the bundle: preferring the
+    bundle there would rebuild it from itself and the data would never refresh."""
+    if use_bundle:
+        b = _bundled_series().get(series_id)
+        if b and b.get("d"):
+            _IO["series"].add(series_id)
+            return pd.DataFrame({"date": pd.to_datetime(b["d"], errors="coerce"),
+                                 "value": pd.to_numeric(pd.Series(b["v"], dtype="object"),
+                                                        errors="coerce")})
     import time as _time
     _t0 = _time.perf_counter()
     cached = load_json(FRED_CACHE_PREFIX, f"{series_id}.json")

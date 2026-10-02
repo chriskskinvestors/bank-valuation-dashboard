@@ -33,6 +33,13 @@ def _stored(days_back_list, value=1.0):
 
 
 class TestFetchSeriesSlicesOneRead(unittest.TestCase):
+    def setUp(self):
+        # These pin the per-series FILE path: an empty, fresh bundle memo means
+        # no bundle (and no store read) — see tests/test_fred_series_bundle.py.
+        import time
+        fc._BUNDLE_MEMO.update(loaded_at=time.monotonic(), series={})
+        self.addCleanup(fc._BUNDLE_MEMO.update, loaded_at=0.0, series=None)
+
     def test_years_window_slices_the_full_history(self):
         # Observations 10, 400, 800 and 2,000 days back.
         payload = _stored([10, 400, 800, 2000])
@@ -79,7 +86,9 @@ class TestReadKeyedOnSeriesOnly(unittest.TestCase):
 
     def test_series_full_is_memoised_on_series_id_alone(self):
         fn = self._fn("_series_full")
-        self.assertEqual(["series_id"], [a.arg for a in fn.args.args])
+        # Keyed on the series (plus the job's bundle-bypass flag) — never on
+        # the `years` window, which is what multiplied the reads.
+        self.assertEqual(["series_id", "use_bundle"], [a.arg for a in fn.args.args])
         self.assertIn("st.cache_data", ast.unparse(fn.decorator_list[0]))
 
     def test_fetch_series_does_not_read_storage_itself(self):

@@ -79,7 +79,7 @@ def main() -> int:
     import warnings
     warnings.filterwarnings("ignore")
     try:
-        from data.fred_client import fetch_series
+        from data.fred_client import _series_full, write_series_bundle
     except Exception as e:  # pragma: no cover
         print(f"[macro-warm] cannot import fred_client: {type(e).__name__}: {e}",
               flush=True)
@@ -93,15 +93,27 @@ def main() -> int:
     ok = 0
     for sid in series:
         try:
-            # years=10 ≥ the deepest window the UI requests; fetch_series caches
-            # the full history regardless, so one call warms every window.
-            df = fetch_series(sid, years=10)
+            # The full stored history (every window the UI slices), refreshed
+            # from FRED when its file is past the 1h TTL. use_bundle=False:
+            # this job WRITES the bundle below, so it must never read it.
+            df = _series_full(sid, use_bundle=False)
             if df is not None and not df.empty:
                 ok += 1
             else:
                 print(f"[macro-warm] {sid}: empty", flush=True)
         except Exception as e:
             print(f"[macro-warm] {sid}: {type(e).__name__}: {e}", flush=True)
+
+    # One-row bundle of every series for the render path (one read per cold
+    # instance instead of one cloud-storage read per series — 5.3 s of a
+    # 6.4 s cold Market & Macro render on prod, 2026-10-02).
+    try:
+        n_b = write_series_bundle(series)
+        print(f"[{time.strftime('%H:%M:%S')}] wrote series bundle "
+              f"({n_b} series)", flush=True)
+    except Exception as e:
+        print(f"[macro-warm] series bundle write failed: "
+              f"{type(e).__name__}: {e}", flush=True)
 
     # The recession score + headline snapshot read only the series above, so
     # warming them is enough; touch them too so a failure surfaces in logs.
