@@ -40,7 +40,7 @@ class _FakeSt:
 def _lift(names: set[str]) -> dict:
     """Exec the named top-level assignments and (possibly nested) function
     defs from app.py into a namespace seeded with config + a fake st."""
-    from config import METRICS, TABS
+    from config import METRICS, METRICS_BY_KEY, TABS
     tree = ast.parse(SRC)
     picked = []
     for node in ast.walk(tree):
@@ -55,13 +55,14 @@ def _lift(names: set[str]) -> dict:
     assert not missing, f"not found in app.py: {missing}"
     mod = ast.Module(body=picked, type_ignores=[])
     ast.fix_missing_locations(mod)
-    ns = {"METRICS": METRICS, "TABS": TABS, "st": _FakeSt(), "tab_key": "valuation"}
+    ns = {"METRICS": METRICS, "METRICS_BY_KEY": METRICS_BY_KEY, "TABS": TABS,
+          "st": _FakeSt(), "tab_key": "valuation"}
     exec(compile(mod, str(APP), "exec"), ns)
     return ns
 
 
 _NAMES = {"_SCREEN_FILTER_FMTS", "_SCREEN_MAX_FILTERS", "_SCREEN_FILTER_SUFFIXES",
-          "_SCREEN_SCOPE_SUFFIXES", "_screen_filter_key_to_idx",
+          "_SCREEN_SCOPE_SUFFIXES", "_screen_legacy_sort_key",
           "_screen_formulas", "_screen_filter_options", "_screen_valid_dyn",
           "_screen_clear_filters", "_screen_restore_cfg",
           "_filter_specs_from_state", "_specs_to_cfg_filters", "_remove_filter",
@@ -74,6 +75,7 @@ def _ns():
     fk = sorted([(m["key"], m["label"]) for m in ns["METRICS"]
                  if m.get("format") in ns["_SCREEN_FILTER_FMTS"]], key=lambda x: x[1])
     ns["filter_keys"] = [None] + [k for k, _ in fk]
+    ns["filter_label"] = dict(fk)
     return ns
 
 
@@ -111,7 +113,12 @@ class TestSavedScreenRoundTrip(unittest.TestCase):
         # Re-serialized for Save: identical to what was loaded.
         self.assertEqual(ns["_specs_to_cfg_filters"](specs), cfg["filters"])
         self.assertEqual(ss["num_filters_valuation"], 4)
-        self.assertEqual(ss["sort_valuation"], 2)
+        # Legacy saves stored Sort as an INDEX into [Default] + the table's
+        # registry columns; restore maps it to the KEY once (valuation[1]).
+        from config import TABS, METRICS_BY_KEY
+        val_cols = [c for c in next(t for t in TABS if t["key"] == "valuation")["columns"]
+                    if METRICS_BY_KEY.get(c)]
+        self.assertEqual(ss["sort_valuation"], val_cols[1])
         self.assertEqual(ss["order_valuation"], "Asc")
         self.assertEqual(ss["custom_cols_valuation"], cfg["columns"])
 
@@ -157,24 +164,65 @@ class TestSavedScreenRoundTrip(unittest.TestCase):
         self.assertEqual(ss["screen_valuation_scope_type"], "All banks")
         self.assertNotIn("screen_valuation_manual", ss)
         self.assertEqual(ss["asof_valuation"], "Latest (live)")
-        self.assertEqual((ss["sort_valuation"], ss["order_valuation"]), (0, "Desc"))
+        self.assertEqual((ss["sort_valuation"], ss["order_valuation"]), (None, "Desc"))
         self.assertNotIn("custom_cols_valuation", ss)
         self.assertEqual(ns["_filter_specs_from_state"](), [])
+
+
+class TestKeyBasedState(unittest.TestCase):
+    """Review 2026-10-02: filter/sort widgets stored list POSITIONS, so a
+    change to the option list (another screen's call-report fields, a removed
+    column) silently re-pointed them at a different metric. They now store
+    the metric KEY."""
+
+    def test_restore_writes_keys_and_sort_key_wins(self):
+        ns = _ns()
+        ss = ns["st"].session_state
+        ns["_screen_clear_filters"](ss, "valuation")
+        ns["_screen_restore_cfg"](ss, {
+            "sort_key": "cet1_ratio", "sort_idx": 3,
+            "filters": [{"kind": "absolute", "metric_key": "nim", "op": ">", "value": 3.0}]},
+            "valuation")
+        self.assertEqual(ss["filt_metric_valuation_0"], "nim")
+        self.assertEqual(ss["sort_valuation"], "cet1_ratio", "sort_key wins over legacy sort_idx")
+
+    def test_restore_keeps_dynamic_filter_by_key(self):
+        ns = _ns()
+        ss = ns["st"].session_state
+        ns["_screen_clear_filters"](ss, "valuation")
+        ns["_screen_restore_cfg"](ss, {
+            "dyn": [{"key": "fdic:CD3LES"}],
+            "filters": [{"kind": "absolute", "metric_key": "fdic:CD3LES", "op": ">", "value": 1.0}]},
+            "valuation")
+        self.assertEqual(ss["screen_dyn"], [{"key": "fdic:CD3LES"}])
+        self.assertEqual(ss["filt_metric_valuation_0"], "fdic:CD3LES")
+
+    def test_legacy_sort_index_out_of_range_is_default(self):
+        ns = _ns()
+        self.assertIsNone(ns["_screen_legacy_sort_key"]("valuation", 999))
+        self.assertIsNone(ns["_screen_legacy_sort_key"]("valuation", 0))
+        self.assertIsNone(ns["_screen_legacy_sort_key"]("no_such_tab", 1))
+
+    def test_widgets_are_key_based_in_source(self):
+        blk = SRC[SRC.index('elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:'):]
+        self.assertIn('"Metric", options=filter_keys,', blk)
+        self.assertIn('"Sort", options=sort_keys,', blk)
+        self.assertNotIn("options=list(range(len(filter_labels)))", SRC)
+        self.assertNotIn("options=list(range(len(sort_labels)))", SRC)
 
 
 class TestFilterRows(unittest.TestCase):
     def test_remove_shifts_every_suffix_down(self):
         ns = _ns()
         ss = ns["st"].session_state
-        k2i = ns["_screen_filter_key_to_idx"]()
         ss.update({
             "num_filters_valuation": 3,
-            "filt_kind_valuation_0": "Absolute", "filt_metric_valuation_0": k2i["ptbv_ratio"],
+            "filt_kind_valuation_0": "Absolute", "filt_metric_valuation_0": "ptbv_ratio",
             "filt_op_valuation_0": "<", "filt_val_valuation_0": 1.0,
-            "filt_kind_valuation_1": "Change", "filt_metric_valuation_1": k2i["nim"],
+            "filt_kind_valuation_1": "Change", "filt_metric_valuation_1": "nim",
             "filt_basis_valuation_1": "YoY", "filt_chop_valuation_1": "≥",
             "filt_chval_valuation_1": 0.25,
-            "filt_kind_valuation_2": "Trend", "filt_metric_valuation_2": k2i["npl_ratio"],
+            "filt_kind_valuation_2": "Trend", "filt_metric_valuation_2": "npl_ratio",
             "filt_dir_valuation_2": "Rising", "filt_q_valuation_2": 4,
         })
         ns["_remove_filter"](0)
@@ -200,7 +248,7 @@ class TestFilterRows(unittest.TestCase):
         ns = _ns()
         ss = ns["st"].session_state
         ss.update({"num_filters_valuation": 1, "filt_kind_valuation_0": "Absolute",
-                   "filt_metric_valuation_0": 0, "filt_op_valuation_0": ">",
+                   "filt_metric_valuation_0": None, "filt_op_valuation_0": ">",
                    "filt_val_valuation_0": 5.0})
         self.assertEqual(ns["_filter_specs_from_state"](), [])
 

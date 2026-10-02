@@ -268,6 +268,115 @@ class TestFfiecLineItems(_Stubbed):
             crf.parse_formula("RCONB530 / ASSET")
 
 
+class TestReviewRegressions(_Stubbed):
+    """Each test pins one defect confirmed by the 2026-10-02 hostile review."""
+
+    def test_literal_zero_ratios_over_zero_denominator_are_na(self):
+        # 1,831 CBLR filers report RBCRWAJ = 0 with RWAJ = 0; 582 report
+        # LNRESNCR = 0 with NCLNLS = 0. The pipeline nulls both; so must we.
+        TABLE.update({"RBCRWAJ": {3309: 0.0, 628: 15.0},
+                      "RWAJ": {3309: 0.0, 628: 2000000.0},
+                      "LNRESNCR": {3309: 0.0}, "NCLNLS": {3309: 0.0}})
+        try:
+            r = crf.attach([{"ticker": "SBSI"}], ["fdic:RBCRWAJ", "fdic:LNRESNCR"],
+                           "20260630")[0]
+            self.assertIsNone(r["fdic:RBCRWAJ"], "x/0 is n/a, not 0.00%")
+            self.assertIsNone(r["fdic:LNRESNCR"])
+            ok = crf.values_for(["fdic:RBCRWAJ"], [628], crf.quarter_table(
+                crf.codes_needed(["fdic:RBCRWAJ"]), "20260630", [628]))
+            self.assertEqual(ok["fdic:RBCRWAJ"], 15.0, "a genuine ratio is untouched")
+        finally:
+            for k in ("RBCRWAJ", "RWAJ", "LNRESNCR", "NCLNLS"):
+                TABLE.pop(k, None)
+
+    def test_guard_fields_are_fetched_with_any_ratio(self):
+        need = crf.codes_needed(["fdic:RBCRWAJ"])
+        for g in ("RWAJ", "RBCT1J", "NCLNLS"):
+            self.assertIn(g, need)
+        self.assertNotIn("RWAJ", crf.codes_needed(["fdic:CD3LES"]), "levels need no guards")
+
+    def test_offstate_is_not_summed_across_charters(self):
+        TABLE["OFFSTATE"] = {628: 40.0, 21761: 1.0, 3309: 3.0}
+        try:
+            jpm, sbsi = crf.attach([{"ticker": "JPM"}, {"ticker": "SBSI"}],
+                                   ["fdic:OFFSTATE"], "20260630")
+            self.assertIsNone(jpm["fdic:OFFSTATE"], "overlapping states can't be added")
+            self.assertEqual(sbsi["fdic:OFFSTATE"], 3.0)
+        finally:
+            TABLE.pop("OFFSTATE", None)
+
+    def test_fdic_outage_is_na_and_reported_not_a_crash(self):
+        from data import http
+        self.patches[0].stop()          # use the real fetch_quarter
+        try:
+            with mock.patch.object(http, "get_with_retry",
+                                   side_effect=RuntimeError("503 Service Unavailable")), \
+                 mock.patch("data.cache.get", return_value=None):
+                r = crf.attach([{"ticker": "SBSI"}], ["fdic:NUMEMP"], "20260630")[0]
+            self.assertIsNone(r["fdic:NUMEMP"])
+            self.assertTrue(crf.last_errors(), "the outage must be surfaced")
+        finally:
+            self.patches[0].start()
+
+    def test_ffiec_store_gets_an_iso_date(self):
+        from data import call_report_full
+        seen = []
+        with mock.patch.object(call_report_full, "values",
+                               side_effect=lambda c, d, ce: seen.append(d) or {}):
+            crf.quarter_table(["RCONB530"], "20260630", [3309])
+        self.assertEqual(seen, ["2026-06-30"])
+
+    def test_series_for_reuses_prefetched_tables(self):
+        tables = {"20260630": {"NIMY": {3309: 3.1}}, "20260331": {"NIMY": {3309: 3.0}}}
+        with mock.patch.object(crf, "quarter_table", side_effect=AssertionError("refetched")):
+            s = crf.series_for({"ticker": "SBSI"}, ["fdic:NIMY"], ["20260630", "20260331"],
+                               tables=tables)
+        self.assertEqual(s, {"fdic:NIMY": [3.1, 3.0]})
+
+
+class TestFormulaHardening(unittest.TestCase):
+    def test_oversized_or_pathological_formulas_are_rejected(self):
+        for bad in ("ASSET+" * 200 + "ASSET",          # node/char limits
+                    "-" * 600 + "ASSET",
+                    "ASSET * " + "9" * 400,             # 400-digit literal
+                    "ASSET * 1E999", "ASSET / 1E-320 * 1E13"):
+            with self.assertRaises(ValueError, msg=bad[:40]):
+                crf.parse_formula(bad)
+
+    def test_eval_never_returns_inf_or_nan(self):
+        tree, _ = crf.parse_formula("ASSET * 1000000000000 * 1000000000000")
+        self.assertIsNone(crf.eval_formula(tree, {"ASSET": 1e300}))
+        tree, _ = crf.parse_formula("ASSET - ASSET")
+        self.assertEqual(crf.eval_formula(tree, {"ASSET": 5.0}), 0.0)
+
+    def test_formula_keys_are_per_definition(self):
+        a = crf.formula_key("CD %", "CD3LES/DEPDOM*100", "Percent")
+        b = crf.formula_key("CD", "CD3LES/DEPDOM*100", "Percent")
+        c = crf.formula_key("CD %", "CD3LES/DEPDOM*100", "Number")
+        d = crf.formula_key("CD %", " cd3les / depdom * 100 ", "Percent")
+        self.assertNotEqual(a, c, "same name, different format → different key")
+        self.assertTrue(a.startswith("fx:cd_") and b.startswith("fx:cd_"))
+        self.assertEqual(a, b, "the slug part matches; the definition hash decides")
+        self.assertEqual(a, crf.formula_key("CD %", "CD3LES / DEPDOM * 100", "Percent"))
+        self.assertNotEqual(a, crf.formula_key("CD %", "CD3LES/DEP*100", "Percent"))
+        self.assertEqual(crf.formula_key("", "ASSET", "Number"), "")
+        del d
+
+    def test_level_labels_carry_the_dollar_unit(self):
+        self.assertTrue(crf.metric_def("fdic:CD3LES")["label"].endswith("($)"))
+        self.assertFalse(crf.metric_def("fdic:NIMY")["label"].endswith("($)"))
+
+
+class TestCatalogReviewCases(unittest.TestCase):
+    def test_integer_valued_dollar_items_are_levels_constants_stay_ratios(self):
+        cat = crf.catalog()
+        for code in ("NTCOMREQ", "NTRERS2Q", "NTRERSF2", "NTRERSFM", "NTRERSFQ", "AVPPPPLG"):
+            self.assertEqual(cat[code]["kind"], "level", code)
+        for code in ("ASSETR", "LIABEQR", "IDNTILR"):
+            self.assertEqual(cat[code]["kind"], "ratio", code)
+        self.assertNotIn("CBLRIND", cat, "a 0/1 election flag is not a measure")
+
+
 class TestSavedScreenDynRestore(unittest.TestCase):
     def test_valid_entries_restore_invalid_are_dropped(self):
         import ast

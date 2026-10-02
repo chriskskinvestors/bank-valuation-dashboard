@@ -30,7 +30,9 @@ the resolved values, so a formula over levels is a ratio of sums.
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
+import math
 import re
 from functools import lru_cache
 from pathlib import Path
@@ -42,6 +44,20 @@ _FFIEC_CATALOG_TTL_S = 3600        # the store changes quarterly; catalog() scan
 _CATALOG_PATH = Path(__file__).parent / "fdic_field_catalog.json"
 _VALUES_TTL_S = 7 * 86400          # a filed quarter is effectively immutable
 _LATEST_TTL_S = 6 * 3600
+
+# Counts that do NOT add across charters: two charters each in 7 states are
+# not in 14 states (review 2026-10-02: WFC showed 42, BNY 32).
+_NON_ADDITIVE = frozenset({"OFFSTATE"})
+# Fields the pipeline's zero-nulling rules read (fdic_client.
+# null_unreported_capital / null_undefined_quotients) — fetched alongside any
+# FDIC ratio so a literal-0 ratio over a zero/absent denominator is n/a here
+# exactly as everywhere else (review: 1,831 CBLR filers showed RBCRWAJ 0.00%).
+_NULL_GUARD_FIELDS = ("RWAJ", "RBCT1J", "RBCT1", "RBCT1C", "NCLNLS")
+# Formula guards: bounded size so a pasted/saved formula can never hang or
+# crash a run (review: 1,000-term formulas raised RecursionError on Run).
+_FORMULA_MAX_CHARS = 400
+_FORMULA_MAX_NODES = 120
+_FORMULA_MAX_CONST = 1e12
 
 FORMULA_FORMATS = {"Number": ("number", 2), "Percent": ("pct", 2),
                    "Dollars": ("dollars_auto", 1), "Multiple (x)": ("ratio", 2)}
@@ -60,6 +76,13 @@ def catalog() -> dict[str, dict]:
 
 
 _FFIEC_MEMO: dict = {"at": 0.0, "cat": {}}
+_ERRORS: list[str] = []
+
+
+def last_errors() -> list[str]:
+    """Source failures during the most recent attach() — the caller shows
+    them so an outage reads as an outage, not as banks with no data."""
+    return list(_ERRORS)
 
 
 def ffiec_catalog() -> dict[str, dict]:
@@ -108,14 +131,14 @@ def is_dynamic(key) -> bool:
 
 def ffiec_label(code: str) -> str:
     c = ffiec_catalog().get(code, {})
-    suffix = "" if c.get("kind") == "level" else " (as reported)"
+    suffix = " ($)" if c.get("kind") == "level" else " (as reported)"
     return f"{code} · {c.get('title') or code} (FFIEC){suffix}"
 
 
 def field_label(code: str) -> str:
     c = catalog().get(code, {})
     title = c.get("title") or code
-    suffix = {"level": "", "ratio": "", "count": " (count)",
+    suffix = {"level": " ($)", "ratio": "", "count": " (count)",
               "asis": " (as reported)"}.get(c.get("kind"), " (as reported)")
     return f"{code} · {title}{suffix}"
 
@@ -174,6 +197,20 @@ def slug(name: str) -> str:
     return f"{FORMULA_PREFIX}{s[:40]}" if s else ""
 
 
+def formula_key(name: str, expr: str, fmt: str = "Number") -> str:
+    """Stable key for a formula DEFINITION: name slug + a hash of the
+    normalised expression and display format. Two sessions with a same-name
+    but different formula get different keys, so the process-wide metric
+    registry (register) can never show one session's label/format/export
+    header on the other's numbers; "CD %" vs "CD" no longer collide either."""
+    base = slug(name)
+    if not base:
+        return ""
+    norm = "".join((expr or "").upper().split())      # spacing is not identity
+    h = hashlib.sha1(f"{norm}|{fmt}".encode("utf-8")).hexdigest()[:8]
+    return f"{base}_{h}"
+
+
 def parse_formula(expr: str) -> tuple[ast.Expression, list[str]]:
     """Validate a formula; returns (tree, field codes used). Raises ValueError
     with a user-facing message. Only + − × ÷, parentheses, numbers and field
@@ -181,16 +218,25 @@ def parse_formula(expr: str) -> tuple[ast.Expression, list[str]]:
     text = (expr or "").strip()
     if not text:
         raise ValueError("Enter a formula, e.g. (CD3LES + CD3LESS) / DEPDOM * 100")
+    if len(text) > _FORMULA_MAX_CHARS:
+        raise ValueError(f"Formula too long (max {_FORMULA_MAX_CHARS} characters).")
     try:
         tree = ast.parse(text.upper(), mode="eval")
-    except SyntaxError:
+    except (SyntaxError, RecursionError, MemoryError, ValueError):
         raise ValueError("Formula syntax error — use field codes, numbers, + − * / and ( ).")
+    nodes = list(ast.walk(tree))
+    if len(nodes) > _FORMULA_MAX_NODES:
+        raise ValueError("Formula too complex — split it into smaller formulas.")
     names = []
-    for node in ast.walk(tree):
+    for node in nodes:
         if not isinstance(node, _ALLOWED):
             raise ValueError(f"Not allowed in a formula: {type(node).__name__}.")
-        if isinstance(node, ast.Constant) and not isinstance(node.value, (int, float)):
-            raise ValueError("Only numbers and field codes are allowed.")
+        if isinstance(node, ast.Constant):
+            v = node.value
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise ValueError("Only numbers and field codes are allowed.")
+            if abs(v) > _FORMULA_MAX_CONST or (isinstance(v, float) and not math.isfinite(v)):
+                raise ValueError("Numbers in a formula must be finite and at most 1e12.")
         if isinstance(node, ast.Name):
             if node.id not in catalog() and node.id not in ffiec_catalog():
                 raise ValueError(f"Unknown call report field: {node.id}.")
@@ -228,9 +274,11 @@ def eval_formula(tree: ast.Expression, vals: dict[str, float | None]) -> float |
             raise _Missing
         return a / b
     try:
-        return ev(tree)
-    except _Missing:
+        out = ev(tree)
+    except (_Missing, OverflowError, RecursionError, ZeroDivisionError):
         return None
+    # inf/nan would render "$infT" and sort unstably — not a number to show.
+    return out if math.isfinite(out) else None
 
 
 class _Missing(Exception):
@@ -290,12 +338,18 @@ def fetch_quarter(codes, repdte: str) -> dict[str, dict[int, float | None]]:
         got = {c: {} for c in chunk}
         offset = 0
         while True:
-            r = get_with_retry(FDIC_FINANCIALS_URL, {
-                "filters": f"REPDTE:{repdte}", "fields": "CERT," + ",".join(chunk),
-                "limit": 10000, "offset": offset, "sort_by": "CERT", "sort_order": "ASC"},
-                timeout=60)
-            rows = r.json().get("data", []) if r is not None else None
-            if rows is None:           # rate-limited past retries: leave uncached
+            try:
+                r = get_with_retry(FDIC_FINANCIALS_URL, {
+                    "filters": f"REPDTE:{repdte}", "fields": "CERT," + ",".join(chunk),
+                    "limit": 10000, "offset": offset, "sort_by": "CERT",
+                    "sort_order": "ASC"}, timeout=60)
+                rows = r.json().get("data", []) if r is not None else None
+            except Exception as e:     # 5xx / timeout / bad JSON: n/a, never a crash
+                print(f"[call_report_fields] FDIC fetch failed: {type(e).__name__}")
+                rows = None
+            if rows is None:           # failed or rate-limited: leave uncached
+                _ERRORS.append(f"FDIC unavailable for {', '.join(chunk[:3])}"
+                               f"{'…' if len(chunk) > 3 else ''}")
                 got = None
                 break
             for row in rows:
@@ -324,8 +378,17 @@ def _resolve(code: str, certs: list[int], table: dict) -> float | None:
     kind = _kind(code)
     col = table.get(code, {})
     if len(certs) == 1:
-        v = col.get(certs[0])
+        cert = certs[0]
+        v = col.get(cert)
+        if v is not None and kind == "ratio":
+            # The SAME rules the metrics pipeline applies to every record:
+            # FDIC's literal-0 ratio over a zero/absent denominator is n/a.
+            from data.fdic_client import null_undefined_quotients, null_unreported_capital
+            rec = {k: m.get(cert) for k, m in table.items() if cert in m}
+            v = null_undefined_quotients(null_unreported_capital(rec)).get(code)
         return None if v is None else (v * 1000 if kind == "level" else v)
+    if code in _NON_ADDITIVE:
+        return None
     if kind in ("level", "count"):      # both are summable across charters
         vals = [col.get(c) for c in certs]
         if any(v is None for v in vals):
@@ -358,6 +421,11 @@ def codes_needed(keys, formulas: dict | None = None) -> list[str]:
     for c in list(codes):
         if c in _EXACT_QUOTIENTS:
             codes += list(_EXACT_QUOTIENTS[c][:2])
+    if any(catalog().get(c, {}).get("kind") == "ratio" for c in codes):
+        from data.fdic_client import _DEN_ZERO_REPORTED_AS_ZERO
+        codes += list(_NULL_GUARD_FIELDS)
+        codes += [_EXACT_QUOTIENTS[r][1] for r in _DEN_ZERO_REPORTED_AS_ZERO
+                  if r in _EXACT_QUOTIENTS]
     return sorted(set(codes))
 
 
@@ -417,9 +485,12 @@ def quarter_table(codes, repdte: str, certs) -> dict[str, dict[int, float | None
     if ffiec_codes and certs:
         try:
             from data import call_report_full
-            got = call_report_full.values(ffiec_codes, repdte, list(certs))
+            iso = (f"{repdte[:4]}-{repdte[4:6]}-{repdte[6:8]}"
+                   if len(str(repdte)) == 8 and str(repdte).isdigit() else repdte)
+            got = call_report_full.values(ffiec_codes, iso, list(certs))
         except Exception as e:
             print(f"[call_report_fields] FFIEC values unavailable: {type(e).__name__}")
+            _ERRORS.append("FFIEC store unavailable")
             got = {}
         for c in ffiec_codes:
             table[c] = {int(cert): vals.get(c) for cert, vals in got.items()}
@@ -431,6 +502,7 @@ def attach(rows: list[dict], keys, repdte: str | None,
     """Copies of ``rows`` with every dynamic key's value for quarter
     ``repdte`` (YYYYMMDD) attached. Rows are copied — the cached universe
     snapshot is never mutated. No quarter → every dynamic value is n/a."""
+    _ERRORS.clear()
     keys = [k for k in dict.fromkeys(keys) if is_dynamic(k)]
     if not keys:
         return list(rows)
@@ -446,15 +518,21 @@ def attach(rows: list[dict], keys, repdte: str | None,
 
 
 def series_for(row: dict, keys, repdtes: list[str],
-               formulas: dict | None = None) -> dict[str, list]:
+               formulas: dict | None = None,
+               tables: dict | None = None) -> dict[str, list]:
     """{key: [v_latest, v_q-1, …]} over ``repdtes`` (newest first) for the
-    screen engine's change/trend primitives."""
+    screen engine's change/trend primitives. ``tables`` ({repdte: quarter
+    table}) lets a caller fetch each quarter ONCE for every bank instead of
+    re-reading it per bank."""
     keys = [k for k in keys if is_dynamic(k)]
     certs = row_certs(row)
     codes = codes_needed(keys, formulas)
     out = {k: [] for k in keys}
     for rep in repdtes:
-        vals = values_for(keys, certs, quarter_table(codes, rep, certs), formulas)
+        table = (tables or {}).get(rep)
+        if table is None:
+            table = quarter_table(codes, rep, certs)
+        vals = values_for(keys, certs, table, formulas)
         for k in keys:
             out[k].append(vals.get(k))
     return out

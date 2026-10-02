@@ -163,7 +163,7 @@ class TestScreenRunGating(unittest.TestCase):
 
         # Build: P/TBV < 1.5 → only AMAL passes. Still nothing until Run.
         at.button(key="filt_add_valuation").click().run()
-        at.selectbox(key="filt_metric_valuation_0").set_value(_filter_index("P/TBV"))
+        at.selectbox(key="filt_metric_valuation_0").set_value("ptbv_ratio")
         at.selectbox(key="filt_op_valuation_0").set_value("<")
         at.number_input(key="filt_val_valuation_0").set_value(1.5)
         at.run()
@@ -195,10 +195,13 @@ class TestScreenRunGating(unittest.TestCase):
     def test_save_then_open_from_launcher_reruns_identically(self):
         at = self._open_new_screen()
         at.button(key="filt_add_valuation").click().run()
-        at.selectbox(key="filt_metric_valuation_0").set_value(_filter_index("CET1"))
+        at.selectbox(key="filt_metric_valuation_0").set_value("cet1_ratio")
         at.selectbox(key="filt_op_valuation_0").set_value(">")
         at.number_input(key="filt_val_valuation_0").set_value(13.0)
-        at.selectbox(key="sort_valuation").set_value(1)
+        # The Sort widget holds the metric KEY. Set it on a freshly fetched
+        # widget after a run (AppTest's select_index mis-maps label options).
+        at.run()
+        at.selectbox(key="sort_valuation").set_value("price")
         at.button(key="btn_run_valuation").click().run()
         self.assertEqual(self._result_tickers(at), ["JPM"])
 
@@ -208,8 +211,8 @@ class TestScreenRunGating(unittest.TestCase):
         cfg = self.mem.store["Well capitalized"]["config"]
         self.assertEqual(cfg["filters"], [{"kind": "absolute", "metric_key": "cet1_ratio",
                                            "op": ">", "value": 13.0}])
-        self.assertEqual((cfg["tab_key"], cfg["sort_idx"], cfg["sort_order"]),
-                         ("valuation", 1, "Desc"))
+        self.assertEqual((cfg["tab_key"], cfg["sort_key"], cfg["sort_order"]),
+                         ("valuation", "price", "Desc"))
 
         # Back to the launcher: the saved row is listed; opening it loads + runs.
         at.button(key="btn_close_valuation").click().run()
@@ -247,9 +250,12 @@ class TestScreenRunGating(unittest.TestCase):
 
             # Screen on the formula: > 10 % keeps AMAL (25 %), drops JPM (5 %).
             at.button(key="filt_add_valuation").click().run()
-            fidx = next(i for i, o in enumerate(at.selectbox(key="filt_metric_valuation_0").options)
+            fkey = next(d["key"] for d in at.session_state["screen_dyn"]
+                        if d["key"].startswith("fx:"))
+            self.assertTrue(fkey.startswith("fx:big_cds_dom_"))
+            _unused = next(i for i, o in enumerate(at.selectbox(key="filt_metric_valuation_0").options)
                         if "Big CDs" in o)
-            at.selectbox(key="filt_metric_valuation_0").set_value(fidx)
+            at.selectbox(key="filt_metric_valuation_0").set_value(fkey)
             at.selectbox(key="filt_op_valuation_0").set_value(">")
             at.number_input(key="filt_val_valuation_0").set_value(10.0)
             at.button(key="btn_run_valuation").click().run()
@@ -257,14 +263,14 @@ class TestScreenRunGating(unittest.TestCase):
             res = at.session_state["_screen_result"]
             self.assertEqual([m["ticker"] for m in res["metrics"]], ["AMAL"])
             self.assertEqual(res["metrics"][0]["fdic:CD3LES"], 1000.0 * 1000)
-            self.assertAlmostEqual(res["metrics"][0]["fx:big_cds_dom"], 25.0)
+            self.assertAlmostEqual(res["metrics"][0][fkey], 25.0)
             self.assertEqual(res["cr_repdte"], "20260630")
 
             at.text_input(key="new_screen_name_valuation").set_value("CD screen")
             at.button(key="save_screen_btn_valuation").click().run()
             cfg = self.mem.store["CD screen"]["config"]
-            self.assertEqual([d["key"] for d in cfg["dyn"]], ["fdic:CD3LES", "fx:big_cds_dom"])
-            self.assertEqual(cfg["filters"][0]["metric_key"], "fx:big_cds_dom")
+            self.assertEqual([d["key"] for d in cfg["dyn"]], ["fdic:CD3LES", fkey])
+            self.assertEqual(cfg["filters"][0]["metric_key"], fkey)
 
             at.button(key="btn_close_valuation").click().run()
             at.button(key="open_CD_screen.json").click().run()
