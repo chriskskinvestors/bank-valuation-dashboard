@@ -164,7 +164,7 @@ class TestSavedScreenRoundTrip(unittest.TestCase):
         self.assertEqual(ss["screen_valuation_scope_type"], "All banks")
         self.assertNotIn("screen_valuation_manual", ss)
         self.assertEqual(ss["asof_valuation"], "Latest (live)")
-        self.assertEqual((ss["sort_valuation"], ss["order_valuation"]), (None, "Desc"))
+        self.assertEqual((ss["sort_valuation"], ss["order_valuation"]), ("", "Desc"))
         self.assertNotIn("custom_cols_valuation", ss)
         self.assertEqual(ns["_filter_specs_from_state"](), [])
 
@@ -202,6 +202,14 @@ class TestKeyBasedState(unittest.TestCase):
         self.assertIsNone(ns["_screen_legacy_sort_key"]("valuation", 999))
         self.assertIsNone(ns["_screen_legacy_sort_key"]("valuation", 0))
         self.assertIsNone(ns["_screen_legacy_sort_key"]("no_such_tab", 1))
+
+    def test_default_options_are_empty_string_not_none(self):
+        """None renders as an EMPTY selectbox ("Choose an option"), not as
+        "Default"/"—" (seen in prod 2026-10-03) — the first option is ""."""
+        self.assertIn('filter_keys = [""] + [k for k, _ in filterable]', SRC)
+        self.assertIn('sort_keys = [""]', SRC)
+        self.assertNotIn('filter_keys = [None]', SRC)
+        self.assertNotIn('sort_keys = [None]', SRC)
 
     def test_widgets_are_key_based_in_source(self):
         blk = SRC[SRC.index('elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:'):]
@@ -248,7 +256,7 @@ class TestFilterRows(unittest.TestCase):
         ns = _ns()
         ss = ns["st"].session_state
         ss.update({"num_filters_valuation": 1, "filt_kind_valuation_0": "Absolute",
-                   "filt_metric_valuation_0": None, "filt_op_valuation_0": ">",
+                   "filt_metric_valuation_0": "", "filt_op_valuation_0": ">",
                    "filt_val_valuation_0": 5.0})
         self.assertEqual(ns["_filter_specs_from_state"](), [])
 

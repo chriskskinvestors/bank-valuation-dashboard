@@ -404,7 +404,7 @@ def _screen_clear_filters(ss, tk):
         ss.pop(f"screen_{tk}_{_sfx}", None)
     ss[f"screen_{tk}_scope_type"] = "All banks"
     ss[f"asof_{tk}"] = "Latest (live)"
-    ss[f"sort_{tk}"] = None
+    ss[f"sort_{tk}"] = ""        # "" = Default (None renders as an empty selectbox)
     ss[f"order_{tk}"] = "Desc"
     ss.pop(f"custom_cols_{tk}", None)
     ss["screen_dyn"] = []
@@ -425,9 +425,9 @@ def _screen_restore_cfg(ss, cfg, tk):
     ss["screen_dyn"] = _screen_valid_dyn(cfg.get("dyn"))
     valid = {k for k, _ in _screen_filter_options(ss)}
     if "sort_key" in cfg:
-        ss[f"sort_{tk}"] = cfg["sort_key"]
+        ss[f"sort_{tk}"] = cfg["sort_key"] or ""
     elif cfg.get("sort_idx") is not None:
-        ss[f"sort_{tk}"] = _screen_legacy_sort_key(tk, cfg["sort_idx"])
+        ss[f"sort_{tk}"] = _screen_legacy_sort_key(tk, cfg["sort_idx"]) or ""
     if cfg.get("sort_order"):
         ss[f"order_{tk}"] = cfg["sort_order"]
     restored = 0
@@ -930,7 +930,9 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     crf.register(_dyn_keys, _formulas)
     filterable = _screen_filter_options(st.session_state)
     filter_label = dict(filterable)
-    filter_keys = [None] + [k for k, _ in filterable]
+    # "" is the "no metric" option: a None value renders as an EMPTY
+    # selectbox ("Choose an option") instead of "—" (prod, 2026-10-03).
+    filter_keys = [""] + [k for k, _ in filterable]
 
     def _filter_specs_from_state():
         """Draft filter specs from the widget-backed session keys (the same keys
@@ -976,7 +978,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     _asof_opts = ["Latest (live)"] + [quarter_label(q) for q in _qs_list]
 
     sort_labels = ["Default"]
-    sort_keys = [None]
+    sort_keys = [""]            # "" = Default (see filter_keys)
     for col_key in tab_columns:
         m = METRICS_BY_KEY.get(col_key)
         if m:
@@ -1216,7 +1218,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
             with mc:
                 _mk = f"filt_metric_{tab_key}_{fi}"
                 if st.session_state.get(_mk) not in filter_label:
-                    st.session_state[_mk] = None     # stale/unknown → "—", never re-pointed
+                    st.session_state[_mk] = ""       # stale/unknown → "—", never re-pointed
                 st.selectbox(
                     "Metric", options=filter_keys,
                     format_func=lambda k, _fl=filter_label: _fl.get(k, "—") if k else "—",
@@ -1324,12 +1326,12 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                     st.caption(f"ƒ **{f['name']}** = `{f['expr']}`")
         with r3[3]:
             if st.session_state.get(f"sort_{tab_key}") not in sort_keys:
-                st.session_state[f"sort_{tab_key}"] = None
+                st.session_state[f"sort_{tab_key}"] = ""
             _sort_lbl = dict(zip(sort_keys, sort_labels))
             sort_key = st.selectbox(
                 "Sort", options=sort_keys,
                 format_func=lambda k, _l=_sort_lbl: _l.get(k, "Default"),
-                key=f"sort_{tab_key}")
+                key=f"sort_{tab_key}") or None      # "" (Default) → no sort
         with r3[4]:
             sort_order = st.selectbox("Order", options=["Desc", "Asc"],
                                       key=f"order_{tab_key}")
