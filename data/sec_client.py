@@ -400,6 +400,7 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
     # All durations within the lookback, de-duplicated by (start, end) with
     # the latest filing winning (restatements overwrite originals).
     durations: dict[tuple[str, str], dict] = {}
+    history: dict[tuple[str, str], list] = {}   # every (filed, val) per duration
     for unit_type in ("USD", "USD/shares", "pure"):
         for e in units.get(unit_type, []):
             if e.get("form") not in ("10-K", "10-Q"):
@@ -412,12 +413,68 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             except ValueError:
                 continue
             key = (start, end)
+            history.setdefault(key, []).append((e.get("filed", ""), val))
+            # A 12-month duration is a 10-K fact: a 10-Q never overrides it
+            # (FCBC's Q1-2026 10-Q tags FY2025 = 12,027,000 — its Q1 value —
+            # beside the 10-K's 48,794,000).
+            annual_10k = 350 <= span <= 380 and e.get("form") == "10-K"
             prev = durations.get(key)
-            if prev is None or e.get("filed", "") > prev["filed"]:
-                durations[key] = {"val": val, "filed": e.get("filed", ""), "span": span}
+            if (prev is None
+                    or (annual_10k and not prev["annual_10k"])
+                    or (annual_10k == prev["annual_10k"]
+                        and e.get("filed", "") > prev["filed"])):
+                durations[key] = {"val": val, "filed": e.get("filed", ""), "span": span,
+                                  "annual_10k": annual_10k}
 
     def _gap_days(a: str, b: str) -> int:
         return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
+
+    # The textbook TTM when the newest period is an interim YTD: current YTD +
+    # the fiscal year ending just before it − that year's same-length YTD
+    # comparative. Exact for DOLLAR flows, and needs no interior quarter — so
+    # it fills the window when companyfacts skipped a 10-Q (PNFP / CBC /
+    # FNWB: Q3-25 never ingested → n/a). Used only where the stitched window
+    # below can't form. NEVER for per-share concepts: EPS is not additive
+    # across share bases — COF's H1-25 EPS (−6.74) sits on the pre-Discover
+    # share count, so 8.07 + 4.03 + 6.74 = 18.84 vs the quarters' 16.70.
+    textbook = None
+    per_share = "USD/shares" in units
+    if durations and not per_share:
+        latest_end = max(end for (_s, end) in durations)
+        ytd = [(s, d) for (s, e), d in durations.items()
+               if e == latest_end and d["span"] < 350]
+        if ytd and not any(e == latest_end and d["span"] >= 350
+                           for (_s, e), d in durations.items()):
+            s_cur, d_cur = max(ytd, key=lambda x: x[1]["span"])
+            fy = [(s, d) for (s, e), d in durations.items()
+                  if 350 <= d["span"] <= 380 and 0 < _gap_days(e, s_cur) <= 5]
+            if fy:
+                s_fy, d_fy = max(fy, key=lambda x: x[1]["filed"])
+                e_fy = next(e for (s, e), d in durations.items() if d is d_fy)
+                prior = [d for (s, e), d in durations.items()
+                         if s == s_fy and abs(d["span"] - d_cur["span"]) <= 15
+                         and 350 <= _gap_days(e, latest_end) <= 380]
+                # The FY figure must be the CURRENT vintage of its year. A
+                # 10-K that itself restated (re-reported some duration at a
+                # new value) IS the current basis; later filings re-reporting
+                # interior quarters at the restated values are consistent
+                # with it. A 10-K that restated nothing, followed by a filing
+                # that CHANGED a period inside its year, is stale (a later
+                # error correction) — the stitched quarters below carry it.
+                def _changed_at(key, filed):
+                    vals_before = {v for f, v in history.get(key, []) if f < filed}
+                    vals_at = {v for f, v in history.get(key, []) if f == filed}
+                    return bool(vals_before) and bool(vals_at - vals_before)
+                fy_restated = any(_changed_at(k, d_fy["filed"]) for k in history)
+                superseded = not fy_restated and any(
+                    s_fy <= s and e <= e_fy
+                    and any(f > d_fy["filed"] and v not in
+                            {v2 for f2, v2 in history[(s, e)] if f2 <= d_fy["filed"]}
+                            and any(f2 <= d_fy["filed"] for f2, _ in history[(s, e)])
+                            for f, v in history[(s, e)])
+                    for (s, e) in history if (s, e) != (s_fy, e_fy))
+                if len(prior) == 1 and not superseded:
+                    textbook = float(d_cur["val"] + d_fy["val"] - prior[0]["val"])
 
     # Direct ~3-month facts
     quarters: dict[str, float] = {
@@ -479,6 +536,9 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
         ends = sorted(quarters)[-4:]
         if all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
             return float(sum(quarters[e] for e in ends))
+
+    if textbook is not None:
+        return textbook
 
     # Path 2: latest annual report — ONLY when nothing newer exists. A fiscal
     # year that ended before the freshest filed period is not the trailing
