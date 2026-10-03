@@ -592,7 +592,63 @@ class TestTtmWindowIntegrity(unittest.TestCase):
         entries = [r for r in self.SFST_SHAPE
                    if r[:2] not in (("2025-01-01", "2025-09-30"),
                                     ("2025-07-01", "2025-09-30"))]
+        # The quarters can't form a window, but the textbook TTM needs no Q3:
+        # Q1-26 + FY-25 − Q1-25 = 9 + 29 − 5 = 33 — the true trailing twelve
+        # months, never the FY 29 (REVIEW 2026-10-02 P1-7).
+        self.assertEqual(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"), 33.0)
+        # Without the prior-year comparative nothing forms either way → None.
+        entries = [r for r in entries if r[:2] != ("2025-01-01", "2025-03-31")]
         self.assertIsNone(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"))
+
+    def test_per_share_ttm_never_uses_ytd_arithmetic(self):
+        from data.sec_client import _extract_ttm_value
+        # COF diluted EPS around the Discover close (May 2025): EPS is not
+        # additive across share bases — H1-25 (−6.74) is on the pre-merger
+        # share count. YTD arithmetic would give 8.07 + 4.03 + 6.74 = 18.84;
+        # the quarters give 4.83 + (4.03 − 0.23) + 3.34 + 4.73 = 16.70.
+        rows = [
+            ("2025-01-01", "2025-03-31", 3.45, "10-Q", "2026-05-07"),
+            ("2025-01-01", "2025-06-30", -6.74, "10-Q", "2026-07-28"),
+            ("2025-04-01", "2025-06-30", -8.58, "10-Q", "2026-07-28"),
+            ("2025-01-01", "2025-09-30", 0.23, "10-Q", "2025-11-03"),
+            ("2025-07-01", "2025-09-30", 4.83, "10-Q", "2025-11-03"),
+            ("2025-01-01", "2025-12-31", 4.03, "10-K", "2026-02-19"),
+            ("2026-01-01", "2026-03-31", 3.34, "10-Q", "2026-05-07"),
+            ("2026-01-01", "2026-06-30", 8.07, "10-Q", "2026-07-28"),
+            ("2026-04-01", "2026-06-30", 4.73, "10-Q", "2026-07-28"),
+        ]
+        facts = {"facts": {"us-gaap": {"EarningsPerShareDiluted": {"units": {"USD/shares": [
+            {"start": s_, "end": e, "val": v, "form": f, "filed": d}
+            for s_, e, v, f, d in rows]}}}}}
+        self.assertAlmostEqual(_extract_ttm_value(facts, "EarningsPerShareDiluted"),
+                               16.70, places=9)
+
+    def test_10q_never_overrides_a_10k_annual_duration(self):
+        from data.sec_client import _extract_ttm_value
+        # FCBC: its Q1-2026 10-Q mis-tags FY2025 with its Q1 value (12.027M)
+        # after the 10-K's 48.794M. TTM = H1-26 + FY-25 − H1-25 =
+        # 34.540 + 48.794 − 24.064 = 59.270 ($M), the same as the stitched
+        # quarters (12.266 + 12.464 + 12.027 + 22.513).
+        M = 1e6
+        entries = [
+            ("2025-01-01", "2025-06-30", 24.064 * M, "10-Q", "2026-08-07"),
+            ("2025-07-01", "2025-09-30", 12.266 * M, "10-K", "2026-03-06"),
+            ("2025-01-01", "2025-09-30", 36.329 * M, "10-Q", "2025-11-07"),
+            ("2025-01-01", "2025-12-31", 48.794 * M, "10-K", "2026-03-06"),
+            ("2025-01-01", "2025-12-31", 12.027 * M, "10-Q", "2026-05-08"),
+            ("2025-10-01", "2025-12-31", 12.464 * M, "10-K", "2026-03-06"),
+            ("2026-01-01", "2026-03-31", 12.027 * M, "10-Q", "2026-05-08"),
+            ("2026-01-01", "2026-06-30", 34.540 * M, "10-Q", "2026-08-07"),
+            ("2026-04-01", "2026-06-30", 22.513 * M, "10-Q", "2026-08-07"),
+        ]
+        self.assertAlmostEqual(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"),
+                               59.270 * M, delta=1.0)
+        # Without the direct Q4 the stitch needs Q4 = FY − 9M: the FY must be
+        # the 10-K's (48.794 − 36.329 = 12.465), never the 10-Q mis-tag
+        # (12.027 − 36.329 < 0).
+        entries = [r for r in entries if r[:2] != ("2025-10-01", "2025-12-31")]
+        self.assertAlmostEqual(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"),
+                               (12.266 + 12.465 + 12.027 + 22.513) * M, delta=1.0)
 
     def test_annual_only_filer_still_gets_fy(self):
         from data.sec_client import _extract_ttm_value
