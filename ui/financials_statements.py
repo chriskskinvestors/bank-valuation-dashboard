@@ -2127,8 +2127,10 @@ _CRIT_ROWS = [
 # Leverage is RBC1AAJ — the regulatory Tier 1 leverage ratio, Tier 1 ÷ QUARTER-
 # AVERAGE assets (AVASSETJ). RBCT1JR divides by period-END assets and missed
 # by 1.3pp (REVIEW 2026-10-05 P1-8: HBAN Q1'26 8.92% vs 10.24%). Exact for a
-# multi-charter group (cert_group: ΣRBCT1 / ΣAVASSETJ). config.py's
-# leverage_ratio metric still reads RBCT1JR — not changed here.
+# multi-charter group (cert_group: ΣRBCT1 / ΣAVASSETJ). One convention
+# platform-wide: config.py's leverage_ratio reads RBC1AAJ too (FDIC populates
+# it for the same 4,296 of 4,313 filers as RBCT1JR, CBLR electors included,
+# 2026-06-30).
 # T1/T2 component walks are the RC-R section further down the page; LCR/HQLA
 # are large-bank-only (SNL shows NA too) — covered by the holdco caption.
 _CAPITAL_ADEQUACY = [

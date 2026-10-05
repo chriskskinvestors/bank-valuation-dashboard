@@ -553,7 +553,7 @@ def build_fdic_provenance(cert: int, field: str, repdte,
             "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR",
         ) else "%" if field in (
             "ROA", "ROE", "NIMY", "EEFFR", "NCLNLSR", "IDT1CER",
-            "INTINCY", "INTEXPY", "RBCT1JR", "RBCRWAJ",
+            "INTINCY", "INTEXPY", "RBCT1JR", "RBC1AAJ", "RBCRWAJ",
         ) else "",
     )
 

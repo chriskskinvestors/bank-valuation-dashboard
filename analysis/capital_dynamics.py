@@ -58,7 +58,7 @@ def build_capital_timeline(hist_records: list[dict], shares_outstanding: float |
         total_loans = float("nan") if total_loans is None else total_loans
         cet1 = r.get("IDT1CER")
         total_cap = r.get("RBCRWAJ")
-        leverage = r.get("RBCT1JR")
+        leverage = r.get("RBC1AAJ")   # Tier 1 ÷ quarter-avg assets
 
         tbv = equity - max(goodwill, intangibles)  # use max to be conservative
 

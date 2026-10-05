@@ -53,7 +53,7 @@ FDIC_RATIO_PASSTHROUGH = {
     "npl_ratio": "NCLNLSR",
     "cet1_ratio": "IDT1CER",
     "total_capital_ratio": "RBCRWAJ",
-    "leverage_ratio": "RBCT1JR",
+    "leverage_ratio": "RBC1AAJ",
     "efficiency_ratio": "EEFFR",
 }
 

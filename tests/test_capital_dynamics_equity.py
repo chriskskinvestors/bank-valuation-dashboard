@@ -27,7 +27,7 @@ def _rec(repdte, eqtot, intangw=100_000, intan=150_000, netinc=40_000, loans=500
          cet1=11.5, total_cap=13.0, leverage=9.5):
     return {"REPDTE": repdte, "EQTOT": eqtot, "INTANGW": intangw,
             "INTAN": intan, "NETINC": netinc, "LNLSNET": loans,
-            "IDT1CER": cet1, "RBCRWAJ": total_cap, "RBCT1JR": leverage}
+            "IDT1CER": cet1, "RBCRWAJ": total_cap, "RBC1AAJ": leverage}
 
 
 class TestCapitalTimelineEquityGuard(unittest.TestCase):

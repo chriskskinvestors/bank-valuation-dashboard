@@ -109,8 +109,8 @@ _EXACT_QUOTIENTS = {
     "RBCRWAJ": ("RBC", "RWAJ", 100),        # total RBC ratio
     "RBC1RWAJ": ("RBCT1J", "RWAJ", 100),    # tier 1 RBC ratio
     "IDT1CER": ("RBCT1C", "RWAJ", 100),     # CET1 ratio (2026-09-22)
-    "RBCT1JR": ("RBCT1J", "ASSET", 100),    # platform leverage ratio
-    "RBC1AAJ": ("RBCT1", "AVASSETJ", 100),  # PCA leverage (quarter-avg assets
+    "RBCT1JR": ("RBCT1J", "ASSET", 100),    # Tier 1 ÷ period-end assets
+    "RBC1AAJ": ("RBCT1", "AVASSETJ", 100),  # platform leverage (quarter-avg assets
                                             # as REPORTED — a summable level)
     "LNLSDEPR": ("LNLSNET", "DEP", 100),
     "LNLSNTV": ("LNLSNET", "ASSET", 100),

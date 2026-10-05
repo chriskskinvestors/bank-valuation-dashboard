@@ -326,7 +326,7 @@ class TestCapitalTimelineNoneRatios(unittest.TestCase):
     def test_all_none_cet1_builds_with_na_qoq(self):
         from analysis.capital_dynamics import build_capital_timeline
         recs = [{"REPDTE": f"2025-{m:02d}-30", "EQTOT": 1000 + m, "NETINC": 10 * m,
-                 "LNLSNET": 5000, "IDT1CER": None, "RBCRWAJ": None, "RBCT1JR": None}
+                 "LNLSNET": 5000, "IDT1CER": None, "RBCRWAJ": None, "RBC1AAJ": None}
                 for m in (3, 6, 9, 12)]
         tl = build_capital_timeline(recs)
         self.assertEqual(len(tl), 4)

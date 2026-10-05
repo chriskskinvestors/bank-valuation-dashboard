@@ -234,6 +234,20 @@ class TestLoanYieldAndDepositCost(unittest.TestCase):
 class TestLeverageRatio(unittest.TestCase):
     """P1-8: the regulatory Tier 1 leverage ratio is RBC1AAJ."""
 
+    def test_one_leverage_convention_platform_wide(self):
+        # The screen/Overview metric, Financial Highlights, the capital
+        # timeline and the statement rows all read the same field — the
+        # trend chart under the Capital Adequacy table plots leverage_ratio.
+        from pathlib import Path
+        import config
+        m = next(m for m in config.METRICS if m["key"] == "leverage_ratio")
+        self.assertEqual(m["fdic_field"], "RBC1AAJ")
+        root = Path(__file__).resolve().parent.parent
+        for rel in ("ui/financial_highlights.py", "analysis/capital_dynamics.py",
+                    "ui/financials_statements.py"):
+            src = (root / rel).read_text(encoding="utf-8")
+            self.assertNotRegex(src, r'(get\(|"pct",\s*|fdic_pct\([^)]*)"RBCT1JR"', rel)
+
     HBAN = pd.DataFrame([{"REPDTE": "2026-03-31", "RBC1AAJ": 10.235658787785283,
                           "RBCT1JR": 8.920782246563922}])
 
