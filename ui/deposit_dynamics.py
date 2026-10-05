@@ -63,7 +63,7 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     # ── Header ─────────────────────────────────────────────────────────
     if show_title:
         title_bar(f"{get_name(ticker)} ({ticker})", "Deposit Trends")
-    st.markdown('<div class="ksk-sec">Deposit &amp; Loan Composition</div>',
+    st.markdown('<div class="ksk-sec">Deposit Composition &amp; Trends</div>',
                 unsafe_allow_html=True)
 
     # ── Alerts ─────────────────────────────────────────────────────────
