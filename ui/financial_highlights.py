@@ -379,7 +379,16 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
         eps, eps_note = _flow_for(d, eps_q, eps_a, quarterly)
         dps, dps_note = _flow_for(d, dps_q, dps_a, quarterly)
         basic_eps, _ = _flow_for(d, epsb_q, epsb_a, quarterly)
-        avg_dil, _ = _flow_for(d, wad_q, wad_a, quarterly)
+        # A weighted-average SHARE COUNT is never differenced: FY − (Q1+Q2+Q3)
+        # gave ONB Q4-25 −707,484,000 (and an "EPS before amortization" below
+        # EPS). Quarterly = a reported 3-month count or n/a. A count far off
+        # the period-end shares is a mis-scaled tag (LARK tags ×1000:
+        # 6,118,861,000 vs 6,098,324 outstanding) — n/a, never a silent
+        # zero add-back (REVIEW 2026-10-05 P0-3 / P1-12).
+        avg_dil = (wad_q if quarterly else wad_a).get(key)
+        if avg_dil is not None and (avg_dil <= 0 or (
+                sh and not 0.2 <= avg_dil / sh <= 5)):
+            avg_dil = None
         amort, _ = _flow_for(d, amort_q, amort_a, quarterly)
         # Diluted EPS before intangible amortization: add back the after-tax
         # intangible amortization per diluted share (21% statutory rate, flagged
