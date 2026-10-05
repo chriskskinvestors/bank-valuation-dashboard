@@ -228,10 +228,11 @@ class TestJobsForceRefresh(unittest.TestCase):
         # The Cloud Run retry after a 5400s timeout must not recrawl banks the
         # first attempt finished (2h-old file), but must force a 13h-old one.
         from jobs import refresh_13f
+        # Files the job writes carry complete=True (every search succeeded).
         files = {"AAA.json": {"cached_at": _stamp(timedelta(hours=2)),
-                              "holders": [{"filer_cik": "1"}]},
+                              "holders": [{"filer_cik": "1"}], "complete": True},
                  "BBB.json": {"cached_at": _stamp(timedelta(hours=13)),
-                              "holders": [{"filer_cik": "2"}]}}
+                              "holders": [{"filer_cik": "2"}], "complete": True}}
         seen = []
 
         def _fetch(t, name="", *a, **k):

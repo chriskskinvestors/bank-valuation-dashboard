@@ -84,5 +84,72 @@ class TestSearchFailureCounted(unittest.TestCase):
         self.assertEqual(f13.SEARCH_FAILURES[0], 0)
 
 
+def _failing_search(*a, **k):
+    f13.SEARCH_FAILURES[0] += 1
+    return []
+
+
+class TestFailedSearchNeverOverwrites(unittest.TestCase):
+    """2026-10-05: SEC 403s (fair-access block) made ~450 searches fail; each
+    bank's snapshot was overwritten with holders=[] and the task retry resumed
+    past them as "already done" — 115/597 with holders, exit 0."""
+
+    GOOD = {"ticker": "ONB", "cached_at": "2026-09-30T00:00:00",
+            "holders": [{"filer_cik": "1", "filer_name": "A FUND"}], "complete": True}
+
+    def setUp(self):
+        f13.SEARCH_FAILURES[0] = 0
+        self.saved = []
+        for target, val in (("save_json", lambda *a, **k: self.saved.append(a)),
+                            ("load_json", lambda *a, **k: dict(self.GOOD)),
+                            ("_search_13f_for_ticker", _failing_search)):
+            p = mock.patch.object(f13, target, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_job_path_raises_and_keeps_the_snapshot(self):
+        with self.assertRaises(RuntimeError):
+            f13.fetch_institutional_holdings("ONB", "Old National Bancorp", force=True)
+        self.assertEqual(self.saved, [])
+
+    def test_page_path_returns_last_good_and_writes_nothing(self):
+        got = f13.fetch_institutional_holdings("ONB", "Old National Bancorp")
+        self.assertEqual([h["filer_name"] for h in got], ["A FUND"])
+        self.assertEqual(self.saved, [])
+
+    def test_successful_build_is_marked_complete(self):
+        ok = mock.patch.object(f13, "_search_13f_for_ticker", lambda *a, **k: [])
+        with ok:
+            f13.fetch_institutional_holdings("ONB", "Old National Bancorp",
+                                             force=True, with_changes=False)
+        self.assertTrue(self.saved and self.saved[0][2]["complete"])
+
+    def test_backfill_quarter_stores_nothing_on_a_failed_search(self):
+        with mock.patch.object(f13, "load_json", lambda *a, **k: {}),                 mock.patch.object(f13, "_save_quarter_snapshots",
+                                  lambda *a, **k: self.saved.append(a)):
+            with self.assertRaises(RuntimeError):
+                f13.backfill_quarter("ONB", "Old National Bancorp", "2026Q1")
+        self.assertEqual(self.saved, [])
+
+
+class TestWarmJobResumesOnlyCompleteSnapshots(unittest.TestCase):
+    def _run(self, snapshot):
+        from datetime import datetime
+        import jobs.refresh_13f as job
+        fetched = []
+        snap = dict(snapshot, cached_at=datetime.now().isoformat())
+        with mock.patch("data.bank_universe.get_universe_tickers", lambda: ["ONB"]),                 mock.patch("data.bank_mapping.get_name", lambda t: "Old National"),                 mock.patch("data.cloud_storage.load_json", lambda *a, **k: snap),                 mock.patch.object(f13, "fetch_institutional_holdings",
+                                  lambda t, n, force=False: fetched.append(t) or [{"x": 1}]),                 mock.patch.object(job.time, "sleep", lambda s: None):
+            f13.SEARCH_FAILURES[0] = 0
+            job.main()
+        return fetched
+
+    def test_outage_era_empty_snapshot_is_refetched(self):
+        self.assertEqual(self._run({"holders": []}), ["ONB"])
+
+    def test_complete_snapshot_is_resumed(self):
+        self.assertEqual(self._run({"holders": [], "complete": True}), [])
+
+
 if __name__ == "__main__":
     unittest.main()
