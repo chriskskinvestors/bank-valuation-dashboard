@@ -836,11 +836,16 @@ def backfill_quarter(ticker: str, company_name: str = "",
         search_term = co_clean or ticker
 
     startdt, enddt = window
+    failures_before = SEARCH_FAILURES[0]
     candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2,
                                         startdt=startdt, enddt=enddt,
                                         quarter=quarter.strip().upper())
     holders = _holders_from_candidates(candidates, search_term, max_filers)
     holders = _cusip_top_up(holders, search_term, max_filers, startdt, enddt)
+    if SEARCH_FAILURES[0] > failures_before:
+        # A failed name or CUSIP search makes the list partial; a stored
+        # quarter is skipped forever after (merge-only) — store nothing.
+        raise RuntimeError("EDGAR full-text search failed — quarter not stored")
     # Route strictly by each filing's own covered quarter (an amended or
     # late-window filing lands in ITS quarter, never mislabeled into this one).
     if holders:
@@ -873,9 +878,21 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
         co_clean = re.sub(r"(Inc\.|Corp\.|Corporation|Company|Co\.|Ltd\.).*$", "", company_name).strip()
         search_term = co_clean or ticker
 
+    failures_before = SEARCH_FAILURES[0]
     candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2)
     all_holders = _holders_from_candidates(candidates, search_term, max_filers)
     all_holders = _cusip_top_up(all_holders, search_term, max_filers)
+    if SEARCH_FAILURES[0] > failures_before:
+        # A failed search is not "no holders" (nor a partial list): never
+        # overwrite the last good snapshot with it. 2026-10-05: SEC 403s
+        # (fair-access block) wrote holders=[] over ~450 banks, and the
+        # task retry resumed past them as done. The job counts an error;
+        # a page keeps the last good copy (its holders carry their quarter).
+        if force:
+            raise RuntimeError("EDGAR full-text search failed — snapshot kept")
+        last = cached if cached is not None else load_json(
+            FORM13F_CACHE_PREFIX, f"{ticker.upper()}.json")
+        return (last or {}).get("holders", [])
 
     # Quarter-over-quarter position change vs each filer's 13F-HR for the
     # PREVIOUS report quarter. Best effort and bounded to what we display.
@@ -901,6 +918,9 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
             "ticker": ticker.upper(),
             "cached_at": datetime.now().isoformat(),
             "holders": all_holders,
+            # Every search behind this list succeeded — the warm job resumes
+            # past a snapshot only when this is set (jobs/refresh_13f).
+            "complete": True,
         })
     except Exception:
         pass

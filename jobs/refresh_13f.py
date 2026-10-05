@@ -111,7 +111,10 @@ def main() -> int:
     covered = failed = resumed = 0
     for i, t in enumerate(tickers, 1):
         done = load_json(FORM13F_CACHE_PREFIX, f"{t.upper()}.json")
-        if is_fresh(done, _RESUME_WINDOW_S) and "holders" in done:
+        # `complete`: written only when every search behind it succeeded —
+        # a pre-2026-10-05 snapshot (possibly an outage's holders=[]) is
+        # refetched, never resumed past.
+        if is_fresh(done, _RESUME_WINDOW_S) and done.get("complete"):
             resumed += 1
             covered += bool(done["holders"])
             continue
