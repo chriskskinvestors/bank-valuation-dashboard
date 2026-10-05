@@ -698,7 +698,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "price": price,
         "change_pct": compute_change_pct(price, prev_close),
         "volume": price_data.get("volume"),
-        "market_cap": compute_market_cap(price, shares),
+        # Current shares (cover count when newer than the balance sheet);
+        # per-share book values keep the quarter-end count.
+        "market_cap": compute_market_cap(
+            price, sec_data.get("shares_for_market_cap") or shares),
         # pe_ratio prices off the RESOLVED eps — the same figure the eps key
         # displays (never two different EPS values on one row).
         "pe_ratio": compute_pe_ratio(price, eps),
@@ -1329,7 +1332,8 @@ def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec
         if not cik:
             return dict(_CAPITAL_RETURN_DEFAULTS)
         price = price_data.get("price") if price_data else None
-        shares = sec_data.get("shares_outstanding") if sec_data else None
+        shares = ((sec_data.get("shares_for_market_cap")
+                   or sec_data.get("shares_outstanding")) if sec_data else None)
         mcap = (price * shares) if (price and shares) else None
         return _compute_capital_return(cik, mcap)
     except Exception:
