@@ -752,6 +752,32 @@ class TestTtmOrNoneInvariant(unittest.TestCase):
         self.assertEqual(result["net_income"], 33.0)
         self.assertTrue(result["net_income_is_ttm"])
 
+    def test_market_cap_shares_use_newer_cover_count(self):
+        from unittest.mock import patch
+        from data import sec_client
+        from analysis.valuation import compute_market_cap
+        # BAFN: preferred converted to 22,856,000 common AFTER 2026-06-30 —
+        # quarter-end 4,106,905, Aug-5 cover 26,962,815. Market cap prices the
+        # current count; book-per-share stays on the quarter-end count.
+        facts = self._facts(
+            self.ORPHAN_QUARTERS,
+            dei_shares=[("2026-08-05", 26_962_815, "10-Q", "2026-08-14")],
+            shares_entries=[("2026-06-30", 4_106_905, "10-Q", "2026-08-14")])
+        facts["facts"]["us-gaap"]["StockholdersEquity"] = {"units": {"USD": [
+            {"end": "2026-06-30", "val": 19_788_000.0, "form": "10-Q",
+             "filed": "2026-08-14"}]}}
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(result["shares_outstanding"], 4_106_905)
+        self.assertEqual(result["shares_for_market_cap"], 26_962_815)
+        self.assertAlmostEqual(compute_market_cap(10.0, result["shares_for_market_cap"]),
+                               269_628_150.0)
+        # A cover count dated BEFORE the balance sheet never replaces it.
+        facts["facts"]["dei"]["EntityCommonStockSharesOutstanding"]["units"]["shares"][0]["end"] = "2026-05-01"
+        with patch.object(sec_client, "fetch_company_facts", return_value=facts):
+            result = sec_client.get_latest_fundamentals(1)
+        self.assertEqual(result["shares_for_market_cap"], 4_106_905)
+
     def test_shares_cover_divergence_recorded_and_flagged(self):
         from unittest.mock import patch
         from data import sec_client
