@@ -251,7 +251,10 @@ def get_ma_history(cert: int, cik: int | None = None,
     # deal ``terms`` + pending ``milestones`` on every whole-company row (the
     # Recent Deals tab). The key carries the holdco CIK because the
     # pending/terminated legs only run when one is supplied.
-    key = f"ma_history:v10:{cert}:{int(cik) if cik else 0}"
+    # v11 (2026-10-05 hotfix): per-share cash needs per-share context, fee
+    # typo guard, ratio-side direction arbitration — the v10 rows carried
+    # aggregate cash as per-share.
+    key = f"ma_history:v11:{cert}:{int(cik) if cik else 0}"
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):

@@ -165,6 +165,12 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     if not sm:
         return [], not fetch_failed    # no legend — never guess the parties
     subject_co = " ".join(sm.group(1).split()).strip(" .,:;")
+    # A legend whose capture is not a company name ("Merger Investor
+    # Presentation 251 John Marshall Bancorp, Inc", "Cincinnati, Ohio - July
+    # 21, 2026. First Financial Bancorp" — both live on the first universe
+    # board, the latter a self-deal) is unreadable: no row, never a guess.
+    if re.search(r"\d", subject_co) or len(subject_co.split()) > 8:
+        return [], not fetch_failed
     # Self-detection by IDENTITY, not name tokens: the FDIC bank name and
     # the holdco name can differ in brand token ("Tri Counties Bank" vs
     # "TriCo Bancshares") — resolve the subject through the universe and
@@ -210,6 +216,19 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
         t_tick, _t_cert, t_cik = _universe_match(tgt_side)
         a_tick, _a_cert, _a_cik = _universe_match(acq_side)
         tgt_cik = t_cik
+        # The ratio sentence arbitrates DIRECTION over the legend: a target
+        # filing its own 425s may legend the registrant (acquirer) as the
+        # "Subject Company" (live: Tri-County's 425s named HBT, so the board
+        # showed TYFG "acquiring" HBT at 0.28x). If the per-share side is
+        # self, we are being acquired.
+        if t_cik and int(t_cik) == int(cik) and direction == "acquisition":
+            direction = "sale"
+            counterparty = " ".join(acq_side.split())
+            cp_tick, cp_cert, cp_cik = _universe_match(counterparty)
+        elif _a_cik and int(_a_cik) == int(cik) and direction == "sale":
+            direction = "acquisition"
+            counterparty = " ".join(tgt_side.split())
+            cp_tick, cp_cert, cp_cik = _universe_match(counterparty)
         if value is None and t_cik and a_tick:
             shares, sh_end, s_ok = _shares_outstanding_asof(t_cik, announce)
             price, p_date, p_ok = _close_before(a_tick, announce)

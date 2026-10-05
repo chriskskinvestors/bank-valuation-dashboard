@@ -194,6 +194,14 @@ _RATIO_MIXED_RE = re.compile(
     r"[\d,]+(?:\.\d+)?\s+in\s+cash\s+for\s+each\s+(?:outstanding\s+)?"
     r"(?:share\s+of\s+)?([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+"
     r"(?:common\s+stock|shares?|stock)")
+# Cash-first mixed form with a comma share count: "converted into the right
+# to receive $69,850 in cash and approximately 2,869 Civista common shares"
+# (live-verified CIVB 8-K 2025-07-11; the target is a 500-share bank). The
+# target side is not named in the sentence -> "".
+_RATIO_CASH_FIRST_RE = re.compile(
+    r"right\s+to\s+receive\s+\$\s?[\d,]+(?:\.\d+)?\s+in\s+cash\s+and\s+"
+    r"(?:approximately\s+)?(\d{1,3}(?:,\d{3})*(?:\.\d{1,4})?)\s+"
+    r"([A-Z][\w.&'\-]{1,30})\s+(?:common\s+)?shares?\b")
 # Election: "each share of VBI common stock will be converted ... into the
 # right to receive (i) $1,000.00 in cash, (ii) 38.5000 shares of Seacoast
 # common stock" (live-verified SBCF 8-K 2025-05-29).
@@ -241,6 +249,8 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
     for m in _RATIO_PAREN_RE.finditer(text):
         found.append((float(m.group(1)), m.group(2).strip(), ""))
+    for m in _RATIO_CASH_FIRST_RE.finditer(text):
+        found.append((float(m.group(1).replace(",", "")), m.group(2).strip(), ""))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
     return found[0]
@@ -476,15 +486,29 @@ def extract_stated_value(text: str) -> int | None:
 
 _NUM = r"(\d{1,4}(?:,\d{3})*(?:\.\d{1,4})?)"
 
-# "$19.58 in cash for each share" / "$19.58 per share in cash" / "$15.93 in
-# cash (the "Cash Consideration") for each share" / "$1,000.00 in cash,".
-# A unit word between the number and "in cash" ("$41.1 million in cash")
-# is an AGGREGATE, not per share — the \s+in\s+cash adjacency excludes it.
+# Per-share cash needs PER-SHARE context — "$19.58 in cash for each
+# (outstanding) share", "$19.58 per share in cash", "$15.93 in cash (the
+# "Cash Consideration") for each share", "each share ... converted into the
+# right to receive $69,850 in cash" (Civista/Farmers Savings: 500-share
+# target, live-verified), "right to receive (i) $1,000.00 in cash, (ii)"
+# (election list). A bare "$32,500,000 in cash" / "$16,832,742 in cash" is
+# the AGGREGATE cash leg (Equity/Frontier, FS Bancorp/Pacific West,
+# MetroCity/First IC — all rendered as per-share on the first universe
+# run, the plausible-wrong class) and must not match.
 _CASH_PER_SHARE_RE = re.compile(
-    r"\$\s?" + _NUM + r"\s+(?:per\s+share\s+)?in\s+cash\b", re.IGNORECASE)
+    r"\$\s?" + _NUM + r"\s+per\s+share\s+in\s+cash\b"
+    r"|\$\s?" + _NUM + r"\s+in\s+cash(?:\s*\([^)]{0,40}\))?\s+(?:for\s+each|per)\s+"
+    r"(?:\w+\s+){0,3}?share\b"
+    r"|each\s+share[^.]{0,160}?converted\s+(?:at\s+closing\s+)?into\s+the\s+"
+    r"right\s+to\s+receive\s+(?:\(i\)\s+)?\$\s?" + _NUM + r"\s+in\s+cash\b"
+    # "$11.36 in cash and 0.3803 PB common shares for each STEL common share"
+    r"|\$\s?" + _NUM + r"\s+in\s+cash\s+and\s+[^$;]{0,60}?shares?\s+for\s+each\s+"
+    r"(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
 _CASH_CONSID_RE = re.compile(
     r"cash\s+consideration\s+of\s+\$\s?" + _NUM + r"\s+per\s+share",
     re.IGNORECASE)
+_NUM_SHARES_NEAR_RE = re.compile(
+    r"\b\d[\d,]*(?:\.\d+)?\s+(?:\w+\s+){0,3}?shares\b", re.IGNORECASE)
 
 # Stated per-share value of the offer: "representing $63.12 per share",
 # "the implied purchase price is $62.60 per Bancorp Financial common
@@ -515,10 +539,16 @@ _NOT_PRICE_CTX = ("deposit", "book", "tangible")
 # Termination fee: "termination fee of $80,000,000", "termination fee to QNB
 # of $1,575,000", "termination fee of $31.4 million", "a $10 million
 # termination fee". Dollar amounts only — a "4% of deal value" fee is n/a.
+# The gap between "termination fee" and the amount admits only a payee
+# clause ("to QNB", "payable by VBI to Seacoast") — a loose gap once reached
+# across "... total assets of $5.3 billion". A unit word after a comma-
+# grouped number ("$5,300,000 million", Bank First/Centre 1.01 — a filer
+# typo) is contradictory -> that candidate is dropped, never multiplied.
 _TERM_FEE_A_RE = re.compile(
-    r"termination\s+fee\s+(?:[^.$;]{0,60}?)(?:of|equal\s+to|in\s+the\s+amount"
-    r"\s+of)\s+(?:up\s+to\s+)?(?:approximately\s+)?\$\s?" + _NUM +
-    r"\s*(million|billion)?", re.IGNORECASE)
+    r"termination\s+fee(?:\s+(?:payable\s+)?(?:to|by)\s+[A-Z][\w.&'\- ]{0,40}?)?"
+    r"\s+(?:of|equal\s+to|in\s+the\s+amount\s+of)\s+(?:up\s+to\s+)?"
+    r"(?:approximately\s+)?\$\s?" + _NUM + r"\s*(million|billion)?",
+    re.IGNORECASE)
 _TERM_FEE_B_RE = re.compile(
     r"\$\s?" + _NUM + r"\s*(million|billion)?\s+termination\s+fee",
     re.IGNORECASE)
@@ -540,8 +570,8 @@ _CLOSE_CUT_RE = re.compile(
 _ORD = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
         "fourth": 4, "4th": 4}
 _Q_RE = re.compile(
-    r"\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+(?:calendar\s+|fiscal"
-    r"\s+)?quarter\s+(?:of\s+)?(20\d\d)\b|\bq([1-4])\s*(20\d\d)\b",
+    r"\b(first|second|third|fourth|1\s?st|2\s?nd|3\s?rd|4\s?th)\s+(?:calendar\s+|"
+    r"fiscal\s+)?quarter\s+(?:of\s+)?(20\d\d)\b|\bq([1-4])\s*(20\d\d)\b",
     re.IGNORECASE)
 _HALF_RE = re.compile(
     r"\b(first|second)\s+half\s+of\s+(20\d\d)\b", re.IGNORECASE)
@@ -566,7 +596,7 @@ _ELECTION_RE = re.compile(
 # classify as all-cash (the Prosperity/Stellar $11.36 would have shown as
 # the whole per-share price — exactly the plausible-wrong class).
 _STOCK_LEG_RE = re.compile(
-    r"exchange\s+ratio|\d{1,2}\.\d{2,4}\s+(?:\w+\s+){0,3}?shares?",
+    r"exchange\s+ratio|(?<!\$)\b\d{1,2}\.\d{2,4}\s+(?:\w+\s+){0,3}?shares\b",
     re.IGNORECASE)
 # Fixed share count for the whole target ("will issue 4,062,520 shares of
 # Prosperity common stock for all outstanding shares of Southwest") — stock
@@ -599,10 +629,26 @@ def _single(values) -> float | int | None:
 def extract_cash_per_share(text: str) -> float | None:
     """Cash consideration per TARGET share, or None. "cash in lieu of
     fractional shares" carries no dollar figure and never matches."""
-    found = [round(_num(m.group(1)), 4)
-             for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE)
-             for m in rx.finditer(text)]
+    found = []
+    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE):
+        for m in rx.finditer(text):
+            found.append(round(_num(next(g for g in m.groups() if g)), 4))
     return _single(found)
+
+
+def _cash_with_unparsed_stock_leg(text: str) -> bool:
+    """True when a per-share cash mention shares its sentence with an "N
+    shares" stock leg the ratio forms did not parse ("$69,850 in cash and
+    approximately 2,869 Civista common shares") — all-cash would then be a
+    plausible-wrong classification."""
+    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE):
+        for m in rx.finditer(text):
+            lo = text.rfind(". ", 0, m.start()) + 1
+            hi = text.find(". ", m.end())
+            sent = text[lo:hi if hi > 0 else m.end() + 200]
+            if _NUM_SHARES_NEAR_RE.search(sent):
+                return True
+    return False
 
 
 def extract_implied_price(text: str) -> float | None:
@@ -638,6 +684,8 @@ def extract_termination_fee(text: str) -> int | None:
         for m in rx.finditer(text):
             v = _num(m.group(1))
             unit = (m.group(2) or "").lower()
+            if unit and v >= 10_000:
+                continue            # "$5,300,000 million" — contradictory
             if unit == "billion":
                 v *= 1_000_000_000
             elif unit == "million":
@@ -668,7 +716,8 @@ def close_phrase_to_date(phrase: str) -> str | None:
     dates = []
     for m in _Q_RE.finditer(phrase):
         if m.group(1):
-            dates.append(_quarter_end(_ORD[m.group(1).lower()], int(m.group(2))))
+            dates.append(_quarter_end(_ORD[m.group(1).lower().replace(" ", "")],
+                                      int(m.group(2))))
         else:
             dates.append(_quarter_end(int(m.group(3)), int(m.group(4))))
     for m in _HALF_RE.finditer(phrase):
@@ -734,7 +783,9 @@ def classify_consideration(text: str, ratio, cash) -> str | None:
     if ratio:
         return "stock"
     if cash:
-        return None if _STOCK_LEG_RE.search(text) else "cash"
+        if _STOCK_LEG_RE.search(text) or _cash_with_unparsed_stock_leg(text):
+            return None
+        return "cash"
     if _FIXED_SHARES_RE.search(text) and not _ALL_CASH_RE.search(text):
         return "stock"
     if _ALL_STOCK_RE.search(text) and not _ALL_CASH_RE.search(text):

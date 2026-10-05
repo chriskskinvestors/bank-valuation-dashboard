@@ -108,6 +108,9 @@ _ARB_PRICE_MAX_AGE_S = 4 * 86400    # a warm quote older than a long weekend
                                     # is not a live arb input — n/a
 _PENDING_HTML = ('<span style="color:var(--warning,#d97706);font-weight:600;">'
                  'Pending</span>')
+_PE_MAX = 100.0                     # P/E beyond this is a denominator artifact
+_FEE_MAX_SHARE = 0.25               # termination fee ÷ deal value beyond this
+                                    # is an extraction artifact
 
 
 def _fmt_pct(x, places: int = 1) -> str:
@@ -141,7 +144,12 @@ def _recent_rows(deals: list[dict], today) -> list[dict]:
         return (d.get("announce_date") or d.get("completion_date")
                 or d.get("termination_date") or "")
     rows = [d for d in deals
-            if d.get("status") == "pending" or _date(d) >= floor]
+            if (d.get("status") == "pending" or _date(d) >= floor)
+            # A pending row whose target resolved to the acquirer itself is
+            # a legend-parse artifact (live: EFSI "acquiring" EFSI at a 100%
+            # "spread") — never shown.
+            and not (d.get("target_ticker") and d.get("buyer_ticker")
+                     and d["target_ticker"] == d["buyer_ticker"])]
     rows.sort(key=_date, reverse=True)
     return rows
 
@@ -266,7 +274,12 @@ def _render_recent_deals():
         pe_note = (f"TTM diluted EPS ${eps:,.2f} at {d.get('eps_asof')} ÷ implied "
                    f"${implied:,.2f}" if eps is not None and implied is not None
                    else None)
-        pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
+        if pe and pe > _PE_MAX:
+            # 1,345.7x on a $0.01 TTM EPS (William Penn) is not a multiple.
+            pe_note = f"P/E {pe:.0f}x above the {_PE_MAX:.0f}x plausibility cap — n/a"
+            pe, pe_cell = None, "n/a†"
+        else:
+            pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
         assets = d.get("comp_assets") or d.get("target_assets")
 
         # ── Merger arb (pending only) ──
@@ -296,7 +309,14 @@ def _render_recent_deals():
 
         # ── Agreement ──
         fee = terms.get("termination_fee_usd")
-        if fee is not None:
+        fee_note = None
+        if fee is not None and val and fee / val > _FEE_MAX_SHARE:
+            # Bank deals' fees run 2–6% of value; anything beyond the cap is
+            # an extraction artifact, shown as n/a with the reason.
+            fee_note = (f"extracted fee {_fmt_bn(fee)} is {fee / val * 100:.0f}% of "
+                        f"the deal value — outside the plausibility band")
+            fee, fee_cell = None, "n/a†"
+        elif fee is not None:
             fee_cell = _fmt_bn(fee)
             if val:
                 fee_cell += f" ({fee / val * 100:.1f}%)"
@@ -334,7 +354,7 @@ def _render_recent_deals():
             + _td(close_cell, "left", close_note)
             + _td(days_cell)
             + _td(_fmt_pct(arb["annualized_spread"]))
-            + _td(fee_cell)
+            + _td(fee_cell, title=fee_note)
             + _td(approvals_cell, "left")
             + "</tr>")
         export_rows.append({
@@ -408,7 +428,8 @@ def _render_recent_deals():
                "completed/terminated greyed · * = computed (hover for the "
                "formula: implied \$/sh = ratio × acquirer close before announce "
                "+ cash; deal value = ratio × close × target shares) · "
-               "† = P/TBV outside the 0.2x–8x sanity band · premium only as "
+               "† = outside a plausibility band (P/TBV 0.2x–8x, P/E ≤ 100x, "
+               "fee ≤ 25% of value — hover) · premium only as "
                "stated in the release, never from our own prices · P/E = "
                "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
                "announce (n/m = loss) · arb: implied offer at the acquirer's "
