@@ -43,24 +43,59 @@ def _indexed_pct(close: pd.Series) -> pd.Series:
 
 
 def _period_stats(df: pd.DataFrame) -> dict:
-    """{return_pct, high, low, avg_volume} over the window; keys None when
-    the underlying column is missing/empty."""
-    out = {"return_pct": None, "high": None, "low": None, "avg_volume": None}
+    """{return_pct, high, low, avg_volume, range_pos_pct, max_drawdown_pct}
+    over the window; keys None when the underlying column is missing/empty.
+
+    range_pos_pct: where the last close sits in the window's low–high range
+    (0 = at the low, 100 = at the high) — the 52-week position on the 1Y
+    window. max_drawdown_pct: worst peak-to-trough fall of the CLOSES inside
+    the window, <= 0 (UX review P2-16, owner decision 2026-10-05)."""
+    out = {"return_pct": None, "high": None, "low": None, "avg_volume": None,
+           "range_pos_pct": None, "max_drawdown_pct": None}
     if df is None or df.empty or "close" not in df.columns:
         return out
     closes = df["close"].dropna()
     if len(closes) >= 2 and closes.iloc[0] > 0:
         out["return_pct"] = (closes.iloc[-1] / closes.iloc[0] - 1.0) * 100.0
+    if len(closes) >= 2 and (closes > 0).all():
+        out["max_drawdown_pct"] = float(
+            ((closes / closes.cummax()) - 1.0).min() * 100.0)
     if not closes.empty:
         highs = df["high"].dropna() if "high" in df.columns else closes
         lows = df["low"].dropna() if "low" in df.columns else closes
         out["high"] = float(highs.max()) if not highs.empty else None
         out["low"] = float(lows.min()) if not lows.empty else None
+        hi, lo = out["high"], out["low"]
+        if hi is not None and lo is not None and hi > lo:
+            last = float(closes.iloc[-1])
+            out["range_pos_pct"] = min(max((last - lo) / (hi - lo) * 100.0,
+                                           0.0), 100.0)
     if "volume" in df.columns:
         vols = df["volume"].dropna()
         if not vols.empty:
             out["avg_volume"] = float(vols.mean())
     return out
+
+
+def _signed_pct1(v: float) -> str:
+    """"+5.2%" / "-4.5%"; a value that rounds to zero prints "0.0%"."""
+    r = round(float(v), 1)
+    return "0.0%" if r == 0 else f"{r:+.1f}%"
+
+
+def _stats_rows(s: dict, period: str) -> list[tuple[str, str]]:
+    """Ledger rows for the statistics panel. Absent → "—" (owner rule)."""
+    na = "—"
+    return [
+        ("Return", _signed_pct1(s["return_pct"]) if s["return_pct"] is not None else na),
+        ("High", f"${s['high']:,.2f}" if s["high"] is not None else na),
+        ("Low", f"${s['low']:,.2f}" if s["low"] is not None else na),
+        (f"Position in {period} range",
+         f"{s['range_pos_pct']:.0f}%" if s.get("range_pos_pct") is not None else na),
+        ("Max drawdown",
+         _signed_pct1(s["max_drawdown_pct"]) if s.get("max_drawdown_pct") is not None else na),
+        ("Avg volume", f"{s['avg_volume']:,.0f}" if s["avg_volume"] is not None else na),
+    ]
 
 
 def _nearest_size_order(cohort: list[dict], ticker: str) -> list[str]:
@@ -146,12 +181,7 @@ def render_stock_chart(ticker: str, peer_cohort: list[dict]):
                         key=f"sc_chart_{ticker}_{period}")
     with stats_col:
         s = _period_stats(hist)
-        ledger(f"{period} Statistics", [
-            ("Return", f"{s['return_pct']:+.1f}%" if s["return_pct"] is not None else "n/a"),
-            ("High", f"${s['high']:,.2f}" if s["high"] is not None else "n/a"),
-            ("Low", f"${s['low']:,.2f}" if s["low"] is not None else "n/a"),
-            ("Avg volume", f"{s['avg_volume']:,.0f}" if s["avg_volume"] is not None else "n/a"),
-        ])
+        ledger(f"{period} Statistics", _stats_rows(s, period))
         if peers:
             st.caption("Price pane is indexed to 0% at the window start; "
                        "volume is the subject bank only.")

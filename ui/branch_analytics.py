@@ -250,7 +250,7 @@ def render_branch_competitors(ticker):
     tbl = tbl.rename(columns={"ticker": "Ticker", "counties": "Shared counties",
                               "branches": "Branches", "deposits": "Deposits",
                               "share_of_footprint": "% of footprint deposits"})
-    st.markdown(f"**Competitors across {name}'s {len(footprint)}-county "
+    st.markdown(f"**Competitors across {name}'s {len(footprint):,}-county "
                 f"footprint** — {_survey_note(yr, notes)} (subject bank "
                 "included for rank context)")
     # House table: ≤26 pre-ranked rows, display-only (UX review P1-23).

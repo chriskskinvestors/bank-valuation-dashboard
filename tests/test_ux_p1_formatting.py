@@ -262,13 +262,15 @@ class TestHoldcoCapitalBlock(unittest.TestCase):
         _, radios = self._render()
         self.assertEqual(radios, ["hc_period_RF"])
 
-    def test_page_passes_the_statement_toggle(self):
-        """render_capital_dynamics forwards the statement table's own radio
-        value (key capadq_period_<ticker>) — the one control on the page."""
+    def test_templated_page_no_longer_renders_the_block(self):
+        """Superseded by UX-P2-24 (owner decision 2026-10-05): the holdco
+        block lives only on Company Reported › Regulatory Capital, so the
+        Templated page has no second period control at all — it links there
+        (pinned in tests/test_ux_p2_owner_calls.py)."""
         import inspect
         src = inspect.getsource(self.cd.render_capital_dynamics)
-        self.assertIn('st.session_state.get(f"capadq_period_{ticker}", "Annual")', src)
-        self.assertNotIn("_render_holdco_capital(ticker)\n", src)
+        self.assertNotIn("_render_holdco_capital(", src)
+        self.assertIn("holdco_capital_pointer_html(ticker)", src)
 
 
 if __name__ == "__main__":

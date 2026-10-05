@@ -124,11 +124,11 @@ def _render_market_table(rows: list[dict], heading: str, key: str, *,
                 if r["top_competitor"] else "—")
         body += ("<tr>"
                  f'<td style="text-align:left;">{_h.escape(str(r["market"]))}</td>'
-                 f'<td style="text-align:right;">{r["subj_branches"]}</td>'
+                 f'<td style="text-align:right;">{r["subj_branches"]:,}</td>'
                  f'<td style="text-align:right;">{fmt_dollars_from_thousands(r["subj_deposits_k"], 1)}</td>'
                  f'<td style="text-align:right;">{fmt_dollars_from_thousands(r["market_total_k"], 1)}</td>'
                  f'<td style="text-align:right;">{r["share_pct"]:.1f}%</td>'
-                 f'<td style="text-align:right;">#{r["rank"]} of {r["n_banks"]}</td>'
+                 f'<td style="text-align:right;">#{r["rank"]:,} of {r["n_banks"]:,}</td>'
                  f'<td style="text-align:right;">{r["hhi"]:,.0f}</td>'
                  f'<td style="text-align:left;">{comp}</td>'
                  "</tr>")

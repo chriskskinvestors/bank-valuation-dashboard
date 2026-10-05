@@ -329,7 +329,7 @@ def _render_market_share(kind: str, key: str, market_label: str,
         share_txt = (f"{r['market_share']:.1f}%" if pd.notna(r["market_share"])
                      else "n/a")
         st.caption(
-            (f"**{selected_name}** ranks **#{int(r['rank'])}** of {len(ms_df)} in "
+            (f"**{selected_name}** ranks **#{int(r['rank']):,}** of {len(ms_df):,} in "
              f"{market_label} · **{share_txt}** share · "
              f"{dep_fmt(r['deposits'])} of {dep_fmt(total)}"
              ).replace("$", "\\$"))  # don't let $X of $Y render as LaTeX

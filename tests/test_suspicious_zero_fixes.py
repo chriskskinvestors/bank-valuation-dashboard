@@ -91,11 +91,11 @@ class TestDeriveDefaultsTbvpsEqtot(unittest.TestCase):
 
 # ── 3 + 6b. capital-return attribution render ───────────────────────────────
 class TestCapitalReturnAttributionRender(unittest.TestCase):
-    def _run(self, timeline, yld):
+    def _run(self, timeline, yld, ttm=None):
         import ui.capital_dynamics as cd
         st = _st_fake()
         ledgers = []
-        result = {"timeline": timeline, "ttm": {}, "growth": {}, "yield": yld,
+        result = {"timeline": timeline, "ttm": ttm or {}, "growth": {}, "yield": yld,
                   "dividend_source": "common-specific"}
         with mock.patch.object(cd, "st", st), \
                 mock.patch.object(cd, "_skeleton", contextlib.nullcontext), \
@@ -144,7 +144,18 @@ class TestCapitalReturnAttributionRender(unittest.TestCase):
         rows = dict(dict(ledgers)["Capital Return — TTM"])
         cell = rows["Shareholder Yield"]
         self.assertIn("2.50%", cell)
-        self.assertIn("n/a div + 2.5% bb", cell)
+        self.assertIn("— div + 2.5% bb", cell)        # absent → "—" on screen
+
+    def test_share_reduction_rounding_to_zero_is_unsigned(self):
+        """Owner rule: a value that rounds to zero carries no sign — the
+        cell printed "+0.00%" for a -0.001% / +0.004% TTM share change."""
+        yld = {"total_shareholder_yield_pct": None}
+        for chg, want in ((-0.001, "0.00%"), (0.004, "0.00%"),
+                          (-1.234, "-1.23%"), (0.5, "+0.50%")):
+            _, ledgers = self._run(self._timeline(), yld,
+                                   ttm={"share_change_pct_ttm": chg})
+            cell = dict(dict(ledgers)["Capital Return — TTM"])["Share Reduction"]
+            self.assertTrue(cell.startswith(want), (chg, cell))
 
 
 # ── 4. ui.charts composition donuts ─────────────────────────────────────────

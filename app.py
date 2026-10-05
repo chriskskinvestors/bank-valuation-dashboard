@@ -1863,7 +1863,6 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
     # The "As of" picker shows ONE past quarter; Trends shows the SAME metric across
     # the last N quarters, one row per bank. FDIC fundamentals (bank-subsidiary) +
     # SEC per-share (TBV/share, book value/share — HoldCo, forward-filled goodwill).
-    from ui.chrome import title_bar
     from ui.bank_scope import scope_type_options, render_scope_sub
     from ui.trends_table import render_trends_table, render_trends_chart
     from data.as_of_metrics import metric_grid, TREND_METRICS
@@ -1874,7 +1873,8 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
     _mlabels = dict(_ALL_TM)
     _sec_keys = set(SEC_TREND_KEYS)
 
-    title_bar("KSK Investors", "Quarterly Trends")
+    # No title bar: Screen and Compare open straight onto their controls
+    # under the Screen · Compare · Trends sub-nav; Trends matches (UX-P2-13).
     st.caption("One metric across recent quarters, one row per bank. FDIC "
                "fundamentals (bank-subsidiary) plus SEC per-share (TBV/share, book "
                "value/share — holding-company basis).")

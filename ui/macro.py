@@ -94,9 +94,9 @@ def render_macro_dashboard():
 
 
 def _fmt_vol(v) -> str:
-    """Average daily volume in human units, or n/a."""
+    """Average daily volume in human units, or "—"."""
     if v is None:
-        return '<span style="color:var(--text-muted);">n/a</span>'
+        return _NA_HTML
     if v >= 1e6:
         return f"{v / 1e6:.1f}M"
     if v >= 1e3:
@@ -113,7 +113,7 @@ def _fmt_usd(v) -> str:
 
 
 def _fmt_money(v) -> str:
-    """Large dollar amount (AUM / market cap) in B/M, or n/a."""
+    """Large dollar amount (AUM / market cap) in B/M, or "—"."""
     if v is None:
         return _NA_HTML
     if v >= 1e9:
@@ -298,7 +298,7 @@ def _render_funding_deposits():
     ff_dt = latest_date("DFF")
     asof = rates.get("asof", "—")
     ff_txt = (f"{ff:.2f}%" + (f" as of {ff_dt:%Y-%m-%d}" if ff_dt is not None else "")
-              if ff is not None else "n/a")
+              if ff is not None else "—")
     st.caption(f"FDIC national deposit rates · as of {asof} · published monthly "
                f"(third Monday) · Fed Funds (daily effective) {ff_txt} for the spread.")
     st.markdown(
@@ -421,9 +421,9 @@ _PCT_BASES = {"yoy_pct", "mom_pct", "level_pct"}
 
 
 def _fmt_level(v, basis: str) -> str:
-    """Latest/prior value in the indicator's natural unit, or n/a."""
+    """Latest/prior value in the indicator's natural unit, or "—"."""
     if v is None:
-        return '<span style="color:var(--text-muted);">n/a</span>'
+        return _NA_HTML
     if basis in _PCT_BASES:
         return f"{v:.1f}%"
     if basis == "mom_chg_k":
@@ -438,7 +438,7 @@ def _fmt_delta(row: dict) -> str:
     favorable for this indicator (inflation down = good, jobs up = good, …)."""
     d = row.get("delta")
     if d is None:
-        return '<span style="color:var(--text-muted);">n/a</span>'
+        return _NA_HTML
     basis = row["basis"]
     if basis in _PCT_BASES:
         txt = f"{d:+.1f}pp"
@@ -1290,18 +1290,23 @@ def _render_regime():
     def _dot(level: str) -> str:
         return f'<span class="ksk-dot {level if level in ("ok", "warn", "bad") else "warn"}"></span>'
 
+    def _pp(v: float) -> str:
+        # Signed 2dp, but a value that rounds to zero carries no sign
+        # ("0.00", never "+0.00"/"-0.00" — owner rule 2026-09-30).
+        return "0.00" if round(v, 2) == 0 else f"{v:+.2f}"
+
     curve_state = curve["shape"] + (f", {curve['direction']}" if curve["direction"] else "")
     # House spread convention (#36): shorter tenor FIRST (short − long), so the
     # raw FRED long−short readings are negated for display — matches Home.
-    curve_detail = (f"2Y−10Y {-s2:+.2f}pp · 3M−10Y {-s3m:+.2f}pp"
-                    if (s2 is not None and s3m is not None) else "n/a")
-    credit_detail = f"HY OAS {hy * 100:.0f} bps" if hy is not None else "n/a"
+    curve_detail = (f"2Y − 10Y {_pp(-s2)}pp · 3M − 10Y {_pp(-s3m)}pp"
+                    if (s2 is not None and s3m is not None) else "—")
+    credit_detail = f"HY OAS {hy * 100:.0f} bps" if hy is not None else "—"
     if path["change"] is not None and ff is not None:
-        path_detail = f"Fed Funds {ff:.2f}% · {path['change']:+.2f}pp / 6mo"
+        path_detail = f"Fed Funds {ff:.2f}% · {_pp(path['change'])}pp / 6mo"
     elif ff is not None:
         path_detail = f"Fed Funds {ff:.2f}%"
     else:
-        path_detail = "n/a"
+        path_detail = "—"
 
     panel = [
         ("Yield Curve", curve["level"], curve_state, curve_detail),
@@ -1311,7 +1316,8 @@ def _render_regime():
     body = "".join(
         "<tr>"
         f'<td>{dim}</td>'
-        f'<td style="text-align:left;">{_dot(level)}{state}</td>'
+        # The regime helpers label an absent input "n/a"; on screen it's "—".
+        f'<td style="text-align:left;">{_dot(level)}{"—" if state == "n/a" else state}</td>'
         f'<td style="text-align:left;color:var(--text-secondary);">{detail}</td>'
         "</tr>"
         for dim, level, state, detail in panel
@@ -1325,7 +1331,7 @@ def _render_regime():
         unsafe_allow_html=True,
     )
     st.caption(
-        "Curve: 2Y−10Y / 3M−10Y shape + 3-month direction. Credit: HY OAS band "
+        "Curve: 2Y − 10Y / 3M − 10Y shape + 3-month direction. Credit: HY OAS band "
         "(Tight <350 · Normal 350–500 · Elevated 500–800 · Stressed ≥800 bps). "
         "Fed Path: change in the effective funds rate over 6 months. Source: FRED."
     )
@@ -1750,16 +1756,17 @@ def _render_credit_spreads():
     ig = data["BAMLC0A0CM"]["latest"]
     diff = (hy - ig) if (hy is not None and ig is not None) else None
     asof = data["BAMLH0A0HYM2"]["as_of"]
-    asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "-"
+    asof_txt = asof.strftime("%b %d, %Y").replace(" 0", " ") if asof is not None else "—"
 
     reg = credit_regime(hy)
     dot = {"ok": "ok", "warn": "warn", "bad": "bad", "na": "warn"}[reg["level"]]
-    hy_bps = f"{hy * 100:.0f} bps" if hy is not None else "n/a"
+    hy_bps = f"{hy * 100:.0f} bps" if hy is not None else "—"
+    reg_label = "—" if reg["label"] == "n/a" else reg["label"]   # absent → "—" on screen
     # Compact plain line (no boxed banner) so the table + charts sit higher.
     st.markdown(
         f'<div style="font-size:var(--fs-sm);margin:0 0 6px;">'
         f'<span class="ksk-dot {dot}"></span> '
-        f'<strong>Credit regime: {reg["label"]}</strong> &middot; HY OAS {hy_bps} &middot; '
+        f'<strong>Credit regime: {reg_label}</strong> &middot; HY OAS {hy_bps} &middot; '
         f'<span style="color:var(--text-muted);">HY OAS bands: Tight &lt;350 &middot; '
         f'Normal 350-500 &middot; Elevated 500-800 &middot; Stressed &ge;800 bps &middot; '
         f'as of {asof_txt}.</span></div>',
