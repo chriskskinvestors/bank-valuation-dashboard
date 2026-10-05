@@ -339,6 +339,19 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             sh, sh_date = shares[key], key
         else:
             sh_date, sh = _nearest_kv(shares, d)
+        sh_src, sh_pv = "cover-page / year-end", sh_prov.get(sh_date) if sh_date else None
+        # Multi-class common (OCFC/FCNCA/RBCAA): companyfacts drops per-class
+        # counts, so the snapshot's per-class sum from the filing's iXBRL is
+        # THE count at its balance-sheet date — or n/a when unresolved. A
+        # single-class cover count (OCFC voting only: 24.95 vs 24.50) must
+        # not stand in. Mirror of sec_client.get_latest_fundamentals.
+        cls = sec_client._class_shares_at(facts, eq_date)
+        if cls:
+            sh, sh_date = cls["value"], eq_date
+            sh_src = "sum of share classes (filing iXBRL)"
+            a = str(cls.get("accession") or "").replace("-", "")
+            sh_pv = ({"accn": f"{a[:10]}-{a[10:12]}-{a[12:]}", "form": cls.get("form"),
+                      "end": eq_date} if len(a) == 18 else None)
         # Intangibles at the SAME balance-sheet date as equity (eq_date), on
         # the snapshot path's TCE rules (sec_client._intangible_adjustment_at:
         # finite-lived fallback, MSR netting, combined-tag back-out) — the card
@@ -386,7 +399,7 @@ def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> d
             "_adj": adj, "_gw": gw, "_other": other, "_incl": incl.get(eq_date),
             "_adj_basis": adj_basis,
             "_eq_prov": eq_prov.get(eq_date) if eq_date else None,
-            "_sh_prov": sh_prov.get(sh_date) if sh_date else None,
+            "_sh_prov": sh_pv, "_sh_src": sh_src,
             "_eps_prov": epsq_prov.get(key) or epsa_prov.get(key),
             "_dps_prov": dpsq_prov.get(key) or dpsa_prov.get(key),
         }
@@ -653,7 +666,8 @@ def render_financial_highlights(ticker: str):
         ps = col_ps.get(k, {}); sh = ps.get("shares")
         doc = _sec_doc(cik, ps.get("_sh_prov"))
         terms = [{"label": "Common shares outstanding", "val": _count(sh),
-                  "sub": f"as of {ps.get('_sh_date') or '—'} · cover-page / year-end",
+                  "sub": (f"as of {ps.get('_sh_date') or '—'} · "
+                          f"{ps.get('_sh_src') or 'cover-page / year-end'}"),
                   "doc": doc}]
         return P(_count(sh), "Shares outstanding", "SEC filing (10-K/10-Q)",
                  _disp_date(ends[k]), "shares", "XBRL EntityCommonStockSharesOutstanding",
