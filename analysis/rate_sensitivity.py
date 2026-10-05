@@ -795,9 +795,14 @@ def _resolve_deposit_beta(
     # Historical — measured on the int-bearing deposit cost, so it's already
     # the int-bearing deposit beta. Use directly.
     hist_beta = compute_historical_deposit_beta(fdic_hist)
+    if hist_beta is not None and hist_beta <= 0:
+        # Costs moved against Fed funds over the cycle (lag at a turn): as a
+        # forward beta it says a hike LOWERS funding cost — a plausible-wrong
+        # NII gain. Textbook, labeled with why (REVIEW 2026-10-05 P1-7).
+        return (TEXTBOOK_INT_BEARING_BETA, TEXTBOOK_NON_INT_BETA,
+                "textbook (measured ≤ 0)")
     if hist_beta is not None:
-        beta_int = max(-0.20, min(1.50, hist_beta))
-        return (beta_int, 0.0, "historical")
+        return (min(1.50, hist_beta), 0.0, "historical")
     return (TEXTBOOK_INT_BEARING_BETA, TEXTBOOK_NON_INT_BETA, "textbook_fallback")
 
 
