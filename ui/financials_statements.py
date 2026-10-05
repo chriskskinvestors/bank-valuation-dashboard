@@ -222,6 +222,13 @@ _RI_NOT_INGESTED = ("Schedule {sched} detail not yet ingested for this period "
 # Quarterly (single-quarter) view: a non-Q1 column also needs the prior
 # quarter's YTD detail to de-cumulate (_decum_detail).
 _RI_NOT_INGESTED_Q = " — or the prior quarter's, needed to de-cumulate YTD"
+# Multi-charter group: the FDIC columns are the charters summed, but the
+# FFIEC detail store is per charter — the lead charter's RI/RI-E/deposit-cost
+# rows beside group sums mixed perimeters (WTFC: 1 of 16 charters; REVIEW
+# 2026-10-05 P1-11). n/a, never the lead charter alone.
+_GROUP_DETAIL_NA = ("Schedule {sched} detail is filed per charter and is not "
+                    "combined across this bank's {n} charters — n/a rather "
+                    "than the lead charter's figure beside group totals")
 
 # side → (RIAD YTD-interest codes, RCON quarterly-average codes)
 _DEP_SPLIT_CODES = {
@@ -608,7 +615,11 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # by report date; the RI-E itemized-expense sub-block is inserted only
     # when the bank actually itemized something in the displayed window.
     ri_by_ci, rie_by_ci = {}, {}
-    if with_ri or with_fte:
+    # Render path: the persisted charter map only (no network).
+    from data.cert_group import get_cert_group_cached
+    _n_charters = len(get_cert_group_cached(cert) or [])
+    _lead_only = _n_charters > 1      # FFIEC detail would be 1 charter of N
+    if (with_ri or with_fte) and not _lead_only:
         # with_fte loads RI tax-exempt income for the FTE-NIM line WITHOUT the
         # RI-E expense-row insertion (which only belongs on the Income tab).
         # Quarterly view: single-quarter detail for every caller — the FTE-NIM
@@ -621,7 +632,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     # FFIEC deposit-cost split (Performance Analysis only) — keyed by report
     # date, not column index: the rate math needs the prior quarter's row
     # (de-cumulation) and all four quarterly averages (FY mean).
-    dep_by_date = _dep_cost_by_date(cert) if with_dep_cost else {}
+    dep_by_date = _dep_cost_by_date(cert) if (with_dep_cost and not _lead_only) else {}
 
     # Per-share data (SEC holding-company filings) — only loaded when a spec
     # needs it (Performance Analysis), keyed by column index.
@@ -742,7 +753,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     def _not_ingested(label, rec, asof, sched):
         """n/a cell for a column the FFIEC detail store hasn't ingested yet —
         the reason lives in the click-through, never an imputed value (P2-10)."""
-        why = (_RI_NOT_INGESTED.format(sched=sched)
+        why = (_GROUP_DETAIL_NA.format(sched=sched, n=_n_charters) if _lead_only
+               else _RI_NOT_INGESTED.format(sched=sched)
                + (_RI_NOT_INGESTED_Q if _decum_active else ""))
         return "n/a", calc(label, "n/a", asof, "n/a — " + why,
                            [{"label": label, "val": "n/a — " + why}],
@@ -1067,10 +1079,12 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             det = ri_by_ci.get(ci)
             op = "reported NIM + FTE adjustment ÷ avg earning assets × 100"
             if det is None or nim is None or not ea:
-                return "n/a", calc(label, "n/a", asof,
-                                   "n/a — Schedule RI tax-exempt income not ingested",
+                why = (_GROUP_DETAIL_NA.format(sched="RI", n=_n_charters)
+                       if _lead_only else "Schedule RI tax-exempt income not ingested")
+                return "n/a", calc(label, "n/a", asof, "n/a — " + why,
                                    [{"label": label,
-                                     "val": "n/a — needs FFIEC RI tax-exempt income"}],
+                                     "val": "n/a — " + why if _lead_only else
+                                     "n/a — needs FFIEC RI tax-exempt income"}],
                                    op, False)
             tel = _num(det.get("tax_exempt_loan_income"))
             tes = _num(det.get("tax_exempt_sec_income"))
@@ -1152,6 +1166,12 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             dt = pd.to_datetime(rec.get("REPDTE")).normalize()
             det = dep_by_date.get(dt)
             if det is None:
+                if _lead_only:
+                    why = _GROUP_DETAIL_NA.format(sched="RI 2.a / RC-K", n=_n_charters)
+                    return "n/a", calc(label, "n/a", asof, "n/a — " + why,
+                                       [{"label": label, "val": "n/a — " + why}],
+                                       None, False,
+                                       source="FFIEC Call Report — Schedule RI 2.a / RC-K")
                 return "—", None   # split not ingested for this period
             doc_link = _ri_doc_link(rec)
             src = "FFIEC Call Report — Schedule RI 2.a / RC-K"
@@ -2382,9 +2402,13 @@ _CAPSTRUCT_TRENDS = [
 # Equity component identity verified EXACT for TCBK+BANR 12/31/2025:
 # EQPP + EQCS + EQSUR + EQUPTOT = EQTOT to the dollar. Dividends/stock-sale
 # are RI-A calendar-YTD flows → "flow" kind (no filed quarterly variant).
+# Every line is the BANK SUBSIDIARY's call report, not the holding company's:
+# ONB's bank shows $0 perpetual preferred while the holdco carries $230.5M,
+# and "dividends" are the bank's upstream dividends to its parent (JPM Q3'24
+# payout 111%) — REVIEW 2026-10-05 P1-13. The labels say so.
 _CAPITAL_STRUCTURE = [
-    ("Equity Components ($000)", [
-        ("Perpetual Preferred Stock", "dollar", "EQPP"),
+    ("Bank Equity Components ($000)", [
+        ("Perpetual Preferred Stock (bank level)", "dollar", "EQPP"),
         ("Common Stock", "dollar", "EQCS"),
         ("Surplus", "dollar", "EQSUR"),
         ("Undivided Profits & Other Capital", "dollar", "EQUPTOT"),
@@ -2400,7 +2424,7 @@ _CAPITAL_STRUCTURE = [
         ("Trust Preferred (TruPS)", "na", "FFIEC RC-M — later phase"),
         ("» Total Borrowings & Debt", "sum", "FREPP", "OTHBFHLB", "SUBND", "TRADEL"),
     ]),
-    ("Dividends & Capital Actions ($000)", [
+    ("Bank Dividends (typically to the parent holdco) & Capital Actions ($000)", [
         ("Cash Dividends — Common", "flow", "EQCDIVC", None),
         ("Cash Dividends — Preferred", "flow", "EQCDIVP", None),
         ("» Total Cash Dividends", "flow", "EQCDIV", None),
@@ -2411,7 +2435,7 @@ _CAPITAL_STRUCTURE = [
         ("Tangible Equity / Tangible Assets", "fratio", "EQTOT-INTAN", "ASSET-INTAN"),
         ("Debt / Equity", "fratio", "FREPP+OTHBFHLB+SUBND+TRADEL", "EQTOT"),
         ("Debt / Assets", "fratio", "FREPP+OTHBFHLB+SUBND+TRADEL", "ASSET"),
-        ("Dividend Payout (dividends ÷ net income)", "flowratio",
+        ("Bank Dividend Payout (bank dividends ÷ bank net income)", "flowratio",
          ("EQCDIV", None), ("NETINC", None)),
     ]),
     ("Regulatory Capital Ratios (%)", [
