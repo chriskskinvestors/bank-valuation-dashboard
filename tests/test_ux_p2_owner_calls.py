@@ -28,7 +28,8 @@ class TestUninsuredAlertWording(unittest.TestCase):
     def test_neutral_fact_not_a_verdict(self):
         a = self._alert(49.2)
         self.assertEqual(a["message"],
-                         "Uninsured deposits at 49% of total — above the 40% watch level")
+                         "Uninsured deposits at 49% of insured + uninsured deposits — "
+                         "above the 40% watch level")
         self.assertNotIn("run risk", a["message"])
         self.assertEqual(a["severity"], "medium")
 

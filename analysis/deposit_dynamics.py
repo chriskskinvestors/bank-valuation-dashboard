@@ -340,7 +340,8 @@ def detect_alerts(timeline_df: pd.DataFrame) -> list[dict]:
         alerts.append({
             "severity": "high" if unins_pct > 55.0 else "medium",
             "code": "uninsured_high",
-            "message": (f"Uninsured deposits at {unins_pct:.0f}% of total — "
+            "message": (f"Uninsured deposits at {unins_pct:.0f}% of insured + "
+                        "uninsured deposits — "
                         "above the 40% watch level"),
             "value": unins_pct,
         })
