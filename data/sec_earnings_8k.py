@@ -42,7 +42,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
+from collections import Counter, namedtuple
 
 from data.sec_filing_scraper import (
     _get, _recent_metas, instance_facts, _undimensioned_total,
@@ -1079,7 +1079,9 @@ def _anchor_balance_sheet(facts) -> dict:
     if bs is None:
         return {}
     out = {"total_assets": _undimensioned_total(facts, "Assets", bs),
-           "total_deposits": _undimensioned_total(facts, "Deposits", bs)}
+           "total_deposits": _undimensioned_total(facts, "Deposits", bs),
+           # The release covers the NEXT quarter (_next_quarter_end).
+           "as_of": bs}
     # The anchor quarter's own flows — the magnitude guard for the release's
     # net income / NII (a 10-K anchor has no 3-month duration → no guard).
     for fig, concepts in _PRIOR_FLOW_CONCEPTS.items():
@@ -1176,36 +1178,119 @@ def _preceding_text(table, limit: int = 400) -> str:
 # An AVERAGE balance is not the period-end balance-sheet figure: HBAN's first
 # "Total deposits" ($223.4B) sits under "Table 6 – Average Liabilities"
 # against $222.5B period-end. A table titled, or a section headed, "average
-# balance(s)" / "average assets|liabilities|deposits" governs the rows below
-# it until a period-end heading — a bare "average" does not: CLBK's deposit
-# table heads a "Weighted average rate" column beside period-end balances.
+# balance(s)" / "average volume" / "average assets|liabilities|deposits"
+# governs the rows below it until a period-end heading — a bare "average"
+# does not: CLBK's deposit table heads a "Weighted average rate" column beside
+# period-end balances.
 _AVERAGE = re.compile(
     r"(?<!on )\baverage\s*(?:daily\s*)?(?:outstanding\s*)?balances?"   # "AverageBalance" (MCHB)
-    r"|(?<!on )\baverage\s+(?:assets|liabilities|deposits)\b", re.I)
+    r"|(?<!on )\baverage\s+(?:assets|liabilities|deposits|volume)\b", re.I)  # WABC
+# The classic average-balance / yield table splits the words across header
+# rows ("Average | Interest | Yield/" over "Balance | Inc./Exp. | Rate" —
+# FCBC, PFIS): an unweighted "average" plus a "yield" column in its header.
+_AVG_WORD = re.compile(r"(?<!weighted )(?<!weighted)\baverage\b", re.I)
+_YIELD_WORD = re.compile(r"\byield", re.I)
 _PERIOD_END = re.compile(
     r"\bperiod[- ]end\b|\bend of (?:the )?period\b|\bending balances?\b", re.I)
+# A non-GAAP table: OCFC's first "Diluted earnings per share" ($0.43) heads a
+# "Core Ratios (Annualized)" table; GAAP EPS was $(0.04). Read from the
+# table's column-header rows only — a mid-table "Adjusted Net Income
+# (non-GAAP)" subheading in a reconciliation sits above the GAAP rows it
+# reconciles (GBFH, SSB EPS). "Core deposits" is a balance.
+_NON_GAAP = re.compile(
+    r"\bcore\b(?!\s+deposits?)|\bnon[- ]?gaap\b|\badjusted\b", re.I)
+# A segment table: NRIM's first NII ($33.2M) heads "highlights of the
+# Community Banking segment"; FSBW's net income columns are "Commercial and
+# Consumer Banking | Home Lending | Total".
+_SEGMENT = re.compile(r"\bsegments?\b", re.I)
+_TOTAL_COL = re.compile(r"^\s*(?:total|consolidated)\b", re.I)
+# What a value column covers: a year-to-date column is not the quarter (BBT /
+# BRBS print six-month income statements, FNLC leads with six months, MNSB
+# with "Year-to-Date"); "1QTR" ahead of "2QTR" is the prior quarter (ASRV).
+_YTD = re.compile(
+    r"\b(?:six|nine|twelve)\s+months\b|\byear[- ]to[- ]date\b|\bytd\b"
+    r"|\byears?\s+ended\b|\bfiscal\s+year\b|\bfor\s+the\s+year\b", re.I)
+_QUARTERLY = re.compile(r"\bthree\s+months\b|\bquarters?\b|\bqtr\b", re.I)
+_QTR_NO = re.compile(r"\b([1-4])\s*qtr\b|\bqtr\s*([1-4])\b", re.I)
 
 
-def _headline_rows(html_bytes: bytes) -> list[tuple]:
-    """(clean_label, nums, scale, table_no, average) for every table row —
-    _table_rows' rows and columns, each with the dollar scale of the caption
-    governing it (None = no caption, _AMBIGUOUS = a caption naming two
-    units), the index of its table, and whether an "average" title/section
-    governs it."""
+# One headline-candidate table row (see _headline_rows).
+_HRow = namedtuple("_HRow", "cl nums scale table average non_gaap segment "
+                            "ytd qtr_no")
+
+
+def _column_header_text(grid: list, spans: list, data_rows: set,
+                        r: int, col: int) -> str:
+    """The header text over column `col` for data row `r`: the nearest block
+    of contiguous non-data rows above r whose cells covering `col` say what
+    the column is (a period, a quarter, a year-to-date span) — the
+    _column_periods walk, returning the text."""
+    def cue(text):
+        return (_periods(text) or _YTD.search(text) or _QUARTERLY.search(text)
+                or _QTR_NO.search(text))
+    block: list[str] = []
+    for k in range(r - 1, -1, -1):
+        if k in data_rows:
+            if block and cue(" ".join(block)):
+                break
+            block = []
+            continue
+        txt = next((t for a, b, t in spans[k] if a <= col <= b), "")
+        block.insert(0, txt)
+    return " ".join(block)
+
+
+def _segment_columns(grid: list, spans: list, data_rows: set,
+                     r: int, cols: list) -> bool:
+    """True when row r's value columns are business segments, not periods:
+    the nearest header cell over its first value column names no period
+    while another value column is headed "Total" / "Consolidated" (FSBW:
+    "Commercial and Consumer Banking | Home Lending | Total", under a
+    spanning "Three Months Ended June 30, 2025")."""
+    def nearest(c):
+        for k in range(r - 1, -1, -1):
+            if k in data_rows:
+                continue
+            txt = next((t for a, b, t in spans[k] if a <= c <= b), "").strip()
+            if txt:
+                return txt
+        return ""
+    first = nearest(cols[0])
+    if not first or (_periods(first) or _QUARTERLY.search(first)
+                     or _YTD.search(first) or _YEAR_CELL.search(first)):
+        return False
+    return any(_TOTAL_COL.match(nearest(c)) for c in cols[1:])
+
+
+def _headline_rows(html_bytes: bytes) -> list:
+    """An _HRow for every table row — _table_rows' rows and columns, each with
+    the dollar scale of the caption governing it (None = no caption,
+    _AMBIGUOUS = a caption naming two units), its table index, whether an
+    "average" heading, a non-GAAP table or a segment table governs it, and
+    what its first value column covers: year-to-date, an ordinal "nQTR"."""
     from lxml import html as lhtml
-    out: list[tuple] = []
+    out: list = []
     tables = lhtml.fromstring(html_bytes).findall(".//table")
     for t, table in enumerate(tables):
         grid, spans = _table_grid(table)
-        data = {r: (cl, nums) for r, cl, nums, _ in _grid_rows(grid, spans)}
+        drows = _grid_rows(grid, spans)
+        data = {r: (cl, nums, cols) for r, cl, nums, cols in drows}
+        data_rows = {r for r in data if not _is_year_header(grid[r])}
         before = _preceding_text(table)
         cur = _unit_scale(before)
         # Only the title line right above the table, not the prose before it.
-        avg = bool(_AVERAGE.search(before[-120:]))
+        title = before[-150:]
+        avg = bool(_AVERAGE.search(title))
+        segment = bool(_SEGMENT.search(title))
+        first = min(data_rows, default=len(grid))
+        head = " ".join(" ".join(grid[k]) for k in range(first))
+        if _AVG_WORD.search(head) and _YIELD_WORD.search(head):
+            avg = True
+        non_gaap = bool(_NON_GAAP.search(head))
         for r, row in enumerate(grid):
-            # A year-header row ("(in thousands) | 2026 | 2025") is emitted as
-            # a data row but carries the caption — read it first.
-            if r not in data or _is_year_header(row):
+            # Header rows — a year-header row ("(in thousands) | 2026 | 2025")
+            # included — carry the captions and section headings.
+            if r not in data_rows:
                 text = " ".join(row)
                 found = _unit_scale(text)
                 if found is not None:
@@ -1214,8 +1299,17 @@ def _headline_rows(html_bytes: bytes) -> list[tuple]:
                     avg = True
                 elif _PERIOD_END.search(text):
                     avg = False
-            if r in data:
-                out.append((*data[r], cur, t, avg))
+            if r not in data_rows:
+                continue
+            cl, nums, cols = data[r]
+            col_text = _column_header_text(grid, spans, data_rows, r, cols[0])
+            seg_cols = not segment and _segment_columns(grid, spans, data_rows,
+                                                        r, cols)
+            qtr = _QTR_NO.search(col_text)
+            out.append(_HRow(
+                cl, nums, cur, t, avg, non_gaap, segment or seg_cols,
+                bool(_YTD.search(col_text)) and not _QUARTERLY.search(col_text),
+                int(qtr.group(1) or qtr.group(2)) if qtr else None))
     return out
 
 
@@ -1228,11 +1322,12 @@ def _uncaptioned_scales(hrows: list[tuple], anchor: dict):
     agrees with it, else the captions' single unit when unanimous, else None
     — an uncaptioned row in a mixed-unit release has no knowable scale."""
     by_table: dict = {}
-    for cl, nums, _, t, _ in hrows:
-        by_table.setdefault(t, []).append((cl, nums))
+    for h in hrows:
+        by_table.setdefault(h.table, []).append((h.cl, h.nums))
     tables = {t: _detect_scale(rs, anchor)[0] for t, rs in by_table.items()}
-    captioned = {s for _, _, s, _, _ in hrows if s is not None and s != _AMBIGUOUS}
-    anchored, _ = _detect_scale([(cl, nums) for cl, nums, *_ in hrows], anchor)
+    captioned = {h.scale for h in hrows
+                 if h.scale is not None and h.scale != _AMBIGUOUS}
+    anchored, _ = _detect_scale([(h.cl, h.nums) for h in hrows], anchor)
     if anchored is not None:
         release = anchored if captioned <= {anchored} else None
     else:
@@ -1283,6 +1378,74 @@ def _too_coarse(v: float) -> bool:
     return 0.5 * 10 ** -decimals / abs(v) > 0.005
 
 
+# Net income ATTRIBUTABLE to the company — not consolidated net income that
+# includes non-controlling interests (FHN "Net income" $274M vs $271M
+# attributable; CFFI $8,626K vs $8,563K), nor the common shareholders' share
+# after preferred dividends.
+_NI_ATTRIBUTABLE = re.compile(
+    r"^net (?:\(loss\) )?(?:income|earnings)(?: \(loss\))? attributable to "
+    r"(?!.*(?:non-?controlling|minority|common))")
+# A tax-equivalent NII row: SBCF's first "Net interest income²" ($182,150K)
+# carries footnote 2 "fully taxable equivalent basis" — the same value its
+# reconciliation labels "Net interest income including FTE adjustment" (GAAP
+# $180,395K).
+_FTE = re.compile(r"\bfte\b|\bfully taxable equivalent\b|\btax[- ]equivalent\b"
+                  r"|\btaxable[- ]equivalent\b|\(te\)")
+_EXCLUDING = re.compile(r"\bexcluding\b|\bbefore\b|\bless\b")
+
+
+def _next_quarter_end(iso: str | None):
+    """(year, month) of the quarter-end after `iso` — the release's quarter
+    when `iso` is its anchor's balance-sheet date."""
+    try:
+        y, m = int(iso[:4]), int(iso[5:7])
+    except (TypeError, ValueError):
+        return None
+    m = (m - 1) // 3 * 3 + 6
+    return (y + 1, m - 12) if m > 12 else (y, m)
+
+
+def _headline_candidates(hrows: list, fig: str, labels: set, release_q) -> list:
+    """The rows that may supply `fig`, in document order: exact-label rows (a
+    company-attributable net income row ahead of plain "net income") that no
+    average heading / non-GAAP table / segment table governs, whose first
+    value column is the release quarter — not year-to-date (flows, EPS) and
+    not another quarter's "nQTR". A header DATE is not compared: header cells
+    often span the value columns unevenly, and "March 31" lands over June's
+    column (BNY, CBSH, HTB)."""
+    def ok(h):
+        if h.non_gaap or h.segment or (h.average and fig in _DOLLAR_BS):
+            return False
+        if h.ytd and fig not in _DOLLAR_BS:
+            return False
+        if release_q and h.qtr_no and h.qtr_no != (release_q[1] + 2) // 3:
+            return False
+        return True
+    rows = [h for h in hrows if h.cl in labels and ok(h)]
+    if fig == "net_income":
+        # Only beside a plain "Net income" row of its own table — the NCI
+        # reconciliation of an income statement — and within 20% of it, as
+        # the company's share is: KEY's line-of-business tables ("Consumer
+        # Bank") print only "Net income attributable to Key" for the segment
+        # ($203M vs $509M); AMP's "… attributable to consolidated investment
+        # entities" is $(2)M beside $1,113M.
+        plain = {h.table: h.nums[0] for h in reversed(rows)}
+        attributable = [
+            h for h in hrows if _NI_ATTRIBUTABLE.match(h.cl) and ok(h)
+            and h.nums[0] is not None and plain.get(h.table)
+            and abs(h.nums[0] - plain[h.table]) <= 0.2 * abs(plain[h.table])]
+        rows = attributable + rows
+    if fig == "net_interest_income":
+        fte = {h.nums[0] for h in hrows if h.cl.startswith("net interest income")
+               and _FTE.search(h.cl) and not _EXCLUDING.search(h.cl)
+               and h.nums[0] is not None}
+        # Only when a different (GAAP) value exists — with no tax-exempt
+        # income the FTE figure IS the GAAP one (SFBS).
+        if any(h.nums[0] not in fte for h in rows):
+            rows = [h for h in rows if h.nums[0] not in fte]
+    return rows
+
+
 def extract_earnings_figures(ex991_html: bytes, anchor: dict) -> dict:
     """Headline latest-quarter figures from one EX-99.1 document, sanity-gated
     against `anchor` — the prior 10-Q's tagged balance-sheet totals and that
@@ -1298,16 +1461,15 @@ def extract_earnings_figures(ex991_html: bytes, anchor: dict) -> dict:
     out: dict = {k: None for k in _FIG_LABELS}
 
     table_scale, release_scale = _uncaptioned_scales(hrows, anchor)
-    anchored, _ = _detect_scale([(cl, nums) for cl, nums, *_ in hrows], anchor)
+    anchored, _ = _detect_scale([(h.cl, h.nums) for h in hrows], anchor)
+    release_q = _next_quarter_end(anchor.get("as_of"))
 
     for fig, labels in _FIG_LABELS.items():
-        # First matching row decides (its blank latest cell → n/a, audit P3);
-        # a balance-sheet figure skips rows an "average" heading governs.
-        hit = next(((nums[0], s, t) for cl, nums, s, t, avg in hrows
-                    if cl in labels and not (avg and fig in _DOLLAR_BS)), None)
-        if hit is None or hit[0] is None or hit[1] == _AMBIGUOUS:
+        # First candidate row decides (its blank latest cell → n/a, audit P3).
+        hit = next(iter(_headline_candidates(hrows, fig, labels, release_q)), None)
+        if hit is None or hit.nums[0] is None or hit.scale == _AMBIGUOUS:
             continue
-        v, s, t = hit
+        v, s, t = hit.nums[0], hit.scale, hit.table
         if fig in _DOLLAR_BS + _DOLLAR_FLOW and _too_coarse(v):
             continue
         scale = s if s is not None else (table_scale.get(t) or release_scale)
@@ -1403,7 +1565,10 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     #     guards (_headline_rows) — a v2 ×1000 value must not serve forever.
     # v4: anchored on the periodic report filed BEFORE the 8-K (v3 payloads
     #     computed after the release quarter's own 10-Q anchored on it).
-    ckey = f"earnings_8k:v4:{f8k['accession']}"
+    # v5: row/column semantics — year-to-date / prior-quarter columns,
+    #     non-GAAP & segment tables, split average headers, attributable net
+    #     income, tax-equivalent NII (_headline_candidates).
+    ckey = f"earnings_8k:v5:{f8k['accession']}"
     # Accession-keyed and version-prefixed = immutable; the default 24h read
     # ceiling would silently re-run the fetch+parse for every bank every day.
     payload = cache.get(ckey, max_age_s=None)
