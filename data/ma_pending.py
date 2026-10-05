@@ -55,6 +55,7 @@ from data.ma_announcements import (
     _close_before,
     _shares_outstanding_asof,
     brand_token,
+    build_terms,
     extract_exchange_ratio,
     extract_stated_value,
     find_open_announcements,
@@ -201,6 +202,7 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     basis = "stated" if value else None
     note = None
     tgt_cik = None
+    a_tick = t_tick = None
     ratio_hit = extract_exchange_ratio(corpus)
     if ratio_hit:
         ratio, acq_side, tgt_side = ratio_hit
@@ -218,6 +220,16 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
                 note = (f"computed: {ratio} × {a_tick} ${price:.2f} "
                         f"({p_date}) × {shares:,} {t_tick} shares ({sh_end})")
 
+    # Structured terms (ratio / cash / mix / implied price at announce /
+    # premium / expected close / termination fee) off the same corpus — the
+    # ratio sides resolved through the live universe above, the
+    # counterparty ticker as the per-share side's fallback.
+    terms, t_ok = build_terms(
+        corpus, announce, acq_tick=a_tick,
+        tgt_tick=t_tick or (cp_tick if direction == "acquisition" else None),
+        close_lookup=_close_before)
+    fetch_failed = fetch_failed or not t_ok
+
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{episode[0]['accession'].replace('-', '')}/{episode[0]['doc']}"
            if episode[0]["doc"] else None)
@@ -226,7 +238,7 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
            "counterparty_ticker": cp_tick, "counterparty_cert": cp_cert,
            "counterparty_cik": cp_cik,
            "value_usd": value, "value_basis": basis, "value_note": note,
-           "target_cik": tgt_cik, "announce_url": url}
+           "target_cik": tgt_cik, "announce_url": url, "terms": terms}
     return [row], not fetch_failed
 
 
@@ -309,6 +321,67 @@ def _resolved_after(filer_cik, other_name: str, announce_date: str,
     return False, not fetch_failed
 
 
+_VOTE_RE = re.compile(r"\bapprov", re.IGNORECASE)
+_REG_APPROVAL_RE = re.compile(
+    r"(?:received|obtained|receipt\s+of|granted|approved\s+by)\s+(?:all\s+)?"
+    r"(?:(?:of\s+)?the\s+)?(?:required|necessary|requisite|remaining|final|"
+    r"regulatory)?\s*(?:bank\s+)?regulatory\s+approvals?|regulatory\s+"
+    r"approvals?\s+(?:have|has)\s+been\s+(?:received|obtained|granted)",
+    re.IGNORECASE)
+_MILESTONE_SCAN_CAP = 8
+
+
+def _milestones(filer_cik, other_name: str, announce_date: str,
+                filings, side: str) -> tuple[dict, bool]:
+    """Disclosed deal milestones from ``filer_cik``'s 8-Ks AFTER the
+    announcement: an Item 5.07 naming the counterparty (brand token) with
+    approval language = that side's shareholder vote (filing date); an Item
+    8.01/7.01 naming it with "received ... regulatory approvals" = the
+    regulatory-approval date. Strict — nothing inferred from silence; a
+    filing that doesn't name the counterparty proves nothing. Returns
+    ({"votes": [{side, date, url}], "regulatory_approval": {date, url} |
+    None}, ok); ok=False on a fetch failure (caller must not cache)."""
+    out = {"votes": [], "regulatory_approval": None}
+    if not filer_cik:
+        return out, True
+    needle = _resolving_needle(other_name)
+    if not needle:
+        return out, True
+    if filings is None:
+        filings, f_ok = iter_submission_filings(int(filer_cik))
+        if not f_ok:
+            return out, False
+    cands = [f for f in filings
+             if f.get("form") == "8-K" and f.get("date", "") > announce_date
+             and any(i in f.get("items", "") for i in ("5.07", "8.01", "7.01"))]
+    fetch_failed = False
+    for f in sorted(cands, key=lambda x: x["date"])[:_MILESTONE_SCAN_CAP]:
+        time.sleep(_PAUSE_S)
+        text, t_ok = _accession_text(int(filer_cik), f["accession"], f["doc"])
+        fetch_failed = fetch_failed or not t_ok
+        if not text:
+            continue
+        low = text.lower()
+        named = (needle in " ".join(low.replace(",", " ").split())
+                 if " " in needle else token_in(needle, low))
+        if not named:
+            continue
+        url = (f"https://www.sec.gov/Archives/edgar/data/{int(filer_cik)}/"
+               f"{f['accession'].replace('-', '')}/{f['doc']}")
+        if "5.07" in f.get("items", "") and _VOTE_RE.search(text) \
+                and not out["votes"]:
+            out["votes"].append({"side": side, "date": f["date"], "url": url})
+        if _REG_APPROVAL_RE.search(text) and not out["regulatory_approval"]:
+            out["regulatory_approval"] = {"date": f["date"], "url": url}
+    return out, not fetch_failed
+
+
+def _merge_milestones(a: dict, b: dict) -> dict:
+    votes = list(a.get("votes") or []) + list(b.get("votes") or [])
+    reg = a.get("regulatory_approval") or b.get("regulatory_approval")
+    return {"votes": votes, "regulatory_approval": reg}
+
+
 def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
     """
     Live, STILL-OPEN announced deals for a holdco CIK: 425-episode (stock)
@@ -340,7 +413,8 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
                        "value_note": c["value_note"],
                        "target_cik": c["target_cik"] or cp_cik
                        if c["direction"] == "sale" else c["target_cik"],
-                       "announce_url": c["announce_url"]})
+                       "announce_url": c["announce_url"],
+                       "terms": c.get("terms")})
 
     # Open-status gate. Fetch the filer's own submissions ONCE (also the
     # authoritative completion source when we are the acquirer); a sale-side
@@ -367,6 +441,19 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
                 continue
             if resolved2:      # None here = no extra signal; buyer-side
                 continue       # check is best-effort on top of our own
+        # Disclosed milestones (shareholder vote 5.07s, regulatory-approval
+        # 8.01s) from BOTH filers' later 8-Ks — n/a until a filing says so.
+        ms, m_ok = _milestones(cik, r["counterparty_name"], r["announce_date"],
+                               subj_filings, side="acquirer"
+                               if r["direction"] == "acquisition" else "target")
+        ok = ok and m_ok
+        if r.get("counterparty_cik"):
+            ms2, m_ok2 = _milestones(
+                r["counterparty_cik"], subject_name, r["announce_date"], None,
+                side="target" if r["direction"] == "acquisition" else "acquirer")
+            ok = ok and m_ok2
+            ms = _merge_milestones(ms, ms2)
+        r["milestones"] = ms
         out.append(r)
     return out, ok
 

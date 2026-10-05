@@ -182,6 +182,8 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
             "value_note": None,
             "target_cik": None,
             "announce_url": None,
+            "terms": None,
+            "milestones": None,
         })
     for date, n in office_counts.items():
         if date not in by_date:  # orphan office group — headerless old record
@@ -202,6 +204,8 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
                 "value_note": None,
                 "target_cik": None,
                 "announce_url": None,
+                "terms": None,
+                "milestones": None,
             })
     return deals
 
@@ -227,8 +231,11 @@ def get_ma_history(cert: int, cik: int | None = None,
               value_usd int | None,               # RAW DOLLARS
               value_basis 'stated' | 'computed' | None,
               value_note str | None,              # computed formula verbatim
-              announce_url str | None}]           # all four: whole-company
+              announce_url str | None,            # all four: whole-company
                                                   # deals only, 2001+
+              terms dict | None,                  # ma_announcements.build_terms
+              milestones dict | None}]            # pending rows: votes /
+                                                  # regulatory approval
 
     [] on any history-fetch failure (never a partial deal list); a failed
     assets or announcement lookup renders that deal's fields n/a and skips
@@ -240,9 +247,11 @@ def get_ma_history(cert: int, cik: int | None = None,
     from data import cache
 
     # v9: pending rows gated by open-status verification (2026-07-15 rebuild
-    # — v8 shipped closed deals as pending). The key carries the holdco CIK
-    # because the pending/terminated legs only run when one is supplied.
-    key = f"ma_history:v9:{cert}:{int(cik) if cik else 0}"
+    # — v8 shipped closed deals as pending). v10 (2026-10-05): structured
+    # deal ``terms`` + pending ``milestones`` on every whole-company row (the
+    # Recent Deals tab). The key carries the holdco CIK because the
+    # pending/terminated legs only run when one is supplied.
+    key = f"ma_history:v10:{cert}:{int(cik) if cik else 0}"
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
@@ -332,6 +341,8 @@ def get_ma_history(cert: int, cik: int | None = None,
             "value_note": (ann or {}).get("value_note"),
             "target_cik": (ann or {}).get("target_cik"),
             "announce_url": (ann or {}).get("url"),
+            "terms": (ann or {}).get("terms"),
+            "milestones": None,
         })
 
     # Branch-package purchases (712/722 rows on this cert).
@@ -375,6 +386,8 @@ def get_ma_history(cert: int, cik: int | None = None,
             "value_note": None,
             "target_cik": None,
             "announce_url": None,
+            "terms": None,
+            "milestones": None,
         })
 
     for d in deals:
@@ -404,6 +417,8 @@ def get_ma_history(cert: int, cik: int | None = None,
                 "value_note": t["value_note"],
                 "target_cik": None,
                 "announce_url": t["announce_url"],
+                "terms": t.get("terms"),
+                "milestones": None,
                 "status": "terminated",
                 "termination_date": t["termination_date"],
             })
@@ -470,6 +485,8 @@ def get_ma_history(cert: int, cik: int | None = None,
                 "value_note": pr["value_note"],
                 "target_cik": pr["target_cik"],
                 "announce_url": pr["announce_url"],
+                "terms": pr.get("terms"),
+                "milestones": pr.get("milestones"),
                 "status": "pending",
                 "termination_date": None,
             })

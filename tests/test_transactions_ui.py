@@ -3,10 +3,13 @@ Transactions section render guard (docs/SNL-BUILD-PLAN.md §14).
 
 Runs app.py headlessly via AppTest, switches to the Transactions section,
 and asserts the owner-decided structure renders: the lazy_tabs pill bar
-with the built sub-tabs (Transactions Summary, Detailed M&A History,
-Detailed Offerings, and the kept Insider Activity), and the shared bank picker in its no-selection
-state (index=None — no network fan-out happens until a bank is picked, so
-this test never touches FDIC/EDGAR).
+with the built sub-tabs (Recent Deals first — universe-wide, reads only
+the deal-comps snapshot; By Bank; Detailed M&A History; Detailed Offerings;
+and the kept Insider Activity). The default pane is Recent Deals, which
+renders its empty-snapshot notice on the isolated store (no network); the
+By Bank pane is then selected to assert the shared bank picker in its
+no-selection state (index=None — no network fan-out happens until a bank
+is picked, so this test never touches FDIC/EDGAR).
 
 Run: python -m unittest tests.test_transactions_ui
 """
@@ -67,15 +70,23 @@ class TestTransactionsSection(unittest.TestCase):
             at = self._open_transactions()
         except ModuleNotFoundError as e:  # very old streamlit — skip, not fail
             self.skipTest(f"AppTest unavailable: {e}")
+        tabs = ["Recent Deals", "By Bank", "Detailed M&A History",
+                "Detailed Offerings", "Private Equity Transactions",
+                "Comparable Deal Analysis", "Insider Activity"]
         tab_bar = next((r for r in at.radio
-                        if list(map(str, r.options)) ==
-                        ["Transactions Summary", "Detailed M&A History",
-                         "Detailed Offerings", "Private Equity Transactions",
-                         "Comparable Deal Analysis", "Insider Activity"]), None)
+                        if list(map(str, r.options)) == tabs), None)
         self.assertIsNotNone(
             tab_bar,
             "Transactions lazy_tabs bar missing. Radios: "
             f"{[list(r.options) for r in at.radio]}")
+        # Default pane is Recent Deals (first pill); on the isolated store
+        # there is no compiled snapshot, so it renders the honest notice.
+        self.assertEqual(str(tab_bar.value), "Recent Deals")
+        self.assertTrue(any("snapshot has not been compiled" in str(i.value)
+                            for i in at.info),
+                        [str(i.value) for i in at.info])
+        tab_bar.set_value("By Bank")
+        at.run()
         picker = next((sb for sb in at.selectbox if sb.key == "txn_bank"), None)
         self.assertIsNotNone(picker, "shared bank picker missing")
         self.assertIsNone(picker.value, "picker must default to no selection "
@@ -83,8 +94,6 @@ class TestTransactionsSection(unittest.TestCase):
         # No-selection state renders the pick-a-bank prompt, not a table.
         self.assertTrue(any("Pick a bank" in str(i.value) for i in at.info),
                         [str(i.value) for i in at.info])
-        # Default pane is Transactions Summary (first pill).
-        self.assertEqual(str(tab_bar.value), "Transactions Summary")
 
 
 if __name__ == "__main__":

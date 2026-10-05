@@ -45,6 +45,78 @@ _PTBV_SANE = (0.2, 8.0)         # outside → basis-mismatch guard, n/a + flag
 _MAX_TBV_AGE_DAYS = 200
 
 
+def _ttm_eps_at(cik: int, asof_iso: str) -> tuple[float | None, str | None]:
+    """Target diluted EPS, trailing twelve months, at the last 10-Q/10-K
+    period-end ≤ ``asof`` (the P/E-at-announce denominator). The
+    companyfacts EPS entries are clipped at ``asof`` and run through THE
+    TTM rules (data/sec_client._extract_ttm_value: 4 consecutive quarters,
+    YTD-difference derivation, annual only when nothing newer) so a single
+    quarter can never pass as twelve months. (eps, period_end) or
+    (None, None) — also when the newest period is staler than
+    _MAX_TBV_AGE_DAYS (a deal is not priced off a year-old P&L)."""
+    from datetime import date
+    from data.sec_client import _extract_ttm_value, fetch_company_facts
+    try:
+        facts = fetch_company_facts(int(cik))
+    except Exception as e:
+        print(f"[deal_comps] eps cik {cik}: {type(e).__name__}: {e}")
+        return None, None
+    units = ((facts or {}).get("facts", {}).get("us-gaap", {})
+             .get("EarningsPerShareDiluted", {}).get("units", {}))
+    clipped = {u: [e for e in rows if (e.get("end") or "") <= asof_iso
+                   and e.get("form") in ("10-K", "10-Q")]
+               for u, rows in units.items()}
+    ends = [e["end"] for rows in clipped.values() for e in rows if e.get("end")]
+    if not ends:
+        return None, None
+    end = max(ends)
+    try:
+        if (date.fromisoformat(asof_iso) - date.fromisoformat(end)).days > _MAX_TBV_AGE_DAYS:
+            return None, None
+    except ValueError:
+        return None, None
+    sub = {"facts": {"us-gaap": {"EarningsPerShareDiluted": {"units": clipped}}}}
+    val = _extract_ttm_value(sub, "EarningsPerShareDiluted", max_age_years=60)
+    return (float(val), end) if val is not None else (None, None)
+
+
+def merger_arb(terms: dict | None, acq_price, tgt_price, today,
+               acq_ticker: str | None = None) -> dict:
+    """Live merger-arb figures for a PENDING deal from its structured terms
+    and the two parties' current prices (warm price cache, frozen quotes
+    already dropped at ingest). Every field honest-None when an input is
+    missing:
+      implied_offer    ratio × acquirer price + cash (per the stated mix)
+      gross_spread     implied_offer ÷ target price − 1
+      days_to_close    stated expected-close period end − today
+      annualized       gross × 365 ÷ days (None when no stated close or
+                       days ≤ 0 — a past-due close is not annualizable)
+    ``today`` is a datetime.date (injected for the hand-math tests)."""
+    from datetime import date
+    from data.ma_announcements import implied_offer
+    out = {"implied_offer": None, "offer_note": None, "gross_spread": None,
+           "days_to_close": None, "annualized_spread": None}
+    if not terms:
+        return out
+    offer, note = implied_offer(
+        terms, acq_price,
+        basis_label=f"{acq_ticker or terms.get('acq_ticker') or 'acquirer'} "
+                    f"${acq_price:,.2f}" if acq_price is not None else "")
+    out["implied_offer"], out["offer_note"] = offer, note
+    if offer is not None and tgt_price and tgt_price > 0:
+        out["gross_spread"] = offer / tgt_price - 1
+    close = terms.get("expected_close_date")
+    if close:
+        try:
+            out["days_to_close"] = (date.fromisoformat(close) - today).days
+        except (TypeError, ValueError):
+            out["days_to_close"] = None
+    d = out["days_to_close"]
+    if out["gross_spread"] is not None and d is not None and d > 0:
+        out["annualized_spread"] = out["gross_spread"] * 365 / d
+    return out
+
+
 def _fdic_at(cert, asof_iso: str):
     """(tbv, core_deposits, assets, repdte_iso, ok) — FDIC bank-sub tangible
     equity (EQTOT − INTAN), core deposits and assets at the last REPDTE ≤ asof,
@@ -118,15 +190,30 @@ def compute_multiples(deal: dict) -> tuple[dict, bool]:
     caching of this build)."""
     out = {"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
            "p_tbv": None, "price_assets": None, "core_dep_premium": None,
-           "comp_assets": None, "flagged": None}
+           "comp_assets": None, "flagged": None,
+           "ttm_eps": None, "eps_asof": None, "p_e": None}
     value = deal.get("value_usd")
     anchor = deal.get("announce_date") or deal.get("completion_date") \
         or deal.get("termination_date")
-    if not value or not anchor or deal.get("deal_kind") != "whole_company":
+    if not anchor or deal.get("deal_kind") != "whole_company":
+        return out, True
+
+    # P/E at announce: implied per-share price (terms) ÷ target TTM diluted
+    # EPS at the last period ≤ announce — holdco (SEC) basis only, so it
+    # needs the priced entity's CIK. Loss-making targets: P/E n/a (not
+    # meaningful), the EPS itself still reported.
+    terms = deal.get("terms") or {}
+    tgt_cik = deal.get("target_cik")
+    if tgt_cik and deal.get("announce_date") and terms.get("implied_price"):
+        eps, eps_end = _ttm_eps_at(int(tgt_cik), deal["announce_date"])
+        if eps is not None:
+            out.update(ttm_eps=eps, eps_asof=eps_end)
+            if eps > 0:
+                out["p_e"] = terms["implied_price"] / eps
+    if not value:
         return out, True
 
     ok = True
-    tgt_cik = deal.get("target_cik")
     if tgt_cik:
         from data.sec_per_share import tangible_common_equity_at
         tce, tce_end = tangible_common_equity_at(int(tgt_cik), anchor,
@@ -244,6 +331,9 @@ def build_comps_snapshot(banks: list[dict],
                 "announce_url": d.get("announce_url"),
                 "target_assets": d.get("target_assets"),
                 "target_assets_repdte": d.get("target_assets_repdte"),
+                "target_ticker": (d.get("terms") or {}).get("tgt_ticker"),
+                "terms": d.get("terms"),
+                "milestones": d.get("milestones"),
                 **mult,
             })
     if not lookups_ok:
