@@ -284,13 +284,10 @@ _QUARTERLY_RATIO = {
     "EEFFR": "EEFFQR", "NTLNLSR": "NTLNLSQR",
 }
 # The ones FDIC computes on AVERAGE balances: a multi-charter group's value
-# cannot be rebuilt from summed levels. data/cert_group nulls those it
-# classifies, but INTINCYQ/INTEXPYQ/NONIIAYQ/NONIXAYQ are not classified there
-# and would arrive as a SUM of the charters' ratios — so a group renders n/a
-# here for the whole set. Efficiency is flow ÷ flow, exact for a group.
-_AVG_BASED_FDIC_RATIOS = ((frozenset(_QUARTERLY_RATIO)
-                           | frozenset(_QUARTERLY_RATIO.values()))
-                          - {"EEFFR", "EEFFQR"})
+# cannot be rebuilt from summed levels, so data/cert_group nulls them and the
+# row says why (n/a) instead of a bare dash. Efficiency is flow ÷ flow, exact
+# for a group (cert_group recomputes it).
+from data.cert_group import AVERAGE_BASED_RATIOS as _AVG_BASED_FDIC_RATIOS  # noqa: E402
 
 
 def _is_group_record(rec) -> bool:

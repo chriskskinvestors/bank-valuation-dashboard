@@ -73,10 +73,13 @@ from __future__ import annotations
 # _EXACT_QUOTIENTS. NOIJY ELNATRY NTRER NTCOMRER IDNTCIR (annualized flow ÷
 # 5-point average balance) were being SUMMED; they belong here. EEFFQR was
 # listed here until 2026-09-30 — it is a flow ÷ flow quotient (EEFFQ/IEFFQ).
+# The single-quarter INTINCYQ INTEXPYQ NONIIAYQ NONIXAYQ (2026-10-05) are the
+# same average-balance ratios over one quarter.
 AVERAGE_BASED_RATIOS = frozenset({
     "ROA", "ROE", "NIMY", "INTEXPY", "INTINCY",
     "NONIIAY", "NONIXAY", "ROAPTX", "NTLNLSR",
     "ROAQ", "ROEQ", "NIMYQ", "NTLNLSQR",
+    "INTINCYQ", "INTEXPYQ", "NONIIAYQ", "NONIXAYQ",
     "NOIJY", "ELNATRY", "NTRER", "NTCOMRER", "IDNTCIR",
 })
 

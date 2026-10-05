@@ -625,3 +625,30 @@ class TestRegistryLabelsMatchFields(unittest.TestCase):
         self.assertEqual(m["reserve_nco_coverage"]["format"], "ratio")
         self.assertEqual(m["nco_to_reserve"]["label"], "Loans/Core Dep")
         self.assertEqual(m["nco_to_reserve"]["category"], "Composition")
+
+
+class TestQuarterlyRatioMapClassified(unittest.TestCase):
+    def test_every_quarterly_variant_is_classified(self):
+        # The Performance Analysis Quarterly view swaps each FDIC ratio for its
+        # single-quarter variant at render time — invisible to the row-spec
+        # scan above. An unclassified variant is SUMMED across a group's
+        # charters (INTINCYQ etc., 2026-10-05).
+        # Read from source, not imported: importing a ui module here binds it
+        # to this suite's streamlit stub (phantom failures under discovery).
+        import ast
+        from pathlib import Path
+        from data.cert_group import AVERAGE_BASED_RATIOS, _EXACT_QUOTIENTS
+        src = (Path(__file__).resolve().parent.parent / "ui"
+               / "financials_statements.py").read_text(encoding="utf-8")
+        node = next(n for n in ast.parse(src).body if isinstance(n, ast.Assign)
+                    and getattr(n.targets[0], "id", "") == "_QUARTERLY_RATIO")
+        _QUARTERLY_RATIO = ast.literal_eval(node.value)
+        self.assertIn("INTINCYQ", _QUARTERLY_RATIO.values())
+        handled = AVERAGE_BASED_RATIOS | set(_EXACT_QUOTIENTS)
+        self.assertEqual(sorted(set(_QUARTERLY_RATIO.values()) - handled), [])
+
+    def test_quarterly_yield_ratios_are_dropped_for_a_group(self):
+        from data.cert_group import aggregate_records
+        recs = [{"REPDTE": "20260630", "ASSET": a, "INTINCYQ": y, "CERT": c}
+                for c, a, y in ((1, 900, 5.4), (2, 100, 6.1))]
+        self.assertIsNone(aggregate_records(recs).get("INTINCYQ"))
