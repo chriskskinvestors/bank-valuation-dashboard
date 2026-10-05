@@ -120,14 +120,32 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         "roatce_holdco": {"expected": 14.97, "tol_abs": 1.0},
     },
     "C": {
-        "shares":        {"expected": 1_750_000_000, "tol_pct": 3.0},
-        "ni_ttm_b":      {"expected": 14.31, "tol_pct": 5.0},
-        "equity_b":      {"expected": 212.3, "tol_pct": 3.0},
-        # Citi's latest companyfacts period is 4Q25 (as-of 2025-12-31). Reported
-        # tangible book value / share in the 4Q25 press release = $97.06.
-        "tbvps":         {"expected": 97.06, "tol_pct": 3.0},
-        # Re-pinned 2026-07-07 (common-basis; hand-check). Old 7.6 preferred-inclusive.
-        "roatce_holdco": {"expected": 7.71, "tol_abs": 1.0},
+        # Re-pinned 2026-10-05 to Q2-2026 (as-of 2026-06-30). companyfacts
+        # still stops at FY2025 for Citi; the pipeline reaches Q2 through the
+        # filing overlay (#135/#137) + skipped-quarter fill (#170), so the old
+        # 4Q25 pins no longer described what is served. Every value below is
+        # read from Citi's own documents, not pipeline output:
+        #   10-Q 0000831001-26-000045 (c-20260630.htm), printed text;
+        #   10-Q 0000831001-26-000019 (c-20260331.htm), printed text;
+        #   raw companyfacts for 3Q25 / 9M25 / FY25; 2Q26 release EX-99.1.
+        # Shares: cover "common stock outstanding on June 30, 2026:
+        # 1,677,436,783".
+        "shares":        {"expected": 1_677_436_783, "tol_pct": 3.0},
+        # Citigroup's net income: 3Q25 3,752 + 4Q25 (FY 14,306 − 9M 11,835 =
+        # 2,471) + 1Q26 5,785 + 2Q26 5,831 = 17,839 ($M).
+        "ni_ttm_b":      {"expected": 17.84, "tol_pct": 5.0},
+        # "Total Citigroup stockholders' equity 212,015" at 2026-06-30.
+        "equity_b":      {"expected": 212.02, "tol_pct": 3.0},
+        # Citi's TCE reconciliation: common equity 192,465 − goodwill 19,012
+        # − intangibles other than MSRs 4,216 = 169,237 ÷ 1,677.4M = $100.89
+        # (= the 2Q26 release). The pipeline reads 100.42: its intangible
+        # resolver also deducts Citi's 788 of MSRs (known MSR residual).
+        "tbvps":         {"expected": 100.89, "tol_pct": 3.0},
+        # NI-to-common TTM (EPS numerator "Net income allocated to common
+        # shareholders for basic EPS"): 3Q25 3,438 + 4Q25 (FY 13,021 − 9M
+        # 10,872 = 2,149) + 1Q26 5,424 + 2Q26 (1H 10,870 − 5,424 = 5,446)
+        # = 16,457, over TCE 169,237 = 9.72%.
+        "roatce_holdco": {"expected": 9.72, "tol_abs": 1.0},
     },
     "USB": {
         # Period-end common shares outstanding, 1Q26 (2026-03-31): the pipeline
