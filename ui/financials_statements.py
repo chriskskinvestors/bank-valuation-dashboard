@@ -103,18 +103,6 @@ def _eff_tax(rec):
     return 0.21
 
 
-def _core_income(rec):
-    """Net income excluding realized securities gains/losses (tax-effected) and
-    extraordinary items — a defensible 'core' earnings figure for banks."""
-    ni = _num(rec.get("NETINC"))
-    if ni is None:
-        return None
-    igl = _num(rec.get("IGLSEC")) or 0.0
-    extra = _num(rec.get("EXTRA")) or 0.0
-    t = _eff_tax(rec)
-    return ni - igl * (1 - t) - extra
-
-
 def _expr_terms(expr: str) -> list[tuple[int, str]]:
     """'A+B-C' → [(+1,'A'), (+1,'B'), (-1,'C')] — the field expression used by
     the fratio kind. First term is implicitly positive."""
@@ -283,6 +271,34 @@ def _dep_annual_cost_rate(fy_int, quarterly_avgs):
 def _prior_quarter_end(dt):
     """Calendar quarter-end immediately before dt (itself a quarter-end)."""
     return (pd.Timestamp(dt).normalize() - pd.offsets.QuarterEnd(1))
+
+
+# FDIC's default ratio fields are calendar-YTD annualized. A Quarterly column
+# shows the FDIC's own single-quarter variant instead — the raw field put the
+# YTD figure under a quarter label (REVIEW 2026-10-05 P0-1: ONB "Q4 '25" ROAA
+# 1.16 YTD vs ROAQ 1.32, beside a computed single-quarter ROACE that matched
+# ROEQ). Annual columns are 12/31 records, where YTD IS the fiscal year.
+_QUARTERLY_RATIO = {
+    "ROA": "ROAQ", "ROE": "ROEQ", "NIMY": "NIMYQ", "INTINCY": "INTINCYQ",
+    "INTEXPY": "INTEXPYQ", "NONIIAY": "NONIIAYQ", "NONIXAY": "NONIXAYQ",
+    "EEFFR": "EEFFQR", "NTLNLSR": "NTLNLSQR",
+}
+# The ones FDIC computes on AVERAGE balances: a multi-charter group's value
+# cannot be rebuilt from summed levels. data/cert_group nulls those it
+# classifies, but INTINCYQ/INTEXPYQ/NONIIAYQ/NONIXAYQ are not classified there
+# and would arrive as a SUM of the charters' ratios — so a group renders n/a
+# here for the whole set. Efficiency is flow ÷ flow, exact for a group.
+_AVG_BASED_FDIC_RATIOS = ((frozenset(_QUARTERLY_RATIO)
+                           | frozenset(_QUARTERLY_RATIO.values()))
+                          - {"EEFFR", "EEFFQR"})
+
+
+def _is_group_record(rec) -> bool:
+    """A data/cert_group consolidation of several charters."""
+    try:
+        return int(rec.get("_charter_count")) > 1
+    except (AttributeError, TypeError, ValueError):
+        return False
 
 
 def _decum_flow(rec, field, quarterly, hist_by_date):
@@ -598,8 +614,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     if with_ri or with_fte:
         # with_fte loads RI tax-exempt income for the FTE-NIM line WITHOUT the
         # RI-E expense-row insertion (which only belongs on the Income tab).
+        # Quarterly view: single-quarter detail for every caller — the FTE-NIM
+        # line adds it to the single-quarter NIMYQ (P0-1), never a YTD sum.
         ri_by_ci, rie_by_ci = _ri_details_by_column(cert, recs_list,
-                                                    quarterly=_decum_active)
+                                                    quarterly=(period == "Quarterly"))
     if with_ri:
         spec = _spec_with_rie_rows(spec, rie_by_ci)
 
@@ -638,15 +656,29 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         m = _mo(rec.get("REPDTE")) or 12
         return 12.0 / m if m else 1.0
 
+    def _avg_of(ci, value):
+        """Average of value(record) over the column's period, read from the
+        quarter-ends of the FULL history (_hist_by_date): Quarterly = (q−1 +
+        q)/2; Annual = the 5 quarter-ends prior FY-end + the year's four. A
+        Dec-to-Dec 2-point average misstates a year with a mid-year merger
+        (REVIEW 2026-10-05 P1-10: ONB FY2022 ROACE 11.67% vs 10.37% on the
+        5-point average, = FDIC ROE). None unless every point is present —
+        never a shorter average or a period-end balance under an "avg" label."""
+        pts = [pd.Timestamp(recs_list[ci]["REPDTE"]).normalize()]
+        for _ in range(1 if _quarterly_view else 4):
+            pts.append(_prior_quarter_end(pts[-1]))
+        vals = []
+        for d in pts:
+            r = _hist_by_date.get(d)
+            v = _num(value(r)) if r is not None else None
+            if v is None:
+                return None
+            vals.append(v)
+        return sum(vals) / len(vals)
+
     def _avg(ci, field):
-        """Average balance over the current and prior period (begin+end)/2;
-        falls back to the period-end value for the first column."""
-        cur = _num(recs_list[ci].get(field))
-        if ci > 0:
-            prev = _num(recs_list[ci - 1].get(field))
-            if cur is not None and prev is not None:
-                return (cur + prev) / 2.0
-        return cur
+        """Average balance of one FDIC field (see _avg_of)."""
+        return _avg_of(ci, lambda r: r.get(field))
 
     def _avgsum(ci, fields):
         """Average of a SUM of balances (e.g. funding = deposits + borrowings).
@@ -676,7 +708,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
 
     def _core_flow(ci):
         """De-cumulated core income + factor (quarterly spans matched, #26 —
-        see _core_income for the definition). Absent IGLSEC/EXTRA legitimately
+        core = net income excluding realized securities gains/losses, tax-
+        effected, and extraordinary items). Absent IGLSEC/EXTRA legitimately
         mean zero; present but un-decumulatable → (None, None). The effective
         tax rate is the current YTD ratio — a rate, not a flow, so no span mix."""
         rec = recs_ytd[ci]
@@ -695,8 +728,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         t = _eff_tax(rec)
         return ni - parts["IGLSEC"] * (1 - t) - parts["EXTRA"], fq
 
-    def _revenue(rec):
-        ii, ie, noni = _num(rec.get("INTINC")), _num(rec.get("EINTEXP")), _num(rec.get("NONII"))
+    def _revenue(ci):
+        """NII + noninterest income over the column's span (single quarter in
+        the Quarterly view — never the YTD under a quarter label, P0-1)."""
+        ii, ie, noni = (_flow(ci, f)[0] for f in ("INTINC", "EINTEXP", "NONII"))
         return (ii - ie + noni) if None not in (ii, ie, noni) else None
 
     def _ri_doc_link(rec):
@@ -727,6 +762,10 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
     _Q_NOTE = " — single quarter: calendar-YTD(q) − YTD(q−1), Q1 as filed"
     _computed_src = ("Computed from Call Report" + _Q_NOTE) if _decum_active \
         else "Computed from Call Report"
+    # Same, for rows that de-cumulate their own flows via _flow (any
+    # statement's Quarterly view — not only a flow statement's).
+    _flow_src = ("Computed from Call Report" + _Q_NOTE) if _quarterly_view \
+        else "Computed from Call Report"
 
     # Annualized growth rows: a period in which the bank completed a
     # whole-bank acquisition grows by the target, not organically. The
@@ -753,8 +792,17 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             return _usd(raw), calc(label, _usd(raw), asof, f"FDIC field {fl}",
                                    [{"label": label, "val": _thou(raw) + " ($000)"}], None, True)
         if kind == "pct":
-            fl = args[0]; raw = _num(rec.get(fl))
-            return _pct(raw), calc(label, _pct(raw), asof, f"FDIC field {fl}",
+            fl = args[0]
+            q_fl = _QUARTERLY_RATIO.get(fl) if _quarterly_view else None
+            fl = q_fl or fl
+            ref = f"FDIC field {fl}" + (" (single quarter, as filed)" if q_fl else "")
+            if fl in _AVG_BASED_FDIC_RATIOS and _is_group_record(rec):
+                why = ("n/a — FDIC computes this on average balances, which "
+                       "can't be combined across the group's charters")
+                return "n/a", calc(label, "n/a", asof, ref,
+                                   [{"label": label, "val": why}], None, True)
+            raw = _num(rec.get(fl))
+            return _pct(raw), calc(label, _pct(raw), asof, ref,
                                    [{"label": label + " (as reported)", "val": _pct(raw)}], None, True)
         if kind == "diff":
             f1, f2 = args; a, b = _num(rec.get(f1)), _num(rec.get(f2))
@@ -814,7 +862,8 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": "Intangibles (incl. goodwill)", "val": _thou(intan) + " ($000)"}],
                            "Total equity − total intangibles", False)
         if kind == "roatce":
-            # Denominator is the 2-point AVERAGE ((begin+end)/2 via _avg), like
+            # Denominator is the period AVERAGE (_avg: 2-point quarterly,
+            # 5-point annual), like
             # every other avg-denominated kind (netopex, costfunds, core_roae):
             # period-END equity understated the return for a bank that raised
             # equity mid-period while the popup claimed an average.
@@ -828,20 +877,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": "Avg tangible common equity (EQTOT − INTAN)",
                              "val": _thou(round(tce)) + " ($000)" if tce is not None else "—"}],
                            "Net income ÷ avg tangible common equity × 100", False)
-        if kind == "marginrev":   # flow ÷ total revenue × 100 (both YTD, no annualizing)
-            fl = args[0]; n = _num(rec.get(fl)); rev = _revenue(rec)
+        if kind == "marginrev":   # flow ÷ total revenue × 100 (same span, no annualizing)
+            fl = args[0]; n, _fq = _flow(ci, fl); rev = _revenue(ci)
             v = _pctv(n/rev*100) if (n is not None and rev) else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": fl, "val": _thou(n) + " ($000)"},
+            return v, calc(label, v, asof, _flow_src,
+                           [{"label": fl, "val": _thou(n) + " ($000)" if n is not None else "—"},
                             {"label": "Total revenue (NII + non-int income)",
                              "val": _thou(round(rev)) + " ($000)" if rev else "—"}],
                            f"{fl} ÷ total revenue × 100", False)
-        if kind == "pctdiff":     # A% − B%
-            a, b = _num(rec.get(args[0])), _num(rec.get(args[1]))
-            v = _pctv(a-b) if (a is not None and b is not None) else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": args[0], "val": _pct(a)},
-                            {"label": args[1], "val": _pct(b)}], f"{args[0]} − {args[1]}", False)
         if kind == "yield":       # flow (annualized) ÷ avg balance × 100
             nf, df_ = args; n, fq = _flow(ci, nf); d = _avg(ci, df_)
             v = _pctv(n*fq/d*100) if (n is not None and d) else "—"
@@ -859,8 +902,25 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round((a-b)*fq)) + " ($000)" if (a is not None and b is not None) else "—"},
                             {"label": "Avg " + df_, "val": _thou(round(d)) + " ($000)" if d else "—"}],
                            f"({af_} − {bf_}) ÷ avg {df_} × 100", False)
+        if kind == "costibdep":
+            # EDEP is interest on ALL deposits, domestic AND foreign offices,
+            # so the base must be DEPIDOM + DEPIFOR (REVIEW 2026-10-05 P0-6:
+            # JPM Q2'26 2.91% over DEPIDOM alone vs 2.18%). A record without
+            # DEPIFOR counts foreign as 0 only for a domestic-only bank
+            # (analysis.deposit_dynamics._interest_bearing_deposits).
+            from analysis.deposit_dynamics import _interest_bearing_deposits
+            ed, fq = _flow(ci, "EDEP"); d = _avg_of(ci, _interest_bearing_deposits)
+            v = _pctv(ed*fq/d*100) if (ed is not None and d) else "—"
+            return v, calc(label, v, asof, _flow_src,
+                           [{"label": "EDEP" + (" (annualized)" if (fq or 1) != 1 else ""),
+                             "val": _thou(round(ed*fq)) + " ($000)" if ed is not None else "—"},
+                            {"label": "Avg interest-bearing deposits (DEPIDOM + DEPIFOR)",
+                             "val": _thou(round(d)) + " ($000)" if d else
+                             "n/a — a period point is missing, or DEPIFOR is absent "
+                             "for a bank with foreign-office deposits"}],
+                           "EDEP ÷ avg (DEPIDOM + DEPIFOR) × 100", False)
         if kind == "roate":       # Return on avg tangible (total) equity
-            # 2-point average denominator — see roatce.
+            # Period-average denominator — see roatce.
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             intan = _avg(ci, "INTAN") or 0
             te = (eq - intan) if eq is not None else None
@@ -872,7 +932,7 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                              "val": _thou(round(te)) + " ($000)" if te is not None else "—"}],
                            "Net income ÷ tangible equity × 100", False)
         if kind == "roace":       # Return on avg COMMON equity
-            # 2-point average denominator — see roatce. The preferred guard
+            # Period-average denominator — see roatce. The preferred guard
             # below keys off the CURRENT period's EQPP (outstanding now).
             ni, fq = _flow(ci, "NETINC"); eq = _avg(ci, "EQTOT")
             pfd = _num(rec.get("EQPP")) or 0
@@ -999,7 +1059,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             # of muni interest, expressed in bps of avg earning assets. n/a when
             # Schedule RI tax-exempt income isn't ingested for this column — a
             # bank without that detail shows reported NIM only, never a guess.
-            nim = _num(rec.get("NIMY")); ea = _avg(ci, "ERNAST")
+            # Quarterly view: single-quarter NIMYQ + the de-cumulated RI
+            # tax-exempt income ×4 (ri_by_ci is single-quarter there), so the
+            # line sits on the same span as "NIM (reported)" below it (P0-1).
+            nim_fl = "NIMYQ" if _quarterly_view else "NIMY"
+            if _quarterly_view:
+                f = 4.0
+            nim = None if _is_group_record(rec) else _num(rec.get(nim_fl))
+            ea = _avg(ci, "ERNAST")
             det = ri_by_ci.get(ci)
             op = "reported NIM + FTE adjustment ÷ avg earning assets × 100"
             if det is None or nim is None or not ea:
@@ -1015,14 +1082,14 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             if fte is None:
                 return "n/a", calc(label, "n/a", asof,
                                    "computed — statutory 21% federal rate",
-                                   [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
+                                   [{"label": f"Reported NIM ({nim_fl})", "val": _pct(nim)},
                                     {"label": "FTE adjustment",
                                      "val": "n/a — tax-exempt income not reported"}],
                                    op, False, source="FFIEC Call Report — Schedule RI",
                                    link=doc_link)
             v = _pctv(nim + fte * f / ea * 100)
             return v, calc(label, v, asof, "computed — statutory 21% federal rate",
-                           [{"label": "Reported NIM (NIMY)", "val": _pct(nim)},
+                           [{"label": f"Reported NIM ({nim_fl})", "val": _pct(nim)},
                             {"label": "FTE adjustment" + (" (annualized)" if f != 1 else ""),
                              "val": _thou(round(fte * f)) + " ($000)"},
                             {"label": "Avg earning assets (ERNAST)",
@@ -1503,14 +1570,19 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                            source="SEC filing", link=sec_filing_link)
         # ── Normalized 'Core' (ex realized securities gains/losses) ──────
         if kind == "core_income":
-            core = _core_income(rec)
-            v = _usd(core)
-            igl = _num(rec.get("IGLSEC")) or 0.0
-            return v, calc(label, v, asof, "Computed from Call Report",
-                           [{"label": "Net income", "val": _thou(_num(rec.get("NETINC"))) + " ($000)"},
-                            {"label": "Less: securities gains (after-tax)",
-                             "val": _thou(round(igl*(1-_eff_tax(rec)))) + " ($000)"}],
-                           "Net income − after-tax securities gains/losses", False)
+            # The column's own span (P0-2): the Quarterly view is the single
+            # quarter — core income off the YTD record put ONB's six-month
+            # $511.9M under "Q2 '26" (quarter: $267.5M).
+            core, _fq = _core_flow(ci); ni, _fn = _flow(ci, "NETINC")
+            v = _usd(core) if core is not None else "—"
+            return v, calc(label, v, asof, _flow_src,
+                           [{"label": "Net income",
+                             "val": _thou(ni) + " ($000)" if ni is not None else "—"},
+                            {"label": "Less: securities gains (after-tax) + extraordinary",
+                             "val": _thou(round(ni - core)) + " ($000)"
+                             if None not in (ni, core) else "—"}],
+                           "Net income − after-tax securities gains/losses − extraordinary items",
+                           False)
         if kind == "core_roaa":
             core, fq = _core_flow(ci); a = _avg(ci, "ASSET")
             v = _pctv(core*fq/a*100) if (core is not None and a) else "—"
@@ -1528,21 +1600,34 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                             {"label": "Avg equity", "val": _thou(round(e)) + " ($000)" if e else "—"}],
                            "Core income ÷ avg equity × 100", False)
         if kind == "core_eps":
-            core = _core_income(rec); sh = _num(ps.get("shares"))
-            v = _psd(core*1000/sh) if (core is not None and sh) else "—"
-            return v, calc(label, v, asof, "Computed (FDIC core income ÷ SEC shares)",
-                           [{"label": "Core income", "val": _usd(core)},
-                            {"label": "Avg diluted shares", "val": f"{sh:,.0f}" if sh else "—"}],
-                           "Core income ÷ avg diluted shares", False,
-                           source="FDIC + SEC", link=sec_filing_link)
+            # n/a by construction (P0-2): the only core income here is the
+            # FDIC BANK SUBSIDIARY's, and the share count is the SEC HOLDING
+            # COMPANY's — one entity's earnings over the other's shares (ONB
+            # FY2025 $1.91 vs holdco diluted EPS $1.79). No holdco core
+            # numerator is sourced, so no honest figure exists for this line.
+            why = ("n/a — core income here is the FDIC bank subsidiary's; "
+                   "per-share counts are the SEC holding company's, so the "
+                   "quotient would mix two entities")
+            return "n/a", calc(label, "n/a", asof, why,
+                               [{"label": label, "val": why}],
+                               "holding-company core income ÷ avg diluted shares", False,
+                               source="FDIC + SEC", link=sec_filing_link)
         if kind == "nonrecur":
-            igl = _num(rec.get("IGLSEC")) or 0.0; extra = _num(rec.get("EXTRA")) or 0.0
-            pti = _num(rec.get("PTAXNETINC"))
-            v = _pctv((igl+extra)/pti*100) if pti else "—"
-            return v, calc(label, v, asof, "Computed from Call Report",
+            # Same-span flows (P0-1): single quarter in the Quarterly view.
+            # Absent IGLSEC/EXTRA mean zero (as in _core_flow); present but
+            # un-decumulatable → dead, never a YTD/quarter mix.
+            pti, _fp = _flow(ci, "PTAXNETINC"); nonrec = 0.0
+            for fld in ("IGLSEC", "EXTRA"):
+                if _num(recs_ytd[ci].get(fld)) is None:
+                    continue
+                qv, _fv = _flow(ci, fld)
+                nonrec = None if (qv is None or nonrec is None) else nonrec + qv
+            v = _pctv(nonrec/pti*100) if (pti and nonrec is not None) else "—"
+            return v, calc(label, v, asof, _flow_src,
                            [{"label": "Securities gains + extraordinary",
-                             "val": _thou(round(igl+extra)) + " ($000)"},
-                            {"label": "Pre-tax net income", "val": _thou(pti) + " ($000)"}],
+                             "val": _thou(round(nonrec)) + " ($000)" if nonrec is not None else "—"},
+                            {"label": "Pre-tax net income",
+                             "val": _thou(pti) + " ($000)" if pti is not None else "—"}],
                            "(Securities gains + extraordinary) ÷ pre-tax income × 100", False)
         return "—", None
 
@@ -1889,7 +1974,6 @@ _PERFORMANCE = [
         ("Net interest margin (reported)", "pct", "NIMY"),
         ("Yield on earning assets", "pct", "INTINCY"),
         ("Cost of funding earning assets", "pct", "INTEXPY"),
-        ("Net interest spread", "pctdiff", "INTINCY", "INTEXPY"),
         ("Net interest income / avg assets", "yield2", "INTINC", "EINTEXP", "ASSET"),
     ]),
     ("Efficiency (%)", [
@@ -1901,13 +1985,16 @@ _PERFORMANCE = [
         ("Net operating expense / avg assets", "netopex"),
     ]),
     ("Yield / Cost Detail (%)", [
-        ("Yield: total loans", "yield", "ILNDOM", "LNLSGR"),
+        # ILNLS (loans AND leases, domestic + foreign) matches LNLSGR's scope;
+        # ILNDOM (domestic loans only) understated JPM Q2'26 at 5.82% vs
+        # 6.41% (REVIEW 2026-10-05 P0-5).
+        ("Yield: total loans", "yield", "ILNLS", "LNLSGR"),
         ("Yield: investment securities", "yield", "ISC", "SC"),
         ("Yield: other earning assets", "na",
          "not separable from the FDIC feed — interest income isn't broken out "
          "for non-loan, non-securities earning assets"),
         ("Yield: interest-earning assets", "pct", "INTINCY"),
-        ("Cost: interest-bearing deposits", "yield", "EDEP", "DEPIDOM"),
+        ("Cost: interest-bearing deposits", "costibdep"),
         ("Cost: total deposits", "yield", "EDEP", "DEP"),
         ("Cost: borrowings / debt", "costdebt"),
         ("Cost: funding (earning-asset basis)", "pct", "INTEXPY"),
@@ -2040,8 +2127,11 @@ _CRIT_ROWS = [
 # The 2026-07-13 note that "RBCT1J = CET1 $" was checked only on TCBK/BANR,
 # which have no AT1 so CET1 == Tier 1 there; on OZK/USB/JPM (bank-level
 # preferred) it showed Tier 1 under the CET1 label and a fabricated $0 of AT1.
-# Leverage stays RBCT1JR — the field config.py's leverage_ratio metric already
-# uses platform-wide (RBC1AAJ differs a few bps; one convention everywhere).
+# Leverage is RBC1AAJ — the regulatory Tier 1 leverage ratio, Tier 1 ÷ QUARTER-
+# AVERAGE assets (AVASSETJ). RBCT1JR divides by period-END assets and missed
+# by 1.3pp (REVIEW 2026-10-05 P1-8: HBAN Q1'26 8.92% vs 10.24%). Exact for a
+# multi-charter group (cert_group: ΣRBCT1 / ΣAVASSETJ). config.py's
+# leverage_ratio metric still reads RBCT1JR — not changed here.
 # T1/T2 component walks are the RC-R section further down the page; LCR/HQLA
 # are large-bank-only (SNL shows NA too) — covered by the holdco caption.
 _CAPITAL_ADEQUACY = [
@@ -2062,7 +2152,7 @@ _CAPITAL_ADEQUACY = [
         ("CET1 Ratio", "pct", "IDT1CER"),
         ("Tier 1 Ratio", "pct", "RBC1RWAJ"),
         ("Total Capital Ratio", "pct", "RBCRWAJ"),
-        ("Tier 1 Leverage Ratio", "pct", "RBCT1JR"),
+        ("Tier 1 Leverage Ratio", "pct", "RBC1AAJ"),
         ("RWA / Total Assets", "ratio", "RWAJ", "ASSET"),
         ("Equity / Assets", "ratio", "EQTOT", "ASSET"),
         ("Tangible Equity / Tangible Assets", "fratio", "EQTOT-INTAN", "ASSET-INTAN"),
@@ -2317,7 +2407,7 @@ _CAPITAL_STRUCTURE = [
     ("Regulatory Capital Ratios (%)", [
         ("CET1 ratio", "pct", "IDT1CER"),
         ("Total risk-based capital ratio", "pct", "RBCRWAJ"),
-        ("Tier 1 leverage ratio", "pct", "RBCT1JR"),
+        ("Tier 1 leverage ratio", "pct", "RBC1AAJ"),
     ]),
 ]
 
