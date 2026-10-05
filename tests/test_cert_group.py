@@ -311,10 +311,15 @@ class TestGroupHistoryAggregation(unittest.TestCase):
         self.assertEqual(hist[0]["ROA"], 1.11, "single charter keeps its ratios")
         self.assertNotIn("_aggregated", hist[0])
 
-    def test_one_charter_failing_does_not_lose_the_others(self):
+    def test_failed_charter_withholds_the_group_not_a_partial_sum(self):
+        # REVIEW 2026-10-05 P0-4: a throttled fetch dropped WTFC cert 34618 and
+        # every period summed 15 of 16 charters as "the group". Charter 1's
+        # 100 is NOT the group total — no history beats a short one.
         import data.cert_group as cg
+        calls = []
 
         def _fetch(c, limit=20):
+            calls.append(c)
             if c == 2:
                 raise RuntimeError("FDIC down")
             return self._df([{"REPDTE": "20260630", "ASSET": 100, "CERT": c}])
@@ -322,8 +327,39 @@ class TestGroupHistoryAggregation(unittest.TestCase):
         with patch("data.fdic_client.fetch_financials", side_effect=_fetch), \
                 patch.object(cg, "get_cert_group", return_value=[1, 2]):
             hist = cg.fetch_group_history("X")
-        self.assertEqual(len(hist), 1)
-        self.assertEqual(hist[0]["ASSET"], 100)
+        self.assertEqual(hist, [])
+        self.assertEqual(calls.count(2), 2, "the failed charter is retried once")
+        self.assertEqual(calls.count(1), 1, "a charter that loaded is not refetched")
+
+    def test_retry_recovers_a_transient_failure(self):
+        import data.cert_group as cg
+        seen = {2: 0}
+
+        def _fetch(c, limit=20):
+            if c == 2:
+                seen[2] += 1
+                if seen[2] == 1:
+                    return self._df([])          # first attempt: empty (throttled)
+            return self._df([{"REPDTE": "20260630", "ASSET": 100, "CERT": c}])
+
+        with patch("data.fdic_client.fetch_financials", side_effect=_fetch), \
+                patch.object(cg, "get_cert_group", return_value=[1, 2]):
+            hist = cg.fetch_group_history("X")
+        self.assertEqual(hist[0]["ASSET"], 200)
+
+    def test_incomplete_period_omitted_preacquisition_kept(self):
+        # Charter 2 joined at 2025-12-31 (no older rows → pro forma, kept) but
+        # has a GAP at 2026-03-31 → that period is incomplete and omitted.
+        import data.cert_group as cg
+        per_cert = {
+            1: [{"REPDTE": p, "ASSET": 100, "CERT": 1}
+                for p in ("20260630", "20260331", "20251231", "20250930")],
+            2: [{"REPDTE": p, "ASSET": 10, "CERT": 2}
+                for p in ("20260630", "20251231")],
+        }
+        out = cg._aggregate_complete_periods(per_cert)
+        self.assertEqual([(r["REPDTE"], r["ASSET"]) for r in out],
+                         [("20260630", 110), ("20251231", 110), ("20250930", 100)])
 
     def test_no_certs_returns_empty(self):
         import data.cert_group as cg

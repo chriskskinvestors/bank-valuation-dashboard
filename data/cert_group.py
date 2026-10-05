@@ -397,27 +397,59 @@ def fetch_group_history(ticker: str, limit: int = 20,
         df = fdic_client.fetch_financials(certs[0], limit=limit)
         return [] if df is None or df.empty else df.to_dict("records")
 
-    by_period: dict[str, list[dict]] = {}
-    for c in certs:
-        try:
-            df = fdic_client.fetch_financials(c, limit=limit)
-        except Exception as e:
-            print(f"[cert_group] {ticker}: cert {c} history failed: "
-                  f"{type(e).__name__}: {e}")
-            continue
-        if df is None or df.empty:
-            continue
-        for rec in df.to_dict("records"):
-            period = str(rec.get("REPDTE") or "")
-            if period:
-                by_period.setdefault(period, []).append(rec)
+    per_cert: dict[int, list[dict]] = {}
+    for attempt in (1, 2):                    # one retry for failed charters
+        for c in certs:
+            if per_cert.get(c):
+                continue
+            try:
+                df = fdic_client.fetch_financials(c, limit=limit)
+            except Exception as e:
+                print(f"[cert_group] {ticker}: cert {c} history failed: "
+                      f"{type(e).__name__}: {e}")
+                continue
+            if df is not None and not df.empty:
+                per_cert[c] = df.to_dict("records")
+    missing = [c for c in certs if not per_cert.get(c)]
+    if missing:
+        # An ACTIVE member always has recent filings: an empty result is a
+        # failed fetch, not "no history". Summing the rest presented 15 of
+        # WTFC's 16 charters as the group (equity 6.93B vs 7.49B, REVIEW
+        # 2026-10-05 P0-4) — no group history beats a short one; callers keep
+        # their last good copy.
+        print(f"[cert_group] {ticker}: charters {missing} returned no history "
+              f"— group history withheld (never a partial sum)")
+        return []
+    return _aggregate_complete_periods(per_cert)[:limit]
 
+
+def _aggregate_complete_periods(per_cert: dict[int, list[dict]]) -> list[dict]:
+    """One consolidated record per REPDTE, newest first — only for periods
+    EVERY member covers. A member legitimately lacks periods before it joined
+    the group (older than its first record: pro forma, captioned); a member
+    missing a period inside or after its own history (a gap, or a member
+    whose stored rows weren't refreshed) makes that period incomplete, and
+    an incomplete period is omitted, never summed short."""
+    spans = {}
+    by_period: dict[str, list[dict]] = {}
+    for c, recs in per_cert.items():
+        periods = {str(r.get("REPDTE") or "") for r in recs} - {""}
+        if not periods:
+            continue
+        spans[c] = (min(periods), periods)
+        for r in recs:
+            p = str(r.get("REPDTE") or "")
+            if p:
+                by_period.setdefault(p, []).append(r)
     out = []
     for period in sorted(by_period, reverse=True):
+        if any(period >= first and period not in have
+               for first, have in spans.values()):
+            continue
         recs = sorted(by_period[period],
                       key=lambda r: -(float(r.get("ASSET") or 0)))
         out.append(aggregate_records(recs))
-    return out[:limit]
+    return out
 
 
 def _num(v) -> float | None:
