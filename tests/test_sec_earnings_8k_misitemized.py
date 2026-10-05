@@ -293,6 +293,66 @@ class TestUnprovenExhibitFallsBackTo202(_Site):
         self.assertEqual(len(self.calls), 1)
 
 
+SSB = 764038
+_SSB_SUBS = _subs([
+    ("8-K", "2026-10-02", "0001193125-26-411326", "7.01,9.01"),
+    ("8-K", "2026-07-23", "0001104659-26-086278", "2.02,7.01,8.01,9.01"),
+])
+# SSB's real 2026-10-02 EX-99.1 (excerpted): a scheduling notice for the
+# Q3 release, furnished under 7.01 — filed in a NEWER quarter than its
+# Q2 2.02 8-K, so it IS checked.
+_SSB_NOTICE_BODY = (
+    "<p>For Immediate Release</p><p>WINTER HAVEN, FL &#8211; October 2, "
+    "2026 &#8211; SouthState Bank Corporation (NYSE: SSB) announced today "
+    "that it will release third quarter 2026 earnings results on Wednesday, "
+    "October 21, 2026, after the market closes.</p></body></html>")
+
+
+def _ssb_site(headline: str):
+    return {
+        "https://data.sec.gov/submissions/CIK0000764038.json": _SSB_SUBS,
+        f"{_ARCH}/764038/000119312526411326/0001193125-26-411326-index.htm":
+            _index(SSB, "0001193125-26-411326", [
+                ("8-K", "ssb-20261002.htm", "8-K"),
+                ("EX-99.1", "ssb-ex99_1.htm", "EX-99.1")]),
+        f"{_ARCH}/764038/000119312526411326/ssb-ex99_1.htm":
+            ("<html><body><p>Exhibit 99.1</p><p><b>" + headline + "</b></p>"
+             + _SSB_NOTICE_BODY).encode(),
+    }
+
+
+class TestFutureDatedNoticeRejected(_Site):
+    """A scheduling notice names the date results WILL be released — after
+    its own filing date. A release never does (found 2026-10-05: SSB passed
+    the headline gate; BMRC's notice opened on the quarter itself)."""
+
+    def test_real_ssb_notice_keeps_q2_202(self):
+        self.serve(_ssb_site("SouthState Bank Corporation to Announce "
+                             "Quarterly Earnings Results on Wednesday, "
+                             "October 21, 2026"))
+        self.assertEqual(se8k._latest_earnings_8k(SSB)["accession_dash"],
+                         "0001104659-26-086278")
+
+    def test_notice_naming_the_quarter_first_still_rejected(self):
+        # Headline gate passes AND the first period is Q3 = the filing's
+        # quarter — only the future date (Oct 21 > Oct 2) gives it away.
+        self.serve(_ssb_site("SouthState Bank Corporation to Announce Third "
+                             "Quarter 2026 Earnings Results on Wednesday, "
+                             "October 21, 2026"))
+        self.assertEqual(se8k._latest_earnings_8k(SSB)["accession_dash"],
+                         "0001104659-26-086278")
+
+    def test_names_later_date(self):
+        # FBP's dateline is its own filing day — not later.
+        self.assertFalse(se8k._names_later_date(
+            "san juan, puerto rico – july 22, 2026 – first bancorp",
+            "2026-07-22"))
+        self.assertTrue(se8k._names_later_date(
+            "webcast on monday, oct. 26, 2026, at 8:30", "2026-10-02"))
+        self.assertFalse(se8k._names_later_date("February 30, 2027",
+                                                "2026-10-02"))
+
+
 class TestCachingAndFailure(_Site):
     def test_verdict_cached_by_accession(self):
         self.serve(_npb_site())
@@ -319,7 +379,7 @@ class TestCachingAndFailure(_Site):
         self.assertIsNone(cache.get("earnings_8k_latest:v2:1057706",
                                     max_age_s=None))
         self.assertIsNone(cache.get(
-            "earnings_8k_misitemized:v1:000105770626000020", max_age_s=None))
+            "earnings_8k_misitemized:v2:000105770626000020", max_age_s=None))
 
     def test_checks_bounded_without_any_202(self):
         rows = [("8-K", f"2026-09-{d:02d}", f"0000000088-26-0000{d:02d}", "8.01")

@@ -159,11 +159,17 @@ def _is_misitemized_release(f8k: dict) -> bool:
     … Earnings Release" fail it) AND the FIRST period that text names is that
     quarter-end ("FIRST BANCORP. ANNOUNCES EARNINGS FOR THE QUARTER ENDED JUNE
     30, 2026", filed 2026-07-22). A text that names no period, or opens on a
-    different one, is not proven — False. Cached forever by accession (the
-    filing is immutable); a fetch EXCEPTION propagates uncached."""
+    different one, is not proven — False. So is one that names a date AFTER
+    its own filing: that announces a future event, never results already
+    reported — SSB's "to Announce Quarterly Earnings Results on Wednesday,
+    October 21, 2026" passed the headline gate (filed 2026-10-02), and
+    BMRC's "to Webcast Q3 Earnings on Monday, October 26, 2026" opened on
+    the quarter itself. Cached forever by accession (the filing is
+    immutable); a fetch EXCEPTION propagates uncached."""
     from data import cache
     from data.ir_provider import _headline_text, _is_earnings_headline
-    ckey = f"earnings_8k_misitemized:v1:{f8k['accession']}"
+    # v2: future-dated notices rejected (SSB/BMRC Q3-2026 scheduling 8-Ks).
+    ckey = f"earnings_8k_misitemized:v2:{f8k['accession']}"
     hit = cache.get(ckey, max_age_s=None)
     if hit is not None:
         return bool(hit.get("ok"))
@@ -175,12 +181,32 @@ def _is_misitemized_release(f8k: dict) -> bool:
         text = _headline_text(html.decode("utf-8", "replace"))
         periods = _periods(text)
         ok = (_is_earnings_headline(text) and bool(periods)
-              and periods[0] == _release_quarter_end(f8k["date"]))
+              and periods[0] == _release_quarter_end(f8k["date"])
+              and not _names_later_date(text, f8k["date"]))
     try:
         cache.put(ckey, {"ok": ok})
     except Exception:
         pass
     return ok
+
+
+_FULL_DATE = re.compile(
+    r"(?<![a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+    r"\s*(\d{1,2}),?\s*(\d{4})(?!\d)")
+
+
+def _names_later_date(text: str, filed: str) -> bool:
+    """True when `text` names a full month-day-year date after `filed`
+    (YYYY-MM-DD). An impossible date ("February 30") is ignored."""
+    from datetime import date
+    for m in _FULL_DATE.finditer(text.lower()):
+        try:
+            d = date(int(m.group(3)), _MONTHS[m.group(1)], int(m.group(2)))
+        except ValueError:
+            continue
+        if d.isoformat() > filed:
+            return True
+    return False
 
 
 _EX99_TYPE = re.compile(r"EX-99\.(\d+)")
