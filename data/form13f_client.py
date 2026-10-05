@@ -276,6 +276,7 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str,
         return None
 
     positions = []
+    unmatched = []      # name-mode rows whose issuer spelling didn't match
     for info in root.iter():
         if not info.tag.endswith("infoTable"):
             continue
@@ -325,8 +326,9 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str,
         if cusip:
             if _norm_cusip(cusip_row) != _norm_cusip(cusip):
                 continue
-        elif not _issuer_matches(target_ticker, name_upper):
-            continue
+            matched = True
+        else:
+            matched = _issuer_matches(target_ticker, name_upper)
 
         # Exclude non-common instruments
         # WHOLE-WORD match (a substring "UNIT" dropped every COMMUNITY /
@@ -339,11 +341,18 @@ def _fetch_13f_info_table(cik: str, accession: str, target_ticker: str,
         if words & _NON_COMMON_WORDS:
             continue
 
-        positions.append({
+        (positions if matched else unmatched).append({
             "issuer": name, "cusip": cusip_row, "class": class_,
             "shares": shares, "value_thousands": value,
         })
 
+    # One filer can spell the issuer two ways in one table (Russell 2026Q2:
+    # "First Community Bankshares Inc" 8,837 sh + "FIRST CMNTY BANCSHARES
+    # INC N" 94 sh, same CUSIP) — a row sharing a matched row's CUSIP is
+    # the same security.
+    matched_cusips = {_norm_cusip(p["cusip"]) for p in positions} - {""}
+    positions += [p for p in unmatched
+                  if _norm_cusip(p["cusip"]) in matched_cusips]
     return positions
 
 
@@ -676,6 +685,42 @@ def _holders_from_candidates(candidates: list[dict], search_term: str,
     return all_holders
 
 
+def _cusip_top_up(holders: list[dict], search_term: str, max_filers: int,
+                  startdt: str | None = None,
+                  enddt: str | None = None) -> list[dict]:
+    """Top up a name-search holder list from a full-text search on its
+    common CUSIP, same report quarter, up to max_filers.
+
+    The name search only finds filers who spell the issuer the same way:
+    "First Community Bankshares" hits 16 13F-HRs for 2026Q2, while
+    "FIRST CMNTY BANKSHARES" hits 153 and CUSIP 31983A103 hits 181. Rows of
+    the added filers match by CUSIP (spelling-independent). No top-up when
+    the common CUSIP is ambiguous (None) or the quarter is unknown — mixing
+    quarters or instruments is worse than a short list."""
+    if not holders or len(holders) >= max_filers:
+        return holders
+    cusip = holders[0].get("cusip")
+    quarter = _period_quarter(holders[0].get("period_ending"))
+    if not cusip or not quarter:
+        return holders
+    seen = {h["filer_cik"] for h in holders}
+    extra = [c for c in _search_13f_for_ticker(cusip, limit=100,
+                                               startdt=startdt, enddt=enddt,
+                                               quarter=quarter)
+             if c["cik"] not in seen]
+    out = list(holders)
+    for c in extra:
+        if len(out) >= max_filers:
+            break
+        positions = _fetch_13f_info_table(c["cik"], c["accession"],
+                                          search_term, cusip=cusip)
+        h = _holder_row(c, positions or [], cusip)
+        if h:
+            out.append(h)
+    out.sort(key=lambda h: h.get("value_usd", 0), reverse=True)
+    return out
+
+
 def _norm_cusip(cusip) -> str:
     return str(cusip or "").strip().upper()
 
@@ -795,6 +840,7 @@ def backfill_quarter(ticker: str, company_name: str = "",
                                         startdt=startdt, enddt=enddt,
                                         quarter=quarter.strip().upper())
     holders = _holders_from_candidates(candidates, search_term, max_filers)
+    holders = _cusip_top_up(holders, search_term, max_filers, startdt, enddt)
     # Route strictly by each filing's own covered quarter (an amended or
     # late-window filing lands in ITS quarter, never mislabeled into this one).
     if holders:
@@ -829,6 +875,7 @@ def fetch_institutional_holdings(ticker: str, company_name: str = "",
 
     candidates = _search_13f_for_ticker(search_term, limit=max_filers * 2)
     all_holders = _holders_from_candidates(candidates, search_term, max_filers)
+    all_holders = _cusip_top_up(all_holders, search_term, max_filers)
 
     # Quarter-over-quarter position change vs each filer's 13F-HR for the
     # PREVIOUS report quarter. Best effort and bounded to what we display.
