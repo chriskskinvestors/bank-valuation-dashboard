@@ -486,5 +486,203 @@ class TestRecentRowsFilter(unittest.TestCase):
                          ["2026-07-13", "2025-02-01", "2024-11-01", "2024-01-01"])
 
 
+# ── Second pass (owner: "there is missing data??", 2026-10-05) ────────────
+# Verbatim sentences from the rows whose terms came back empty or WRONG on
+# the first local render.
+
+PB_STELLAR = (
+    "Prosperity Bancshares, Inc. (NYSE: PB) and Stellar Bancorp, Inc. (NYSE: "
+    "STEL) announced a definitive agreement. Under the terms and subject to "
+    "the conditions of the definitive agreement, Prosperity will issue 0.3803 "
+    "shares of Prosperity common stock and $11.36 in cash for each "
+    "outstanding share of Stellar common stock. Based on Prosperity's closing "
+    "price of $72.90 on January 27, 2026, the total consideration was valued "
+    "at approximately $2.002 billion.")
+PB_STELLAR_DECK = (
+    " Transaction Structure – Approximately 70% stock / 30% cash "
+    "consideration – $11.36 in cash and 0.3803 PB common shares for each "
+    "STEL common share; fixed exchange ratio – Implied value of $39.08 per "
+    "common share – Implied aggregate transaction value of $2,002 million – "
+    "Price / tangible book value per share: 1.81x – Core deposit premium: "
+    "10.9%")
+PB_TEXAS_PARTNERS = (
+    "Under the terms and subject to the conditions of the definitive "
+    "agreement, Prosperity will issue 4,062,520 shares of Prosperity common "
+    "stock for all outstanding shares of Southwest common stock and "
+    "restricted stock awards, subject to certain potential adjustments. "
+    "Based on Prosperity's closing price of $65.97 on September 29, 2025, "
+    "the total consideration was valued at approximately $268.9 million.")
+SBCF_HEARTLAND = (
+    "Seacoast Banking Corporation of Florida (NASDAQ: SBCF) announced a "
+    "definitive agreement. Under the terms of the definitive agreement, each "
+    "share of Heartland common stock will be converted at closing into the "
+    "right to receive (i) $147.10 in cash, (ii) 4.9164 shares of Seacoast "
+    "common stock (subject to certain potential adjustments) or (iii) a "
+    "50-50 combination of cash and common stock, or a total value of "
+    "$141.96 per share of Heartland common stock. Shareholders will have the "
+    "ability to elect to receive stock, cash, or a mix of 50% cash and 50% "
+    "stock, with the final consideration mix being maintained at 50% cash "
+    "and 50% stock. Based on Seacoast's closing price of $27.83 as of "
+    "February 26, 2025, the aggregate value of merger consideration to be "
+    "paid by Seacoast would be approximately $110 million. Closing of the "
+    "transaction is expected in the third quarter of 2025, following "
+    "regulatory approval.")
+
+
+class TestSecondPassFixtures(unittest.TestCase):
+
+    def test_prosperity_stellar_mixed_not_cash(self):
+        # First render showed this deal as all-cash at $11.36 — the
+        # plausible-wrong class. The "will issue N shares ... and $C in cash
+        # for each outstanding share" form now parses.
+        from data.ma_announcements import extract_stated_value
+        r = extract_exchange_ratio(PB_STELLAR)
+        self.assertEqual((r[0], r[1], r[2]), (0.3803, "Prosperity", "Stellar"))
+        t = extract_terms(PB_STELLAR + PB_STELLAR_DECK)
+        self.assertEqual(t["consideration"], "mixed")
+        self.assertEqual(t["cash_per_share"], 11.36)
+        self.assertEqual((t["stock_pct"], t["cash_pct"]), (70.0, 30.0))
+        self.assertEqual(t["implied_price_stated"], 39.08)
+        self.assertIsNone(t["premium_pct"])      # core deposit premium ≠ price premium
+        self.assertEqual(extract_stated_value(PB_STELLAR + PB_STELLAR_DECK),
+                         2_002_000_000)           # $2.002B == $2,002M
+        # Computed leg reproduces the deck: 0.3803 × 72.90 + 11.36 = 39.08387
+        with patch("data.ma_announcements._close_before",
+                   return_value=(72.90, "2026-01-27", True)):
+            tt, ok = build_terms(PB_STELLAR, "2026-01-28")
+        self.assertTrue(ok)
+        self.assertEqual((tt["acq_ticker"], tt["tgt_ticker"]), ("PB", "STEL"))
+        self.assertEqual(tt["implied_price"], 39.0839)
+        self.assertEqual(tt["implied_price_basis"], "computed")
+
+    def test_cash_with_unparsed_stock_leg_is_ambiguous(self):
+        # Deck-only wording: cash parses, the ratio form does not — never
+        # all-cash, never a per-share price.
+        t = extract_terms(PB_STELLAR_DECK)
+        self.assertEqual(t["cash_per_share"], 11.36)
+        self.assertIsNone(t["exchange_ratio"])
+        self.assertIsNone(t["consideration"])
+        with patch("data.ma_announcements._close_before") as cb:
+            tt, _ = build_terms(PB_STELLAR_DECK.replace(
+                "Implied value of $39.08 per common share – ", ""), "2026-01-28")
+        cb.assert_not_called()
+        self.assertIsNone(tt["implied_price"])
+
+    def test_fixed_share_count_is_stock_without_ratio(self):
+        from data.ma_announcements import extract_stated_value
+        t = extract_terms(PB_TEXAS_PARTNERS)
+        self.assertEqual(t["consideration"], "stock")
+        self.assertIsNone(t["exchange_ratio"])
+        self.assertIsNone(t["implied_price_stated"])
+        self.assertEqual(extract_stated_value(PB_TEXAS_PARTNERS), 268_900_000)
+
+    def test_heartland_election_stated_value_and_close(self):
+        from data.ma_announcements import extract_stated_value
+        t = extract_terms(SBCF_HEARTLAND)
+        self.assertEqual(t["consideration"], "election")
+        self.assertEqual(t["exchange_ratio"], 4.9164)
+        self.assertEqual(t["cash_per_share"], 147.1)
+        self.assertEqual((t["stock_pct"], t["cash_pct"]), (50.0, 50.0))
+        self.assertEqual(t["implied_price_stated"], 141.96)
+        self.assertEqual(extract_stated_value(SBCF_HEARTLAND), 110_000_000)
+        self.assertEqual((t["expected_close_phrase"], t["expected_close_date"]),
+                         ("in the third quarter of 2025", "2025-09-30"))
+        # Blended at the stated 50/50: 0.5 × 4.9164 × 27.83 + 0.5 × 147.10
+        # = 68.411706 + 73.55 = 141.961706 — reproduces the PR's $141.96.
+        v, _n = implied_offer(t, 27.83, basis_label="SBCF $27.83")
+        self.assertEqual(v, 141.9617)
+
+
+class TestResolveAnnouncementAccession(unittest.TestCase):
+    """resolve_announcement gates on the single matched document but reads
+    terms off the WHOLE accession, and re-gates deck-only candidates on it."""
+
+    def _run(self, docs, indexes):
+        from tests.test_ma_announcements import _hit, _wire
+        from data.ma_announcements import resolve_announcement
+        # EFTS matched the investor DECK (EX-99.1), as it did live for
+        # Seacoast/Villages; the 8-K body is the listing's non-exhibit doc.
+        hits = [_hit("0001-25-1", "2025-05-29", "tm25_ex99-1.htm", cik="0000730708")]
+        with patch("data.ma_announcements.requests.get",
+                   side_effect=_wire(hits, docs, indexes=indexes)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.cache.get", return_value=None), \
+             patch("data.cache.put"), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(27.83, "2025-05-28", True)):
+            return resolve_announcement("Citizens First Bank", "Seacoast Bank",
+                                        "2025-10-01")
+
+    def test_deck_only_candidate_regated_on_accession(self):
+        deck = ("<p>Acquisition of Villages Bancorporation, Inc. Seacoast and "
+                "Citizens First Bank franchise overview.</p>")
+        body = ("<p>Seacoast Banking Corporation of Florida (NASDAQ: SBCF) "
+                "entered into an Agreement and Plan of Merger with Villages "
+                "Bancorporation, parent of Citizens First Bank. " + SBCF_8K
+                + "</p>")
+        # Listing mirrors EDGAR: site-nav links first, then the filing's
+        # own documents sharing the primary document's stem.
+        r, ok = self._run({"tm25_ex99-1.htm": deck, "tm25_8k.htm": body,
+                           "index.htm": "<p>EDGAR nav</p>", "R1.htm": "<p>x</p>"},
+                          {"0001251": ["index.htm", "search.htm", "R1.htm",
+                                       "tm25_8k.htm", "tm25_ex2-1.htm",
+                                       "tm25_ex99-1.htm"]})
+        self.assertTrue(ok)
+        self.assertIsNotNone(r, "deck-only candidate must re-gate on the 8-K body")
+        self.assertEqual(r["announce_date"], "2025-05-29")
+        self.assertEqual(r["terms"]["consideration"], "election")
+        self.assertEqual(r["terms"]["exchange_ratio"], 38.5)
+        self.assertEqual(r["terms"]["termination_fee_usd"], 31_400_000)
+
+    def test_single_doc_gate_still_rejects_completion(self):
+        done = ("<p>Seacoast has completed its acquisition of Citizens First "
+                "Bank pursuant to the previously announced definitive "
+                "agreement.</p>")
+        r, ok = self._run({"tm25_ex99-1.htm": done}, {})
+        self.assertTrue(ok)
+        self.assertIsNone(r)
+
+
+class TestParentheticalRatioForm(unittest.TestCase):
+
+    QNBC_101 = (
+        "the shares of common stock, $1.00 par value per share, of the Company "
+        "(\"Company Common Stock\") issued and outstanding immediately prior "
+        "to the Effective Time will, without any further action on the part of "
+        "the holder thereof, be automatically converted, in accordance with "
+        "the procedures set forth in the Merger Agreement, into a right to "
+        "receive 0.5500 (the \"Exchange Ratio\") shares of common stock, "
+        "$0.625 par value, of QNB (\"QNB Common Stock\" and such "
+        "consideration the \"Merger Consideration\").")
+
+    def test_qnb_victory_ratio_parses_with_unnamed_target(self):
+        r = extract_exchange_ratio(self.QNBC_101)
+        self.assertEqual(r, (0.55, "QNB", ""))
+        t = extract_terms(self.QNBC_101)
+        self.assertEqual(t["consideration"], "stock")
+        # Unnamed target side resolves to nothing — never a guessed ticker.
+        with patch("data.ma_announcements._close_before",
+                   return_value=(35.60, "2025-09-22", True)):
+            tt, ok = build_terms(self.QNBC_101 + " QNB Corp. (OTC: QNBC)",
+                                 "2025-09-23", acq_tick="QNBC")
+        self.assertTrue(ok)
+        self.assertIsNone(tt["tgt_ticker"])
+        self.assertEqual(tt["implied_price"], 19.58)        # 0.55 × 35.60
+
+    def test_otc_acquirer_resolves_through_universe(self):
+        # QNB Corp. carries no exchange-ticker parenthetical; the universe
+        # match by brand token supplies QNBC so the offer can be priced.
+        with patch("data.ma_pending._universe_match",
+                   side_effect=lambda name: (("QNBC", 7714, 750558)
+                                             if "QNB" in name else (None, None, None))),              patch("data.ma_announcements._close_before",
+                   return_value=(35.60, "2025-09-22", True)) as cb:
+            tt, ok = build_terms(self.QNBC_101, "2025-09-23")
+        self.assertTrue(ok)
+        cb.assert_called_once_with("QNBC", "2025-09-23")
+        self.assertEqual(tt["acq_ticker"], "QNBC")
+        self.assertIsNone(tt["tgt_ticker"])
+        self.assertEqual(tt["implied_price"], 19.58)
+
+
 if __name__ == "__main__":
     unittest.main()

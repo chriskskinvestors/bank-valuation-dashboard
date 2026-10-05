@@ -184,11 +184,16 @@ _RATIO_CONVERT_RE = re.compile(
 # Mixed consideration: "receive 2.5814 shares of Old Second common stock and
 # $15.93 in cash for each share of Bancorp Financial's common stock"
 # (live-verified OSBC PR 2025-02-25).
+# Also "Prosperity will issue 0.3803 shares of Prosperity common stock and
+# $11.36 in cash for each outstanding share of Stellar common stock"
+# (live-verified PB PR 2026-01-28 — the deck states the same $39.08/share
+# this form prices to: 0.3803 × $72.90 + $11.36).
 _RATIO_MIXED_RE = re.compile(
-    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
-    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+and\s+\$\s?[\d,]+"
-    r"(?:\.\d+)?\s+in\s+cash\s+for\s+each(?:\s+share\s+of)?\s+"
-    r"([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+(?:common\s+stock|shares?|stock)")
+    r"(?:receive|issue)\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)"
+    r"\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+and\s+\$\s?"
+    r"[\d,]+(?:\.\d+)?\s+in\s+cash\s+for\s+each\s+(?:outstanding\s+)?"
+    r"(?:share\s+of\s+)?([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+"
+    r"(?:common\s+stock|shares?|stock)")
 # Election: "each share of VBI common stock will be converted ... into the
 # right to receive (i) $1,000.00 in cash, (ii) 38.5000 shares of Seacoast
 # common stock" (live-verified SBCF 8-K 2025-05-29).
@@ -197,6 +202,15 @@ _RATIO_ELECTION_RE = re.compile(
     r"(?:will\s+be|shall\s+be|is)\s+converted[^.;]{0,60}?right\s+to\s+receive"
     r".{0,80}?\(ii\)\s+(\d{1,3}(?:\.\d{1,4})?)\s+shares?\s+of\s+"
     r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock")
+# Merger-agreement summary form: "into a right to receive 0.5500 (the
+# "Exchange Ratio") shares of common stock, $0.625 par value, of QNB ("QNB
+# Common Stock" ...)" (live-verified QNBC 8-K Item 1.01, 2025-09-23). The
+# per-share (target) side is not named in the sentence -> "" (callers treat
+# an empty side as unresolvable; the ratio itself still prices the offer).
+_RATIO_PAREN_RE = re.compile(
+    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+\(the\s+[\"“”']?Exchange\s+Ratio"
+    r"[\"“”']?\)\s+shares?\s+of\s+common\s+stock,?\s+(?:\$[\d.]+\s+par\s+"
+    r"value(?:\s+per\s+share)?,?\s+)?of\s+([A-Z][\w.,&'\- ]{1,40}?)\s*\(")
 # "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
 _PR_TICKER_RE = re.compile(
     r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
@@ -225,6 +239,8 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     for m in _RATIO_ELECTION_RE.finditer(text):
         found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
+    for m in _RATIO_PAREN_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), ""))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
     return found[0]
@@ -404,17 +420,28 @@ _VALUE_TRAIL_RE = re.compile(
     r"(?:the\s+)?aggregate", re.IGNORECASE)
 
 
+# "the aggregate value of merger consideration to be paid by Seacoast would
+# be approximately $110 million" (live-verified SBCF/Heartland PR 2025-02-27).
+_VALUE_CONSID_RE = re.compile(
+    r"aggregate\s+value\s+of\s+(?:the\s+)?merger\s+consideration[^.$]{0,80}?"
+    r"\$\s?([\d][\d,]*(?:\.\d+)?)\s*(billion|million)", re.IGNORECASE)
+
+
 def extract_stated_value(text: str) -> int | None:
     """Deal value in RAW DOLLARS from strict stated-value phrasings, or None.
     Distinct candidate amounts -> None (ambiguous, never a guess)."""
     vals = set()
-    for num, unit in _VALUE_RE.findall(text) + _VALUE_TRAIL_RE.findall(text):
+    for num, unit in (_VALUE_RE.findall(text) + _VALUE_TRAIL_RE.findall(text)
+                      + _VALUE_CONSID_RE.findall(text)):
         try:
             v = float(num.replace(",", ""))
         except ValueError:
             continue
-        vals.add(int(v * (1_000_000_000 if unit.lower() == "billion"
-                          else 1_000_000)))
+        # round, not truncate: int(2.002 × 1e9) is 2,001,999,999 — off by a
+        # dollar AND distinct from the deck's "$2,002 million" (ambiguity ->
+        # n/a for a value both documents state).
+        vals.add(int(round(v * (1_000_000_000 if unit.lower() == "billion"
+                                else 1_000_000))))
     if len(vals) != 1:
         return None
     return vals.pop()
@@ -465,7 +492,7 @@ _CASH_CONSID_RE = re.compile(
 # $19.58".
 _IMPLIED_PRICE_RE = re.compile(
     r"(?:representing|represents|implied\s+(?:purchase\s+)?(?:value|price)\s+(?:of|is)|implies\s+"
-    r"a\s+value\s+of|valued\s+at|a\s+value\s+of|equates\s+to)\s+"
+    r"a\s+value\s+of|valued\s+at|a\s+(?:total\s+)?value\s+of|equates\s+to)\s+"
     r"(?:approximately\s+|about\s+)?\$\s?" + _NUM +
     r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
 _IMPLIED_PRICE_DECK_RE = re.compile(
@@ -500,9 +527,11 @@ _TERM_FEE_B_RE = re.compile(
 # or the "subject to" clause and kept VERBATIM; the date is derived only
 # from quarter / half / month / year-end wording (a range -> its later bound).
 _EXPECTED_CLOSE_RE = re.compile(
-    r"(?:expected|anticipated|expects?|anticipates?|expect)\s+to\s+"
+    r"(?:(?:expected|anticipated|expects?|anticipates?|expect)\s+to\s+"
     r"(?:close|be\s+completed|be\s+consummated|complete|consummate)"
-    r"(?:\s+(?:the|this)\s+(?:transaction|merger|acquisition|mergers))?\s+"
+    r"(?:\s+(?:the|this)\s+(?:transaction|merger|acquisition|mergers))?"
+    r"|(?:closing|completion)\s+(?:of\s+the\s+(?:transaction|merger|"
+    r"acquisition|mergers)\s+)?is\s+(?:expected|anticipated))\s+"
     r"((?:in|during|by|on\s+or\s+before|before|prior\s+to|late\s+in|early"
     r"\s+in|around)\s+[^.;]{3,90})", re.IGNORECASE)
 _CLOSE_CUT_RE = re.compile(
@@ -532,11 +561,24 @@ _ALL_CASH_RE = re.compile(r"all[-\s]cash|100\s?%\s+cash", re.IGNORECASE)
 _ELECTION_RE = re.compile(
     r"(?:shareholder|stockholder|holder)s?['’]?s?\s+election|elect(?:ion)?\s+"
     r"to\s+receive|may\s+elect", re.IGNORECASE)
+# A stock leg the ratio regexes could not parse: "exchange ratio" wording or
+# "0.3803 ... shares" near the cash. Cash + an unparsed stock leg must NOT
+# classify as all-cash (the Prosperity/Stellar $11.36 would have shown as
+# the whole per-share price — exactly the plausible-wrong class).
+_STOCK_LEG_RE = re.compile(
+    r"exchange\s+ratio|\d{1,2}\.\d{2,4}\s+(?:\w+\s+){0,3}?shares?",
+    re.IGNORECASE)
+# Fixed share count for the whole target ("will issue 4,062,520 shares of
+# Prosperity common stock for all outstanding shares of Southwest") — stock
+# consideration with no per-share ratio (live-verified PB/Texas Partners).
+_FIXED_SHARES_RE = re.compile(
+    r"issue\s+[\d,]{5,}\s+shares\s+of\s+[A-Z][\w.,&'\- ]{1,60}?\s+(?:common\s+)?"
+    r"stock\s+for\s+all\s+(?:of\s+the\s+)?outstanding\s+shares", re.IGNORECASE)
 _MIX_STOCK_CASH_RE = re.compile(
-    r"(\d{1,3})\s?%\s+(?:common\s+)?stock\s+and\s+(\d{1,3})\s?%\s+cash",
+    r"(\d{1,3})\s?%\s+(?:common\s+)?stock\s*(?:and|/)\s*(\d{1,3})\s?%\s+cash",
     re.IGNORECASE)
 _MIX_CASH_STOCK_RE = re.compile(
-    r"(\d{1,3})\s?%\s+cash\s+and\s+(\d{1,3})\s?%\s+(?:common\s+)?stock",
+    r"(\d{1,3})\s?%\s+cash\s*(?:and|/)\s*(\d{1,3})\s?%\s+(?:common\s+)?stock",
     re.IGNORECASE)
 _PRORATION_RE = re.compile(
     r"(\d{1,3})\s?%\s+of\s+[^.]{0,80}?receive\s+the\s+cash\s+consideration"
@@ -692,7 +734,9 @@ def classify_consideration(text: str, ratio, cash) -> str | None:
     if ratio:
         return "stock"
     if cash:
-        return "cash"
+        return None if _STOCK_LEG_RE.search(text) else "cash"
+    if _FIXED_SHARES_RE.search(text) and not _ALL_CASH_RE.search(text):
+        return "stock"
     if _ALL_STOCK_RE.search(text) and not _ALL_CASH_RE.search(text):
         return "stock"
     if _ALL_CASH_RE.search(text) and not _ALL_STOCK_RE.search(text):
@@ -773,6 +817,17 @@ def build_terms(text: str, announce_date: str, acq_tick: str | None = None,
     if t["exchange_ratio"]:
         acq_tick = acq_tick or _ticker_for_side(t["acq_side"], pairs)
         tgt_tick = tgt_tick or _ticker_for_side(t["tgt_side"], pairs)
+        if not acq_tick or not tgt_tick:
+            # No "(NASDAQ: XXXX)" pair for a side (OTC acquirers such as QNB
+            # Corp., merger-agreement summaries that name parties by their
+            # defined terms): resolve through the live universe by brand
+            # token — unique hit only, as ma_pending does (n/a over a wrong
+            # link). Lazy import: ma_pending imports this module.
+            from data.ma_pending import _universe_match
+            if not acq_tick and t["acq_side"]:
+                acq_tick = _universe_match(t["acq_side"])[0]
+            if not tgt_tick and t["tgt_side"]:
+                tgt_tick = _universe_match(t["tgt_side"])[0]
     t["acq_ticker"] = acq_tick
     t["tgt_ticker"] = tgt_tick
     close, close_date, ok = None, None, True
@@ -920,8 +975,20 @@ def resolve_announcement(target_name: str, acquirer_name: str,
             continue
         if _COMPLETED_RE.search(text):        # completion PR — not the announce
             continue
+        full = None
         if not _ANNOUNCE_RE.search(text):
-            continue
+            # Both parties named but no announcement wording: the chosen
+            # document is often the investor DECK (EX-99.1 preferred over
+            # the 8-K body) while the body/PR carries the agreement language
+            # — live: Seacoast/Villages 2025-05-29 anchored four months late
+            # on a regulatory-approval release. Re-gate on the whole
+            # accession before giving up on this candidate.
+            full, f_ok = _accession_text(cand["cik"], cand["adsh"], cand["doc"])
+            fetch_failed = fetch_failed or not f_ok
+            if (not full or _COMPLETED_RE.search(full)
+                    or not _ANNOUNCE_RE.search(full)):
+                continue
+            text = full
         result = {
             "announce_date": cand["file_date"],
             "value_usd": extract_stated_value(text),
@@ -945,9 +1012,17 @@ def resolve_announcement(target_name: str, acquirer_name: str,
                 result["value_usd"] = comp["value_usd"]
                 result["value_basis"] = "computed"
                 result["value_note"] = comp["value_note"]
-        terms, t_ok = build_terms(text, cand["file_date"])
+        # Terms come off the WHOLE accession (8-K body + press release +
+        # investor deck): the merger-agreement summary in the 8-K body carries
+        # the termination fee and the deck the stated per-share value, neither
+        # of which the single gating document has (live: OSBC $8.5M fee,
+        # PB/Stellar "$39.08 per common share" both live in sibling documents).
+        f_ok = True
+        if full is None:
+            full, f_ok = _accession_text(cand["cik"], cand["adsh"], cand["doc"])
+        terms, t_ok = build_terms(full or text, cand["file_date"])
         result["terms"] = terms
-        return result, ok and t_ok
+        return result, ok and t_ok and f_ok
     # Nothing classified as the announcement. Only claim a cacheable n/a if
     # every candidate was actually readable.
     return None, not fetch_failed
@@ -966,6 +1041,7 @@ def resolve_announcement(target_name: str, acquirer_name: str,
 _MERGER_PHRASE = '"Agreement and Plan of Merger"'
 _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
 _EX99_NAME_RE = re.compile(r"ex[-_.]?99|press", re.IGNORECASE)
+_EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
 
 
 def _split_merger_groups(hits: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -1165,9 +1241,14 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
     exhibits, fetched via the filing index — the PR usually lacks the exact
     EFTS query phrase, so it is not among the phrase-matched documents, yet
     it is where the "(NYSE: XXX)" party pairs and deal values live
-    (live-verified on FHN/TD). Returns (text, ok); ok=False on any TRANSIENT
-    fetch failure so a partial read is never cached as a miss — an HTTP 404
-    (document permanently absent from the immutable archive) keeps ok=True."""
+    (live-verified on FHN/TD). When ``primary_doc`` is itself an exhibit
+    (EFTS matched the investor deck), the listing's first non-exhibit
+    document — the 8-K body, whose Item 1.01 summary carries the exchange
+    ratio and termination fee — is read too (live: Seacoast/Villages
+    2025-05-29, Old Second's $8.5M fee). Returns (text, ok); ok=False on any
+    TRANSIENT fetch failure so a partial read is never cached as a miss — an
+    HTTP 404 (document permanently absent from the immutable archive) keeps
+    ok=True."""
     base, ok = _fetch_doc_text(cik, adsh, primary_doc)
     if base is None:
         return None, ok
@@ -1181,16 +1262,31 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
     except Exception as e:
         print(f"[ma_announce] index {adsh}: {type(e).__name__}: {e}")
         return base, is_http_404(e)
-    for n in dict.fromkeys(names):
-        if _EX99_NAME_RE.search(n) and n != primary_doc:
-            time.sleep(_PAUSE_S)
-            t, t_ok = _fetch_doc_text(cik, adsh, n)
-            if t is None:
-                ok = ok and t_ok
-                continue
-            extra.append(t)
-            if len(extra) >= 2:
-                break
+    names = list(dict.fromkeys(names))
+    wanted = [n for n in names if _EX99_NAME_RE.search(n) and n != primary_doc][:2]
+    # The directory listing also carries EDGAR's site-nav links (index.htm,
+    # search.htm, R1.htm ...): the filing's own documents share the primary
+    # document's filename stem (tmb-20250224x8k.htm / tmb-20250224xex99d1.htm,
+    # d103745d8k.htm / d103745dex991.htm — live-verified), so the body is the
+    # first non-exhibit name with a ≥5-char common prefix.
+    def _stem_match(n: str) -> bool:
+        p = primary_doc or ""
+        k = 0
+        while k < min(len(n), len(p)) and n[k] == p[k]:
+            k += 1
+        return k >= 5
+    body = next((n for n in names
+                 if n != primary_doc and not n.endswith("-index.htm")
+                 and not _EXHIBIT_NAME_RE.search(n) and _stem_match(n)), None)
+    if body and _EXHIBIT_NAME_RE.search(primary_doc or ""):
+        wanted.insert(0, body)
+    for n in wanted:
+        time.sleep(_PAUSE_S)
+        t, t_ok = _fetch_doc_text(cik, adsh, n)
+        if t is None:
+            ok = ok and t_ok
+            continue
+        extra.append(t)
     return " ".join([base] + extra), ok
 
 
