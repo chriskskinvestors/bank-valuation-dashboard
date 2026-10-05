@@ -118,6 +118,19 @@ class TestGroupHistoryIncludesFormerCharters(unittest.TestCase):
         self.assertEqual(by["20210630"], 453_973_605 + 95_848_996)   # 549,822,601
         self.assertEqual(by["20210331"], 469_299_477)                # BBVA not PNC's yet
 
+    def test_holder_stored_as_float_still_counts(self):
+        # Mahopac/VIST: pre-2006/2012 quarters have no holder, so pandas makes
+        # the column float64 and the deep store keeps 2367921.0.
+        rows = {609: TMP_ROWS[609],
+                7153: [{"CERT": 7153, "REPDTE": "20211231", "ASSET": 1_551_206,
+                        "RSSDHCR": 2367921.0},
+                       {"CERT": 7153, "REPDTE": "19921231", "ASSET": 300_000,
+                        "RSSDHCR": float("nan")}]}
+        h = self._hist(rows, [609], (TMP_HC, [7153]))
+        by = {r["REPDTE"]: r["ASSET"] for r in h}
+        self.assertEqual(by["20211231"], 2_453_893 + 1_551_206)
+        self.assertNotIn("19921231", by)                # NaN holder: not ours
+
     def test_record_without_a_holder_is_not_counted(self):
         rows = {609: TMP_ROWS[609],
                 13292: [{"CERT": 13292, "REPDTE": "20211231", "ASSET": 1_865_267}]}

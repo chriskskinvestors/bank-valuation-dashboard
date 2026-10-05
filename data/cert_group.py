@@ -240,8 +240,15 @@ def get_absorbed_charters(cert: int | None,
 
 
 def held_by(rec: dict, hc: str | None) -> bool:
-    """True when a former charter's record was filed while `hc` held it."""
-    return bool(hc) and str(rec.get("RSSDHCR") or "").strip() == hc
+    """True when a former charter's record was filed while `hc` held it.
+    Compared as numbers: a charter with no holder in some quarters gets a
+    float column from pandas, so its records carry 2367921.0 — a string
+    match against "2367921" dropped Mahopac and VIST from TMP's deep
+    history (FY2021 $4.32B instead of $7.82B, 2026-10-05)."""
+    try:
+        return bool(hc) and int(float(rec.get("RSSDHCR"))) == int(hc)
+    except (TypeError, ValueError, OverflowError):
+        return False                          # absent / NaN / unparseable
 
 
 def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
