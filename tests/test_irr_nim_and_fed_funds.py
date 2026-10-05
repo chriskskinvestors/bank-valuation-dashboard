@@ -58,5 +58,24 @@ class TestFedFundsCardReadsDaily(unittest.TestCase):
         self.assertNotIn('latest_value("FEDFUNDS")', src)
 
 
+class TestGrowthAcquisitionNote(unittest.TestCase):
+    """HBAN loans +40.9% YoY (the Cadence deal) fed the volume projection
+    unflagged (REVIEW 2026-10-05 IRR P2)."""
+    HIST = [{"REPDTE": "20260630"}, {"REPDTE": "20260331"}]
+
+    def _note(self, deals):
+        with mock.patch("ui.history_range.group_acquisitions", lambda t, c=None: deals):
+            return R._acquisition_note("HBAN", 6560, self.HIST)
+
+    def test_deal_inside_the_trailing_year_is_flagged(self):
+        n = self._note([{"date": "2026-02-01", "target_name": "Cadence Bank"}])
+        self.assertIn("Cadence Bank (Feb 2026)", n)
+        self.assertIn("not organic", n)
+
+    def test_deal_outside_the_window_or_none_is_silent(self):
+        self.assertEqual(self._note([{"date": "2025-06-30", "target_name": "Old"}]), "")
+        self.assertEqual(self._note([]), "")
+
+
 if __name__ == "__main__":
     unittest.main()
