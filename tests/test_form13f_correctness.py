@@ -143,7 +143,13 @@ class TestOptionRowsExcluded(unittest.TestCase):
         # and Preferred Bank ("PREFERRED") — zero 13F holders shown.
         cases = [("COMMUNITY BANK SYS INC", "COM", "Community Bank"),
                  ("UNITED BANKSHARES INC", "COM", "United Bankshares"),
-                 ("PREFERRED BANK LOS ANGELES", "COM", "Preferred Bank")]
+                 ("PREFERRED BANK LOS ANGELES", "COM", "Preferred Bank"),
+                 # Real 13F spellings (Aug-2026 UBSI / PFBC / UNTY rows)
+                 # under the app's get_name search terms.
+                 ("UNITED BANKSHARES INC WEST V", "COM", "United Bankshares"),
+                 ("PREFERRED BANK/LOS ANGELES", "COM NEW", "Preferred Bank"),
+                 ("UNITY BANCORP INC", "COMMON STOCK", "Unity Bancorp"),
+                 ("FIRST COMMUNITY BANKSHARES INC", "COM", "First Community Bankshares")]
         for name, cls, term in cases:
             table = _info_xml(_row(name, cls, "000000001", 1_000, 10))
             routes = {"/index.json": _index("primary_doc.xml", "infotable.xml"),
@@ -151,10 +157,26 @@ class TestOptionRowsExcluded(unittest.TestCase):
             with patch.object(f13.requests, "get", _router(routes)):
                 rows = f13._fetch_13f_info_table("1", "0000000001-26-000003", term)
             self.assertEqual(len(rows), 1, name)
+        # CUSIP path (prior-quarter lookup): the issuer spelling shares no
+        # words with the search term, so every name word is checked.
+        table = _info_xml(_row("COMMUNITY BK SYS INC", "COM", "203607106", 1_000, 10))
+        routes = {"/index.json": _index("primary_doc.xml", "infotable.xml"),
+                  "/infotable.xml": _Resp(table)}
+        with patch.object(f13.requests, "get", _router(routes)):
+            rows = f13._fetch_13f_info_table("1", "0000000001-26-000005",
+                                             "Community Financial System",
+                                             cusip="203607106")
+        self.assertEqual(len(rows), 1)
         # ...while instrument words still exclude, in name or class.
         table = _info_xml(_row("UNITED BANKSHARES INC", "PFD SER A", "000000002", 1, 1),
                           _row("UNITED BANKSHARES INC DEP SHS", "COM", "000000003", 1, 1),
-                          _row("UNITED BANKSHARES INC", "*W EXP UNITS", "000000004", 1, 1))
+                          _row("UNITED BANKSHARES INC", "*W EXP UNITS", "000000004", 1, 1),
+                          # Class-only instrument words, plural/abbreviated.
+                          _row("UNITED BANKSHARES INC", "WARRANTS", "000000005", 1, 1),
+                          _row("UNITED BANKSHARES INC", "NOTES 4.5% 2030", "000000006", 1, 1),
+                          _row("UNITED BANKSHARES INC", "UNITS", "000000007", 1, 1),
+                          _row("UNITED BANKSHARES INC", "DEP SHS", "000000008", 1, 1),
+                          _row("UNITED BANKSHARES INC", "PFD", "000000009", 1, 1))
         routes = {"/index.json": _index("primary_doc.xml", "infotable.xml"),
                   "/infotable.xml": _Resp(table)}
         with patch.object(f13.requests, "get", _router(routes)):
