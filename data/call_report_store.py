@@ -542,6 +542,32 @@ def _get_stored_detail(table: str, cert: int, quarters: int) -> list[dict]:
     return out
 
 
+def get_rcr_aoci(certs, report_date: str) -> dict[int, float | None]:
+    """{cert: RC-R Part I item 3 AOCI ($thousands, as filed)} for one quarter
+    (report_date ISO 'YYYY-MM-DD'). One query for all certs; absent bank,
+    quarter or blank item → None (never 0). Read-only; [] / store error → {}."""
+    import json as _json
+    from sqlalchemy import bindparam, text
+    certs_i = sorted({int(c) for c in certs if c is not None})
+    out: dict[int, float | None] = {c: None for c in certs_i}
+    if not certs_i or not report_date:
+        return out
+    sql = text("SELECT cert, detail_json FROM rcr_capital "
+               "WHERE report_date = :d AND cert IN :certs"
+               ).bindparams(bindparam("certs", expanding=True))
+    eng = _get_engine()
+    with eng.connect() as conn:
+        for i in range(0, len(certs_i), 500):
+            for cert, dj in conn.execute(sql, {"d": report_date,
+                                               "certs": certs_i[i:i + 500]}):
+                try:
+                    v = (_json.loads(dj) or {}).get("aoci") if dj else None
+                    out[int(cert)] = None if v is None else float(v)
+                except Exception:
+                    out[int(cert)] = None
+    return out
+
+
 def upsert_rcr_detail(cert: int, rssd_id: int, detail: dict) -> int:
     """Write one bank-quarter's RC-R capital walk
     (ffiec_client.get_rcr_capital_detail dict). 1 on success, 0 otherwise."""
