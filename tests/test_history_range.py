@@ -190,8 +190,13 @@ class TestAnnotations(unittest.TestCase):
         with patch("data.cert_group.get_cert_group", return_value=[1, 2, 3]):
             self.assertIn("3 charters combined", hr.entity_note("X"))
             self.assertIn("pro forma", hr.entity_note("X"))
-        with patch("data.cert_group.get_cert_group", return_value=[1]):
+        with patch("data.cert_group.get_cert_group", return_value=[1]),                 patch("data.cert_group.get_absorbed_charters", return_value=(None, [])):
             self.assertEqual(hr.entity_note("X"), "bank-subsidiary call reports")
+        # TMP: one charter today, three merged into it in 2022.
+        with patch("data.cert_group.get_cert_group", return_value=[609]),                 patch("data.cert_group.get_absorbed_charters",
+                      return_value=("2367921", [7153, 7748, 13292])):
+            self.assertEqual(hr.entity_note("X"), "bank-subsidiary call reports · "
+                             "charters since merged in counted while the holdco held them")
 
 
 class TestChartTimeline(unittest.TestCase):

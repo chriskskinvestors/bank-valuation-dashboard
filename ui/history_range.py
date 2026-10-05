@@ -191,17 +191,23 @@ def entity_note(ticker: str) -> str:
     series is TODAY's charter set summed at every quarter — before a charter
     joined the holdco its figures are that bank's own, so the series is pro
     forma, and the caption says so rather than implying a reported
-    consolidated history."""
+    consolidated history. Charters since merged into the group count only
+    for the quarters the holdco held them (data/cert_group former charters),
+    which the caption also says."""
     try:
-        from data.cert_group import get_cert_group
-        n = len(get_cert_group(ticker) or [])
+        from data.cert_group import get_absorbed_charters, get_cert_group
+        certs = get_cert_group(ticker) or []
+        merged = bool(certs) and bool(get_absorbed_charters(certs[0])[1])
     except Exception:
-        n = 0
-    if n > 1:
-        return (f"bank-subsidiary call reports · {n} charters combined "
-                "(today's charter group summed at every quarter — pro forma "
-                "before each charter joined)")
-    return "bank-subsidiary call reports"
+        certs, merged = [], False
+    note = "bank-subsidiary call reports"
+    if len(certs) > 1:
+        note += (f" · {len(certs)} charters combined (today's charter group "
+                 "summed at every quarter — pro forma before each charter "
+                 "joined)")
+    if merged:
+        note += " · charters since merged in counted while the holdco held them"
+    return note
 
 
 def span_quarters(dates) -> str:

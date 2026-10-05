@@ -150,6 +150,97 @@ _GROUP_TTL_S = 30 * 86400          # bank structure changes rarely
 _GROUP_MAP_KEY = "cert_groups:v2"
 
 
+# FORMER charters (2026-10-05): a holdco that folds subsidiary charters into
+# one — TMP merged Bank of Castile, Mahopac and VIST into Tompkins Trust on
+# 2022-01-01; CBC merged 12 charters on 2021-10-01 — or buys a bank, holds
+# it as its own charter, then merges it (PNC/BBVA USA Jun→Oct 2021, USB/MUFG
+# Union Dec 2022→May 2023) has no ACTIVE charter for that history, so the
+# active-charter group silently dropped it: TMP FY2021 total assets showed
+# $2.45B of the holdco's $7.82B. 48 such charters sat under 20 universe
+# holdcos (ended 2021+). {str(active cert): {"hc": holdco RSSD, "certs":
+# [inactive certs whose LAST high holder is that holdco], "ends": {cert:
+# YYYYMMDD}}}, every active cert of the holdco keyed. Most banks absorbed
+# SOMETHING since 1992 (820 active certs; WFC ~300 charters), so readers ask
+# only for charters that ended inside their window — the live 20-quarter
+# path touches the few recent ones, the deep store all of them once. Their
+# records count only for quarters whose own
+# RSSDHCR is the holdco (FDIC stamps the holder per REPDTE: BBVA reads
+# 1391237 through Q1-21, PNC's 1069778 from Q2-21) — pre-acquisition history
+# stays out. Built from the universe build's institutions walks, read
+# cache-only.
+_ABSORBED_MAP_KEY = "cert_absorbed:v1"
+
+
+def build_absorbed_map(active: list[dict], inactive: list[dict]) -> dict[str, dict]:
+    """{str(active cert): {"hc", "certs"}} for every active cert whose holdco
+    (rssdhcr) is the last high holder of 1+ inactive charters. Rows need
+    cert / rssdhcr (lowercase, as data/bank_universe builds them)."""
+    def _ids(b):
+        try:
+            return int(b.get("rssdhcr") or 0), int(b.get("cert") or 0)
+        except (TypeError, ValueError):
+            return 0, 0
+    by_hc: dict[int, dict[int, str]] = {}
+    for b in inactive:
+        hc, c = _ids(b)
+        if hc and c:
+            by_hc.setdefault(hc, {})[c] = _yyyymmdd(b.get("end"))
+    out: dict[str, dict] = {}
+    for b in active:
+        hc, c = _ids(b)
+        if hc and c and hc in by_hc:
+            ends = by_hc[hc]
+            out[str(c)] = {"hc": str(hc), "certs": sorted(ends),
+                           "ends": {str(k): v for k, v in ends.items()}}
+    return out
+
+
+def _yyyymmdd(raw) -> str:
+    """FDIC institutions dates are MM/DD/YYYY; '' when unparseable (such a
+    charter is never window-filtered out — over-fetching beats dropping)."""
+    s = str(raw or "").strip()
+    if len(s) == 10 and s[2] == "/" and s[5] == "/":
+        return s[6:] + s[:2] + s[3:5]
+    return ""
+
+
+def warm_absorbed_map(active: list[dict], inactive: list[dict]) -> int:
+    """Build and persist the former-charter map; returns how many active
+    certs carry one."""
+    m = build_absorbed_map(active, inactive)
+    from data import cache
+    cache.put(_ABSORBED_MAP_KEY, m)
+    return len(m)
+
+
+def get_absorbed_charters(cert: int | None,
+                          since: str | None = None) -> tuple[str | None, list[int]]:
+    """(holdco RSSD, former charters) for an active cert, from the persisted
+    map only — no network. `since` (YYYYMMDD) keeps only charters that ended
+    on or after it: one that ended earlier has no record in a window that
+    starts there. Charters cannot un-merge, so a stale map is still right
+    about what it lists (read with no age limit)."""
+    if not cert:
+        return None, []
+    from data import cache
+    try:
+        m = cache.get(_ABSORBED_MAP_KEY, max_age_s=None)
+    except Exception:
+        m = None
+    rec = m.get(str(int(cert))) if isinstance(m, dict) else None
+    if not rec:
+        return None, []
+    ends = rec.get("ends") or {}
+    certs = [int(c) for c in rec.get("certs") or []
+             if not since or not ends.get(str(c)) or ends[str(c)] >= since]
+    return (str(rec.get("hc")), certs) if certs else (None, [])
+
+
+def held_by(rec: dict, hc: str | None) -> bool:
+    """True when a former charter's record was filed while `hc` held it."""
+    return bool(hc) and str(rec.get("RSSDHCR") or "").strip() == hc
+
+
 def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
     """Every ACTIVE FDIC cert under `ticker`'s holding company, largest first.
 
@@ -393,14 +484,17 @@ def fetch_group_history(ticker: str, limit: int = 20,
     certs = get_cert_group(ticker, cert=cert)
     if not certs:
         return []
-    if len(certs) == 1:
+    from datetime import date, timedelta
+    window = (date.today() - timedelta(days=92 * (limit + 1))).strftime("%Y%m%d")
+    hc, former = get_absorbed_charters(certs[0], since=window)
+    if len(certs) == 1 and not former:
         df = fdic_client.fetch_financials(certs[0], limit=limit)
         return [] if df is None or df.empty else df.to_dict("records")
 
     per_cert: dict[int, list[dict]] = {}
     for attempt in (1, 2):                    # one retry for failed charters
-        for c in certs:
-            if per_cert.get(c):
+        for c in certs + former:
+            if c in per_cert:
                 continue
             try:
                 df = fdic_client.fetch_financials(c, limit=limit)
@@ -410,9 +504,10 @@ def fetch_group_history(ticker: str, limit: int = 20,
                 continue
             if df is not None and not df.empty:
                 per_cert[c] = df.to_dict("records")
-    missing = [c for c in certs if not per_cert.get(c)]
+    missing = [c for c in certs + former if c not in per_cert]
     if missing:
-        # An ACTIVE member always has recent filings: an empty result is a
+        # An ACTIVE member always has recent filings, and a former charter
+        # absorbed inside the window filed while held: an empty result is a
         # failed fetch, not "no history". Summing the rest presented 15 of
         # WTFC's 16 charters as the group (equity 6.93B vs 7.49B, REVIEW
         # 2026-10-05 P0-4) — no group history beats a short one; callers keep
@@ -420,16 +515,21 @@ def fetch_group_history(ticker: str, limit: int = 20,
         print(f"[cert_group] {ticker}: charters {missing} returned no history "
               f"— group history withheld (never a partial sum)")
         return []
-    return _aggregate_complete_periods(per_cert)[:limit]
+    held = {c: [r for r in per_cert.pop(c) if held_by(r, hc)] for c in former}
+    return _aggregate_complete_periods(per_cert, held)[:limit]
 
 
-def _aggregate_complete_periods(per_cert: dict[int, list[dict]]) -> list[dict]:
+def _aggregate_complete_periods(per_cert: dict[int, list[dict]],
+                                former: dict[int, list[dict]] | None = None
+                                ) -> list[dict]:
     """One consolidated record per REPDTE, newest first — only for periods
-    EVERY member covers. A member legitimately lacks periods before it joined
-    the group (older than its first record: pro forma, captioned); a member
-    missing a period inside or after its own history (a gap, or a member
-    whose stored rows weren't refreshed) makes that period incomplete, and
-    an incomplete period is omitted, never summed short."""
+    EVERY active member covers. A member legitimately lacks periods before it
+    joined the group (older than its first record: pro forma, captioned); a
+    member missing a period inside or after its own history (a gap, or a
+    member whose stored rows weren't refreshed) makes that period incomplete,
+    and an incomplete period is omitted, never summed short. `former` (held
+    records of merged-away charters) adds to its periods but never gates one:
+    its filings END at the merger."""
     spans = {}
     by_period: dict[str, list[dict]] = {}
     for c, recs in per_cert.items():
@@ -437,6 +537,7 @@ def _aggregate_complete_periods(per_cert: dict[int, list[dict]]) -> list[dict]:
         if not periods:
             continue
         spans[c] = (min(periods), periods)
+    for c, recs in list(per_cert.items()) + list((former or {}).items()):
         for r in recs:
             p = str(r.get("REPDTE") or "")
             if p:

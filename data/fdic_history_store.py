@@ -139,6 +139,26 @@ def get_cert_history(cert: int, limit: int | None = None) -> list[dict]:
     return out
 
 
+def get_certs_history(certs: list[int]) -> dict[int, list[dict]]:
+    """Stored records for many certs in ONE query — {cert: records}, for the
+    former charters behind a holdco (WFC: 253), where a query per cert would
+    cost a round trip each on every deep read."""
+    if not certs:
+        return {}
+    from sqlalchemy import bindparam, text
+    from data.fdic_client import null_unreported_capital, null_undefined_quotients
+    sql = text("SELECT cert, fields FROM fdic_history WHERE cert IN :certs "
+               "ORDER BY repdte DESC").bindparams(bindparam("certs", expanding=True))
+    with _get_engine().connect() as conn:
+        rows = conn.execute(sql, {"certs": [int(c) for c in certs]}).fetchall()
+    out: dict[int, list[dict]] = {}
+    for c, f in rows:
+        rec = f if isinstance(f, dict) else json.loads(f)
+        out.setdefault(int(c), []).append(
+            null_undefined_quotients(null_unreported_capital(rec)))
+    return out
+
+
 def max_repdte(cert: int) -> str | None:
     """Newest stored quarter for a cert (backfill/append checkpoint)."""
     from sqlalchemy import text
@@ -180,11 +200,14 @@ def deep_group_history(ticker: str, limit: int | None = None,
     cert_group.fetch_group_history, applied to stored rows instead of live
     fetches. Returns [] when nothing is stored (caller falls back to the
     live 20-quarter path)."""
-    from data.cert_group import _aggregate_complete_periods, get_cert_group
+    from data.cert_group import (_aggregate_complete_periods,
+                                 get_absorbed_charters, get_cert_group,
+                                 held_by)
     certs = get_cert_group(ticker, cert=cert)
     if not certs:
         return []
-    if len(certs) == 1:
+    hc, former = get_absorbed_charters(certs[0])
+    if len(certs) == 1 and not former:
         return get_cert_history(certs[0], limit=limit)
 
     per_cert = {c: get_cert_history(c) for c in certs}
@@ -192,5 +215,7 @@ def deep_group_history(ticker: str, limit: int | None = None,
         # A member with nothing stored would drop out of EVERY period; return
         # [] so the caller falls back to the live (complete-or-nothing) path.
         return []
-    out = _aggregate_complete_periods(per_cert)
+    held = {c: [r for r in recs if held_by(r, hc)]
+            for c, recs in get_certs_history(former).items()}
+    out = _aggregate_complete_periods(per_cert, held)
     return out[:limit] if limit else out

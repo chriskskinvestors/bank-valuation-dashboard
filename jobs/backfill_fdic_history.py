@@ -34,15 +34,26 @@ _INCR_LIMIT = 6             # incremental: last ~18 months, idempotent
 _PACE_S = 0.25              # ~4 certs/s ceiling against the FDIC API
 
 
-def _all_certs() -> list[int]:
+def _all_certs(mode: str = "backfill") -> list[int]:
     """Every cert in every universe ticker's charter group (the
-    fetch_group_history seam's own membership — multi-charter complete)."""
+    fetch_group_history seam's own membership — multi-charter complete),
+    plus the former charters merged into it. Incremental runs take only
+    former charters that ended in the last two years: an older one's
+    history is final and already stored (thousands of them since 1992)."""
+    from datetime import date, timedelta
+    since = (None if mode in ("backfill", "refill") else
+             (date.today() - timedelta(days=730)).strftime("%Y%m%d"))
     from data.bank_universe import get_universe
-    from data.cert_group import get_cert_group
+    from data.cert_group import get_absorbed_charters, get_cert_group
     certs: set[int] = set()
     for ticker in sorted(get_universe().keys()):
         try:
-            certs.update(get_cert_group(ticker) or [])
+            group = get_cert_group(ticker) or []
+            certs.update(group)
+            # Former charters merged into the group: deep_group_history reads
+            # them for the quarters the holdco held them.
+            certs.update(get_absorbed_charters(group[0], since=since)[1]
+                         if group else [])
         except Exception as e:
             print(f"[deep-hist] {ticker}: cert group failed: "
                   f"{type(e).__name__}: {e}", flush=True)
@@ -56,7 +67,7 @@ def main(mode: str = "incremental") -> int:
 
     t0 = time.time()
     init_history_schema()
-    certs = _all_certs()
+    certs = _all_certs(mode)
     if not certs:
         print("[deep-hist] no certs resolved — universe snapshot missing?",
               flush=True)
