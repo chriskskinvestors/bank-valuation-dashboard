@@ -157,6 +157,41 @@ def _clean(n: str) -> str:
     return n.strip()
 
 
+def _fetch_inactive_charters() -> list[dict]:
+    """Every charter that ended since 1992 (the deep store's
+    floor), as {cert, rssdhcr, end} with rssdhcr its LAST high holder and end
+    its MM/DD/YYYY end date — ~13k rows,
+    2 pages. Raises rather than return a partial list: a partial map would
+    silently drop merged-in history from the holdcos it missed."""
+    from data.http import get_with_retry
+    rows_out: list[dict] = []
+    offset = 0
+    while True:
+        resp = get_with_retry("https://api.fdic.gov/banks/institutions", params={
+            # A real end date: "inactive" rows dated 12/31/9999 (Citi's and
+            # WFC's trust companies) never merged and may still file — they
+            # are outside the ACTIVE:1 charter-group definition, so they stay
+            # out here too.
+            "filters": "ACTIVE:0 AND ENDEFYMD:[1992-01-01 TO 9998-12-31]",
+            "fields": "CERT,RSSDHCR,ENDEFYMD", "sort_by": "CERT", "sort_order": "ASC",
+            "limit": 10000, "offset": offset,
+        }, timeout=30)
+        if resp is None:
+            raise RuntimeError(f"FDIC inactive institutions: rate-limited past "
+                               f"retries at offset {offset}")
+        data = resp.json()
+        rows = data.get("data", [])
+        rows_out += [{"cert": r["data"].get("CERT"),
+                      "rssdhcr": r["data"].get("RSSDHCR"),
+                      "end": r["data"].get("ENDEFYMD")} for r in rows]
+        offset += len(rows)
+        if not rows or offset >= data.get("totals", {}).get("count", 0):
+            break
+    if not rows_out:
+        raise RuntimeError("FDIC inactive institutions: empty result")
+    return rows_out
+
+
 def _fetch_fdic_banks() -> tuple[dict[str, list[dict]], set[int]]:
     """Fetch all ACTIVE FDIC institutions. Returns (hc_lookup, active_certs):
     the HC lookup {holding-company name: [candidate banks, largest first]},
@@ -243,6 +278,16 @@ def _fetch_fdic_banks() -> tuple[dict[str, list[dict]], set[int]]:
               f"multi-charter groups")
     except Exception as e:
         print(f"[warn] cert-group map warm failed: {type(e).__name__}: {e}")
+    # Former charters merged into a holdco's surviving bank (TMP/CBC/PNC
+    # class): their history belongs to the holdco for the quarters it held
+    # them. A failed walk keeps the previous map (charters never un-merge).
+    try:
+        from data.cert_group import warm_absorbed_map
+        n = warm_absorbed_map(fdic_banks, _fetch_inactive_charters())
+        print(f"[universe] former-charter map warmed: {n} active certs "
+              f"with merged-in charters")
+    except Exception as e:
+        print(f"[warn] former-charter map warm failed: {type(e).__name__}: {e}")
 
     # The complete active-cert set, taken BEFORE the name grouping below (which
     # drops banks with no/short NAMEHCR — their certs must still count as alive).

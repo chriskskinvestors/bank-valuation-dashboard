@@ -150,6 +150,97 @@ _GROUP_TTL_S = 30 * 86400          # bank structure changes rarely
 _GROUP_MAP_KEY = "cert_groups:v2"
 
 
+# FORMER charters (2026-10-05): a holdco that folds subsidiary charters into
+# one — TMP merged Bank of Castile, Mahopac and VIST into Tompkins Trust on
+# 2022-01-01; CBC merged 12 charters on 2021-10-01 — or buys a bank, holds
+# it as its own charter, then merges it (PNC/BBVA USA Jun→Oct 2021, USB/MUFG
+# Union Dec 2022→May 2023) has no ACTIVE charter for that history, so the
+# active-charter group silently dropped it: TMP FY2021 total assets showed
+# $2.45B of the holdco's $7.82B. 48 such charters sat under 20 universe
+# holdcos (ended 2021+). {str(active cert): {"hc": holdco RSSD, "certs":
+# [inactive certs whose LAST high holder is that holdco], "ends": {cert:
+# YYYYMMDD}}}, every active cert of the holdco keyed. Most banks absorbed
+# SOMETHING since 1992 (820 active certs; WFC ~300 charters), so readers ask
+# only for charters that ended inside their window — the live 20-quarter
+# path touches the few recent ones, the deep store all of them once. Their
+# records count only for quarters whose own
+# RSSDHCR is the holdco (FDIC stamps the holder per REPDTE: BBVA reads
+# 1391237 through Q1-21, PNC's 1069778 from Q2-21) — pre-acquisition history
+# stays out. Built from the universe build's institutions walks, read
+# cache-only.
+_ABSORBED_MAP_KEY = "cert_absorbed:v1"
+
+
+def build_absorbed_map(active: list[dict], inactive: list[dict]) -> dict[str, dict]:
+    """{str(active cert): {"hc", "certs"}} for every active cert whose holdco
+    (rssdhcr) is the last high holder of 1+ inactive charters. Rows need
+    cert / rssdhcr (lowercase, as data/bank_universe builds them)."""
+    def _ids(b):
+        try:
+            return int(b.get("rssdhcr") or 0), int(b.get("cert") or 0)
+        except (TypeError, ValueError):
+            return 0, 0
+    by_hc: dict[int, dict[int, str]] = {}
+    for b in inactive:
+        hc, c = _ids(b)
+        if hc and c:
+            by_hc.setdefault(hc, {})[c] = _yyyymmdd(b.get("end"))
+    out: dict[str, dict] = {}
+    for b in active:
+        hc, c = _ids(b)
+        if hc and c and hc in by_hc:
+            ends = by_hc[hc]
+            out[str(c)] = {"hc": str(hc), "certs": sorted(ends),
+                           "ends": {str(k): v for k, v in ends.items()}}
+    return out
+
+
+def _yyyymmdd(raw) -> str:
+    """FDIC institutions dates are MM/DD/YYYY; '' when unparseable (such a
+    charter is never window-filtered out — over-fetching beats dropping)."""
+    s = str(raw or "").strip()
+    if len(s) == 10 and s[2] == "/" and s[5] == "/":
+        return s[6:] + s[:2] + s[3:5]
+    return ""
+
+
+def warm_absorbed_map(active: list[dict], inactive: list[dict]) -> int:
+    """Build and persist the former-charter map; returns how many active
+    certs carry one."""
+    m = build_absorbed_map(active, inactive)
+    from data import cache
+    cache.put(_ABSORBED_MAP_KEY, m)
+    return len(m)
+
+
+def get_absorbed_charters(cert: int | None,
+                          since: str | None = None) -> tuple[str | None, list[int]]:
+    """(holdco RSSD, former charters) for an active cert, from the persisted
+    map only — no network. `since` (YYYYMMDD) keeps only charters that ended
+    on or after it: one that ended earlier has no record in a window that
+    starts there. Charters cannot un-merge, so a stale map is still right
+    about what it lists (read with no age limit)."""
+    if not cert:
+        return None, []
+    from data import cache
+    try:
+        m = cache.get(_ABSORBED_MAP_KEY, max_age_s=None)
+    except Exception:
+        m = None
+    rec = m.get(str(int(cert))) if isinstance(m, dict) else None
+    if not rec:
+        return None, []
+    ends = rec.get("ends") or {}
+    certs = [int(c) for c in rec.get("certs") or []
+             if not since or not ends.get(str(c)) or ends[str(c)] >= since]
+    return (str(rec.get("hc")), certs) if certs else (None, [])
+
+
+def held_by(rec: dict, hc: str | None) -> bool:
+    """True when a former charter's record was filed while `hc` held it."""
+    return bool(hc) and str(rec.get("RSSDHCR") or "").strip() == hc
+
+
 def get_cert_group(ticker: str, cert: int | None = None) -> list[int]:
     """Every ACTIVE FDIC cert under `ticker`'s holding company, largest first.
 
@@ -393,12 +484,15 @@ def fetch_group_history(ticker: str, limit: int = 20,
     certs = get_cert_group(ticker, cert=cert)
     if not certs:
         return []
-    if len(certs) == 1:
+    from datetime import date, timedelta
+    window = (date.today() - timedelta(days=92 * (limit + 1))).strftime("%Y%m%d")
+    hc, former = get_absorbed_charters(certs[0], since=window)
+    if len(certs) == 1 and not former:
         df = fdic_client.fetch_financials(certs[0], limit=limit)
         return [] if df is None or df.empty else df.to_dict("records")
 
     by_period: dict[str, list[dict]] = {}
-    for c in certs:
+    for c in certs + former:
         try:
             df = fdic_client.fetch_financials(c, limit=limit)
         except Exception as e:
@@ -408,6 +502,8 @@ def fetch_group_history(ticker: str, limit: int = 20,
         if df is None or df.empty:
             continue
         for rec in df.to_dict("records"):
+            if c in former and not held_by(rec, hc):
+                continue                      # before the holdco owned it
             period = str(rec.get("REPDTE") or "")
             if period:
                 by_period.setdefault(period, []).append(rec)

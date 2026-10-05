@@ -27,6 +27,9 @@ FDIC_INSTITUTIONS_URL = "https://api.fdic.gov/banks/institutions"
 # INTEXPY for cost of funds; the rest feed the SNL-depth statement tabs.
 _BASE_FINANCIALS_FIELDS = {
     "CERT", "REPNM", "REPDTE", "ASSET", "DEP", "LNLSNET", "NETINC",
+    # High holder per quarter — a former charter counts toward a holdco's
+    # history only while that holdco held it (data/cert_group.held_by).
+    "RSSDHCR",
     "EQTOT", "INTANGW", "ERNAST", "INTEXPY", "INTINCY", "NIMY",
     "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR", "ITAX", "PTAXNETINC",
     "SC", "LNLSGR", "CHBAL", "DEPNIDOM", "LIAB", "ROA", "ROE", "EEFFR",
