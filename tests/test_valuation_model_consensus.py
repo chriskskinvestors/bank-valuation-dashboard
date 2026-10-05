@@ -139,10 +139,23 @@ class TestHeadlineGuardOnMissingInputs(unittest.TestCase):
                          "Base EPS input must not fall back to a $2 placeholder")
         self.assertNotIn("or 20.0)", _SRC,
                          "TBV/share input must not fall back to a $20 placeholder")
+        self.assertNotIn("or 200.0)", _SRC,
+                         "loans/share drives the DCF capital need — never a $200 placeholder")
 
     def test_guard_returns_before_computing_headline(self):
-        self.assertIn("if base_eps is None or tbvps is None or roatce_pct is None:", _SRC,
+        self.assertIn("if base_eps is None or tbvps is None or roatce_pct is None "
+                      "or loans_ps is None:", _SRC,
                       "missing headline inputs must be guarded before the DCF run")
+
+    def test_missing_loans_seed_is_none_not_zero(self):
+        from tests.test_tbv_conventions import _passthrough_resolvers
+        _passthrough_resolvers(self)
+        # No FDIC loans at all → loans/share None (the input renders empty and
+        # the guard above stops the model), never 0 → the old 200.0 fallback.
+        d = _derive_defaults("XYZ", [{"REPDTE": "20260331", "EQTOT": 1_000_000}],
+                             {"eps": 3.5, "shares_outstanding": 40_000_000,
+                              "tangible_book_value_per_share": 20.0})
+        self.assertIsNone(d["loans_per_share"])
 
 
 if __name__ == "__main__":
