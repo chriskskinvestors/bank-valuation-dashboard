@@ -79,6 +79,10 @@ _BASE_FINANCIALS_FIELDS = {
     # Deposit/Loan Composition (SNL plan §6): mix balances not already in
     # the config registry. TRN+NTR=DEP and NTRSMMDA+NTRTIME=NTR verified.
     "LNRE", "LNRELOC", "LNRENROW", "LNRENROT", "LNREAG", "LNCONOTH",
+    # The loan-tree leaves that close it for foreign-office filers (JPM
+    # 6/30/26: LNREFOR $3.85B, LNFG $6.25B, LNCONRP $7.67B; verified the
+    # RE / consumer / gross identities to the dollar on JPM, ONB, HBAN).
+    "LNREFOR", "LNFG", "LNCONRP",
     "LNOTHER", "LS", "LNMUNI", "LNDEP",
     "DDT", "TRN", "NTR", "NTRSMMDA", "NTRSOTH", "NTRTIME",
     "DEPLGAMT", "DEPSMAMT",
