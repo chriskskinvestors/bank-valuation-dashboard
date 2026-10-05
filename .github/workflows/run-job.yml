@@ -20,6 +20,7 @@ on:
           - verify-metrics
           - backfill-fdic-history
           - refresh-13f
+          - refresh-deal-comps
       args:
         description: >-
           Optional container args override, comma-separated (gcloud --args
