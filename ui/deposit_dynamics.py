@@ -162,7 +162,8 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
         if "uninsured_pct" in ctl.columns and ctl["uninsured_pct"].notna().any():
             fig2.add_trace(go.Scatter(
                 x=ctl["date"], y=ctl["uninsured_pct"],
-                name="Uninsured", mode="lines+markers",
+                # Insurance base (DEPINS + DEPUNINS), not total deposits.
+                name="Uninsured (% of insured + uninsured)", mode="lines+markers",
                 line=dict(color=COLOR_DANGER, width=2, dash="dash"),
             ))
         apply_standard_layout(
