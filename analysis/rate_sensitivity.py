@@ -783,15 +783,16 @@ def _resolve_deposit_beta(
     """
     Shared beta resolution logic. Returns (beta_int, beta_ni, resolved_mode).
 
-    Note: deposit_dynamics._cost_of_deposits returns INTEXPY (FDIC's cost of
-    interest-bearing liabilities, already annualized %). So the cycle beta is
-    already the beta for int-bearing deposits — do NOT divide by ib_weight.
+    Note: deposit_dynamics' cost of deposits is the single-quarter cost of
+    INTEREST-BEARING deposits (EDEP ÷ average interest-bearing deposits,
+    annualized). So the cycle beta is already the beta for int-bearing
+    deposits — do NOT divide by ib_weight.
     """
     if custom_deposit_beta is not None:
         return (max(0.0, min(1.0, custom_deposit_beta)), 0.0, "custom")
     if beta_mode == "textbook":
         return (TEXTBOOK_INT_BEARING_BETA, TEXTBOOK_NON_INT_BETA, "textbook")
-    # Historical — measured on INTEXPY (int-bearing cost), so it's already
+    # Historical — measured on the int-bearing deposit cost, so it's already
     # the int-bearing deposit beta. Use directly.
     hist_beta = compute_historical_deposit_beta(fdic_hist)
     if hist_beta is not None:

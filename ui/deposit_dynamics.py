@@ -118,7 +118,7 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
         rng = range_picker(f"dep_rng_{ticker}")
         ctl, _depth_cap = chart_timeline(
             ticker, rng, timeline, build_deposit_timeline,
-            [("cost_of_deposits", "Cost of deposits"), ("fed_funds", "Fed funds"),
+            [("cost_of_deposits", "Cost of int-bearing deposits"), ("fed_funds", "Fed funds"),
              ("nonint_dep_pct", "Non-int bearing"), ("brokered_pct", "Brokered"),
              ("uninsured_pct", "Uninsured")])
         if _depth_cap:
@@ -134,12 +134,12 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
     ))
     fig1.add_trace(go.Scatter(
         x=ctl["date"], y=ctl["cost_of_deposits"],
-        name="Cost of Deposits", mode="lines+markers",
+        name="Cost of Int-Bearing Deposits", mode="lines+markers",
         line=dict(color=COLOR_DANGER, width=2.5),
         marker=dict(size=7),
     ))
     apply_standard_layout(
-        fig1, title="Cost of Deposits vs Fed Funds",
+        fig1, title="Cost of Int-Bearing Deposits (quarter, annualized) vs Fed Funds",
         height=CHART_HEIGHT_COMPACT, yaxis_title="Rate",
     )
     tighten_yaxis(fig1, floor_zero=True, ticksuffix="%")

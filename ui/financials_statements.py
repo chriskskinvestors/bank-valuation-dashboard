@@ -2174,7 +2174,10 @@ _DEPOSIT_LOAN_COMP = [
     ("Deposit Mix & Funding (%)", [
         ("Core Deposits / Deposits", "fratio", "COREDEP", "DEP"),
         ("Brokered / Deposits", "fratio", "BRO", "DEP"),
-        ("Est. Uninsured / Deposits", "fratio", "DEPUNINS", "DEP"),
+        # The insurance base, THE definition (analysis/valuation, the Deposit
+        # Trends chart and alert): ÷ DEP mixed in foreign offices — JPM 49.4 %
+        # here vs 60.9 % in the chart on the same page (REVIEW 2026-10-05 P1-1).
+        ("Est. Uninsured / Insured + Uninsured", "fratio", "DEPUNINS", "DEPINS+DEPUNINS"),
         ("Non-Interest-Bearing / Deposits", "fratio", "DEPNIDOM", "DEP"),
         ("Time Deposits / Deposits", "fratio", "NTRTIME", "DEP"),
         ("Net Loans / Deposits", "ratio", "LNLSNET", "DEP"),

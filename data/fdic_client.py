@@ -41,7 +41,7 @@ _BASE_FINANCIALS_FIELDS = {
     "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
     "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
     "IGLSEC", "EXTRA",
-    "DEPIDOM",
+    "DEPIDOM", "DEPIFOR",   # interest-bearing deposits, domestic + foreign offices
     "TRADE", "ITRADE", "IFIDUC", "ISERCHG", "IINSOTH", "IINVFEE", "IOTHII", "NETIMIN",
     "SCAF", "ORE", "MSA", "INTANMSR", "BKPREM", "CHBALI", "FREPO",
     "OTHBFHLB", "SUBND", "EQPP", "EQCS", "EQUPTOT",
