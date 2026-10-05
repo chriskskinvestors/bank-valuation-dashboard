@@ -315,3 +315,58 @@ class TestAsOfAnchors(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDilutedShareCountNeverDifferenced(unittest.TestCase):
+    """REVIEW 2026-10-05 P0-3 / P1-12. ONB-shaped FY2025: the weighted-average
+    diluted count was "derived" for Q4 as FY − (Q1+Q2+Q3) = 365,464,000 −
+    1,072,948,000 = −707,484,000, so EPS before amortization (0.52) printed
+    BELOW EPS (0.55). A share count is never differenced; a count far off the
+    period-end shares (LARK tags ×1000) is n/a."""
+    A = "0000000001-26-000001"
+
+    def _facts(self, wad_annual=365_464_000):
+        def ps(rows):
+            return {"units": {"USD/shares": rows}}
+
+        def sh(rows):
+            return {"units": {"shares": rows}}
+        q = [("2025-01-01", "2025-03-31"), ("2025-04-01", "2025-06-30"),
+             ("2025-07-01", "2025-09-30")]
+        f = _facts({
+            SE: [_e("2025-12-31", 8_494_788_000, self.A, "10-K", "2026-02-19")],
+            "AmortizationOfIntangibleAssets":
+                [_e(e, 20_000_000, self.A, "10-Q", "2025-11-01", s) for s, e in q]
+                + [_e("2025-12-31", 80_000_000, self.A, "10-K", "2026-02-19", "2025-01-01")],
+        }, shares={"CommonStockSharesOutstanding":
+                   [_e("2025-12-31", 389_662_000, self.A, "10-K", "2026-02-19")]},
+            dei=[_e("2026-02-10", 389_662_000, self.A, "10-K", "2026-02-19")])
+        ug = f["facts"]["us-gaap"]
+        ug["EarningsPerShareDiluted"] = ps(
+            [_e(e, 0.40, self.A, "10-Q", "2025-11-01", s) for s, e in q]
+            + [_e("2025-12-31", 1.75, self.A, "10-K", "2026-02-19", "2025-01-01")])
+        ug["WeightedAverageNumberOfDilutedSharesOutstanding"] = sh(
+            [_e(e, 357_649_333, self.A, "10-Q", "2025-11-01", s) for s, e in q]
+            + [_e("2025-12-31", wad_annual, self.A, "10-K", "2026-02-19", "2025-01-01")])
+        return f
+
+    def _row(self, facts, quarterly):
+        end = datetime(2025, 12, 31)
+        with patch.object(fh.sec_client, "fetch_company_facts", return_value=facts):
+            return fh._per_share_for_ends("0000000001", [end], quarterly=quarterly)[end]
+
+    def test_q4_count_not_derived_and_no_addback(self):
+        r = self._row(self._facts(), quarterly=True)
+        self.assertIsNone(r["avg_diluted_shares"])        # was −707,484,000
+        self.assertIsNone(r["eps_before_amort"])
+
+    def test_annual_count_used_as_reported(self):
+        r = self._row(self._facts(), quarterly=False)
+        self.assertEqual(r["avg_diluted_shares"], 365_464_000)
+        self.assertAlmostEqual(r["eps_before_amort"],
+                               round(1.75 + 80_000_000 * 0.79 / 365_464_000, 2))
+
+    def test_mis_scaled_count_is_na(self):
+        r = self._row(self._facts(wad_annual=365_464_000_000), quarterly=False)
+        self.assertIsNone(r["avg_diluted_shares"])
+        self.assertIsNone(r["eps_before_amort"])
