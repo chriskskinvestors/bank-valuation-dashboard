@@ -44,6 +44,10 @@ def _pad_cik(cik: int) -> str:
 # asserts the projection yields byte-identical fundamentals to the full blob
 # across many banks; ADD a concept here before referencing it anywhere.
 SLIM_USGAAP_CONCEPTS = {
+    # Holdco AOCI (owner 2026-10-05) — the balance-sheet line, read only AT
+    # the parent-equity date (see get_latest_fundamentals). Adding it changes
+    # the slim cache key: every blob re-downloads once.
+    "AccumulatedOtherComprehensiveIncomeLossNetOfTax",
     "Assets", "Liabilities",
     "StockholdersEquity",
     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
@@ -988,6 +992,25 @@ def get_latest_fundamentals(cik: int) -> dict:
         result["common_equity"] = None
         result["book_value_per_share"] = None
         result["tangible_book_value_per_share"] = None
+
+    # ── Holdco AOCI and tangible common equity (owner 2026-10-05) ──────────
+    # TCE = parent equity − preferred − the SAME goodwill+intangibles
+    # adjustment tangible book uses (MSRs kept), independent of share counts.
+    # AOCI counts only when tagged AT the equity's balance-sheet date — a
+    # value from another period is n/a, never mixed in. Measured 2026-09-25:
+    # 10/10 reference banks within 0.22pt (JPM −7,693 / 299,547 = −2.57%).
+    # Goodwill tagged only at fiscal year-end (ZION, WAL … 21 banks) is used
+    # as last reported, and FLAGGED (owner decision) via tce_goodwill_prior.
+    tce = None
+    if equity is not None and not preferred_unresolved:
+        tce = equity - (preferred_stock or 0) - intangible_adjustment
+    result["tce_holdco"] = tce
+    aoci_tup = (_instant_at(facts, "AccumulatedOtherComprehensiveIncomeLossNetOfTax",
+                            equity_date) if (equity_date and equity is not None) else None)
+    result["aoci_holdco"] = aoci_tup[0] if aoci_tup else None
+    _, gw_end_tce = _val_end(facts, "Goodwill")
+    result["tce_goodwill_prior"] = bool(
+        tce is not None and gw_end_tce and equity_date and gw_end_tce < equity_date)
 
     # Stamp the latest filing end-date so downstream staleness checks have an
     # anchor: the FRESHEST end across the core concepts, not the first

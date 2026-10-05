@@ -828,6 +828,38 @@ METRICS = [
     },
     # ── Rate & Funding Risk (owner 2026-09-25) — bank-sub FDIC basis; see
     # analysis/valuation.compute_rate_funding_risk for formulas + verification.
+    # AOCI % TCE on both balance sheets (owner 2026-10-05; HTM mark pre-tax):
+    # see analysis/metrics._aoci_metrics. HoldCo = SEC at the parent-equity
+    # date ÷ parent TCE; Bank = RC-R item 3 ÷ (EQTOT − INTAN).
+    {
+        "key": "aoci_holdco_pct_tce", "label": "AOCI % TCE (HoldCo)", "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "higher_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "aoci_htm_holdco_pct_tce", "label": "AOCI+HTM % TCE (HoldCo, HTM pre-tax)",
+        "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "higher_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        # Owner decision: goodwill tagged only at fiscal year-end is used as
+        # last reported — this flag marks the banks where that happened.
+        "key": "aoci_gw_prior", "label": "TCE GW prior FY", "source": "computed",
+        "format": "flag",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "aoci_sub_pct_tce", "label": "AOCI % TCE (Bank)", "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "higher_better",
+        "category": "Rate & Funding Risk",
+    },
+    {
+        "key": "aoci_htm_sub_pct_tce", "label": "AOCI+HTM % TCE (Bank, HTM pre-tax)",
+        "source": "computed",
+        "format": "pct", "decimals": 1, "color_rule": "higher_better",
+        "category": "Rate & Funding Risk",
+    },
     {
         "key": "noncore_funding_pct", "label": "Non-Core Funding %", "source": "computed",
         "format": "pct", "decimals": 1, "color_rule": "lower_better",
@@ -1290,6 +1322,8 @@ TABS = [
         "title": "Rate & Funding Risk — AOCI, Funding Mix, CD Repricing",
         "columns": [
             "market_cap", "total_assets", "ptbv_ratio", "pe_ratio",
+            "aoci_holdco_pct_tce", "aoci_htm_holdco_pct_tce", "aoci_gw_prior",
+            "aoci_sub_pct_tce", "aoci_htm_sub_pct_tce",
             "sec_htm_unreal", "sec_unreal_gl",
             "noncore_funding_pct", "uninsured_pct", "brokered_pct", "time_dep_pct",
             "cd_reprice_3m_pct", "cd_reprice_12m_pct", "loans_to_deposits",
