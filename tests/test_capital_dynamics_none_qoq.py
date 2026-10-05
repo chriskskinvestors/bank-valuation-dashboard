@@ -40,7 +40,7 @@ def _rec(repdte, eqtot, cet1, total_cap=None, leverage=None,
          intangw=100_000, intan=150_000, netinc=40_000, loans=500_000):
     return {"REPDTE": repdte, "EQTOT": eqtot, "INTANGW": intangw,
             "INTAN": intan, "NETINC": netinc, "LNLSNET": loans,
-            "IDT1CER": cet1, "RBCRWAJ": total_cap, "RBCT1JR": leverage}
+            "IDT1CER": cet1, "RBCRWAJ": total_cap, "RBC1AAJ": leverage}
 
 
 class TestAllNoneRatioColumn(unittest.TestCase):

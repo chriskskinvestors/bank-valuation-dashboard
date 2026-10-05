@@ -715,7 +715,7 @@ def render_financial_highlights(ticker: str):
         ("Capital Adequacy (bank-level)", [
             ("CET1 ratio", fdic_pct("CET1 ratio", "IDT1CER")),
             ("Total capital ratio", fdic_pct("Total capital ratio", "RBCRWAJ")),
-            ("Leverage ratio", fdic_pct("Leverage ratio", "RBCT1JR")),
+            ("Leverage ratio", fdic_pct("Leverage ratio", "RBC1AAJ")),
         ]),
         ("Per Share (HoldCo)", [
             ("Diluted EPS", sec_eps),

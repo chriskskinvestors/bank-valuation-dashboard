@@ -73,10 +73,13 @@ from __future__ import annotations
 # _EXACT_QUOTIENTS. NOIJY ELNATRY NTRER NTCOMRER IDNTCIR (annualized flow ÷
 # 5-point average balance) were being SUMMED; they belong here. EEFFQR was
 # listed here until 2026-09-30 — it is a flow ÷ flow quotient (EEFFQ/IEFFQ).
+# The single-quarter INTINCYQ INTEXPYQ NONIIAYQ NONIXAYQ (2026-10-05) are the
+# same average-balance ratios over one quarter.
 AVERAGE_BASED_RATIOS = frozenset({
     "ROA", "ROE", "NIMY", "INTEXPY", "INTINCY",
     "NONIIAY", "NONIXAY", "ROAPTX", "NTLNLSR",
     "ROAQ", "ROEQ", "NIMYQ", "NTLNLSQR",
+    "INTINCYQ", "INTEXPYQ", "NONIIAYQ", "NONIXAYQ",
     "NOIJY", "ELNATRY", "NTRER", "NTCOMRER", "IDNTCIR",
 })
 
@@ -106,8 +109,8 @@ _EXACT_QUOTIENTS = {
     "RBCRWAJ": ("RBC", "RWAJ", 100),        # total RBC ratio
     "RBC1RWAJ": ("RBCT1J", "RWAJ", 100),    # tier 1 RBC ratio
     "IDT1CER": ("RBCT1C", "RWAJ", 100),     # CET1 ratio (2026-09-22)
-    "RBCT1JR": ("RBCT1J", "ASSET", 100),    # platform leverage ratio
-    "RBC1AAJ": ("RBCT1", "AVASSETJ", 100),  # PCA leverage (quarter-avg assets
+    "RBCT1JR": ("RBCT1J", "ASSET", 100),    # Tier 1 ÷ period-end assets
+    "RBC1AAJ": ("RBCT1", "AVASSETJ", 100),  # platform leverage (quarter-avg assets
                                             # as REPORTED — a summable level)
     "LNLSDEPR": ("LNLSNET", "DEP", 100),
     "LNLSNTV": ("LNLSNET", "ASSET", 100),

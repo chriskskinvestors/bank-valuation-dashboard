@@ -41,6 +41,12 @@ _BASE_FINANCIALS_FIELDS = {
     # Single-QUARTER ratio variants (the defaults above are YTD-annualized):
     # the earnings-exhibit history columns are quarters (EXHIBIT_FDIC_Q_MAP).
     "NIMYQ", "EEFFQR", "ROAQ", "ROEQ", "NTLNLSQR",
+    # ...and the rest of Performance Analysis' quarterly ratio rows (verified
+    # live 2026-10-05, ONB 6/30/2026: INTINCYQ 5.47 vs INTINCY 5.46 YTD).
+    "INTINCYQ", "INTEXPYQ", "NONIIAYQ", "NONIXAYQ",
+    # ILNLS = total loan & lease interest (= ILNDOM + ILNFOR + ILS to the $K,
+    # HBAN/JPM/ONB 2026) — the numerator that matches LNLSGR's scope.
+    "ILNLS",
     "ILNDOM", "ISC", "EDEP", "ESAL", "EPREMAGG", "EAMINTAN", "EOTHNINT",
     "INTINCY", "NONIIAY", "NONIXAY", "ROAPTX",
     "IGLSEC", "EXTRA",
@@ -547,7 +553,7 @@ def build_fdic_provenance(cert: int, field: str, repdte,
             "INTINC", "EINTEXP", "NONII", "NONIX", "ELNATR",
         ) else "%" if field in (
             "ROA", "ROE", "NIMY", "EEFFR", "NCLNLSR", "IDT1CER",
-            "INTINCY", "INTEXPY", "RBCT1JR", "RBCRWAJ",
+            "INTINCY", "INTEXPY", "RBCT1JR", "RBC1AAJ", "RBCRWAJ",
         ) else "",
     )
 

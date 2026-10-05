@@ -44,7 +44,7 @@ from analysis.capital_dynamics import (  # noqa: E402
 def _rec(repdte, eqtot, netinc, loans, cet1=12.0):
     return {"REPDTE": repdte, "EQTOT": eqtot, "INTANGW": 100_000,
             "INTAN": 150_000, "NETINC": netinc, "LNLSNET": loans,
-            "IDT1CER": cet1, "RBCRWAJ": 14.0, "RBCT1JR": 9.0}
+            "IDT1CER": cet1, "RBCRWAJ": 14.0, "RBC1AAJ": 9.0}
 
 
 # Equity steps +50,000 every quarter → equity_qoq_k = 50,000 on rows 2..5.

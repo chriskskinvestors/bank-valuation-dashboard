@@ -348,7 +348,7 @@ METRICS = [
         "category": "Capital",
     },
     {
-        "key": "leverage_ratio", "label": "T1 Leverage", "source": "fdic", "fdic_field": "RBCT1JR",
+        "key": "leverage_ratio", "label": "T1 Leverage", "source": "fdic", "fdic_field": "RBC1AAJ",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 8, "warn": 5},
         "category": "Capital",

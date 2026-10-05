@@ -1020,6 +1020,12 @@ class TestPerformanceComputedLines(unittest.TestCase):
 
     def _render(self, rows):
         import pandas as pd
+        # The Q1 column's average balances are (Q4 + Q1) / 2 and are n/a
+        # without the prior quarter-end (REVIEW 2026-10-05 P1-10 — the old
+        # period-end fallback is gone). A FLAT prior quarter-end (same
+        # balances, dated 2025-12-31) keeps every average equal to the probed
+        # period-end figure, so the hand values below are unchanged.
+        rows = [dict(rows[0], REPDTE="2025-12-31")] + list(rows)
         comp_v1 = self.fs.components
         st = self.fs.st
         import data.loaders as dl   # renderers read the group seam now
@@ -1044,7 +1050,8 @@ class TestPerformanceComputedLines(unittest.TestCase):
 
     def test_computed_ratios_match_probed_values(self):
         h = self._render([dict(self.BANR_Q1)])[0]
-        # Single Q1 column: avg balance = period-end, annualization factor = 4.
+        # Q1 column over a flat Q4 (see _render): avg balance = period-end,
+        # annualization factor = 4.
         # (FDIC's reported ROE 11.58% uses period-AVERAGE equity; period-end
         # here gives 11.57% — within a few bps, confirming the formula.)
         self.assertIn("11.57%", h)   # ROACE = 56,492*4 / 1,952,235
