@@ -1567,6 +1567,19 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
         ps = ps_by_ci.get(ci, {})
         if kind == "ps":
             key = args[0]; v = _psd(ps.get(key))
+            # A Q4 with no 10-Q is FY − 9-mo (financial_highlights._flow_for):
+            # derived, and per-share values aren't strictly additive across
+            # quarters' share counts (JPM Q4'24 $4.82 vs $4.81 reported) —
+            # say so, never "as filed" (REVIEW 2026-10-05 P2). EPS before
+            # amortization inherits the EPS derivation.
+            note = ps.get(f"{key}_note") or (
+                ps.get("eps_note") if key == "eps_before_amort" else None)
+            if note and ps.get(key) is not None:
+                return v, calc(label, v, asof,
+                               f"SEC filing (holding company) — {note}; per-share "
+                               "values aren't strictly additive across quarters",
+                               [{"label": label + " (derived)", "val": v}], note, False,
+                               source="SEC filing", link=sec_filing_link)
             return v, calc(label, v, asof, "SEC filing (holding company)",
                            [{"label": label, "val": v}], None, True,
                            source="SEC filing", link=sec_filing_link)
