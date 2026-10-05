@@ -55,7 +55,7 @@ def _model_provenance(ticker: str, name: str, price, asof, params: dict,
         "Target CET1 (%)": params.get("target_cet1_pct"),
         "Cost of equity (%)": params.get("cost_of_equity_pct"),
         "Terminal growth (%)": params.get("terminal_growth_pct"),
-        "ROATCE (normalized, %)": params.get("roatce_pct"),
+        "ROATCE (TTM, >3× spike quarters clipped, %)": params.get("roatce_pct"),
         **extra,
     }
 
@@ -259,13 +259,15 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
     EPS = {"label": "Base EPS (TTM, $)", "val": dol(seed["base_eps"]), "doc": eps_doc,
            "sub": ("entered input" if "base_eps" in edited else
                    _src.get(seed.get("eps_source"), "SEC diluted EPS, trailing 12 months"))}
-    ROATCE = {"label": "ROATCE (normalized, %)", "val": pct(seed["roatce_pct"]),
+    ROATCE = {"label": "ROATCE (TTM, >3× spike quarters clipped, %)", "val": pct(seed["roatce_pct"]),
               "doc": eps_doc if seed.get("roatce_basis") == "holdco" else cr_doc,
               "sub": ("entered input" if "roatce_pct" in edited else
-                      "SEC holding-company TTM ROATCE, one-time spikes winsorized"
+                      "SEC holding-company TTM ROATCE; only quarters >3× the "
+                      "8-quarter median are clipped — smaller one-time items "
+                      "pass through"
                       if seed.get("roatce_basis") == "holdco" else
-                      "FDIC bank-subsidiary ROATCE (75% latest / 25% 4Q), "
-                      "one-time spikes winsorized")}
+                      "FDIC bank-subsidiary ROATCE (75% latest / 25% 4Q); only "
+                      "quarters >3× the 8-quarter median are clipped")}
     TBVPS = {"label": "TBV / share ($)", "val": dol(seed["tbvps"]), "doc": eps_doc,
              "sub": ("entered input" if "tbvps" in edited else
                      _src.get(seed.get("tbvps_source"),
@@ -569,7 +571,7 @@ def render_valuation_model(ticker: str):
                 key=f"dcf_loans_ps_{ticker}",
             )
             roatce_pct = st.number_input(
-                "ROATCE (normalized, %)",
+                "ROATCE (TTM, >3× spike quarters clipped, %)",
                 value=(float(defaults["roatce_pct"])
                        if defaults.get("roatce_pct") is not None else None),
                 step=0.25, format="%.2f",
@@ -1053,14 +1055,17 @@ def _render_tornado_and_irr(base_params: dict, price: float | None, *,
     ])
     if irr is not None:
         gap = irr - base_params.get("cost_of_equity_pct", 10)
+        # A return comparison, not a second valuation verdict: the banner's
+        # blended ±10% is the page's one verdict, and the two disagreed on
+        # JPM/WTFC (REVIEW 2026-10-05 P2-10).
         if gap > 2:
-            label = "Undervalued"
+            label = "Earns above CoE"
             color = "var(--success)"
         elif gap < -2:
-            label = "Overvalued"
+            label = "Earns below CoE"
             color = "var(--danger)"
         else:
-            label = "Fair"
+            label = "Earns ≈ CoE"
             color = "var(--warn)"
         st.markdown(
             f"""<div style="padding:4px 0;">
