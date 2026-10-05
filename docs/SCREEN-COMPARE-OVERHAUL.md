@@ -175,6 +175,51 @@ Build order (each its own verified, shippable batch):
   existing call_report_store schedules are stamped with the requested quarter
   even when fetch_call_report fell back to the prior one (late filers).
 
+- **B11** ✅ SHIPPED 2026-10-02/03 (PRs #240, #242, #244) — **"make it perfect"
+  pass** (owner). Closes the open items of B9/B10 that needed no owner decision
+  and all 13 defects confirmed by an adversarial review of #164/#175/#183
+  (nothing in #164). Prod-verified 2026-10-03.
+  - **Uninsured %** (B9 open item, RESOLVED): both producers (analysis/
+    valuation screen metric, analysis/deposit_dynamics timeline) divided
+    DEPUNINS (domestic + insured territory branches) by DEP (incl. foreign
+    offices). Now DEPUNINS ÷ (DEPINS + DEPUNINS), the FDIC insurance base —
+    matches the reference screen on 12/12 banks (C 47.8→76.8, STT 75.9→92.3);
+    validation band max 75 → 100. Shows after the metrics snapshot rebuilds.
+  - **Wrong numbers from the review**: FDIC literal-0 ratios over a zero
+    denominator (1,831 CBLR banks RBCRWAJ 0.00%) now go through the pipeline's
+    own null_unreported_capital + null_undefined_quotients; the catalog builder
+    adds integer evidence across every filer (FDIC reports $ as whole $K) so
+    NTCOMREQ & co. are $ (OZK $42.4M, was "42,437.00"), constant ratios
+    (ASSETR/LIABEQR/IDNTILR = 100) guarded, CBLRIND (flag) excluded; OFFSTATE
+    is n/a for charter groups (WFC showed 42 states); converted $ fields'
+    labels/export headers say "($)".
+  - **Crash/state from the review**: FDIC outage → n/a + "partly unavailable"
+    warning; formula size/constant limits, overflow/recursion/inf/nan → n/a;
+    filter Metric + Sort store the metric KEY (positions silently re-pointed
+    when the option list changed; legacy sort_idx mapped once on restore; ""
+    is the Default/— option — None rendered an empty "Choose an option",
+    #244); formula keys = name + hash of the definition (no cross-session
+    label/format collisions; redefining a name migrates its references);
+    Peer Comparison picker lists only the static registry; change/trend
+    history fetched once per quarter for all banks; FFIEC dates passed ISO;
+    As-of caption states the mapped-charter rule.
+  - **FFIEC line items in the picker** (B10 open item, RESOLVED in code):
+    "+ Call report field" lists every MDRM line item in the full-report store
+    (usable in formulas with FDIC codes; $ items $K→$; non-monetary as filed;
+    groups strict-sum $ items, else n/a). Empty until the next refresh-ffiec
+    run.
+  - **Late-filer quarter stamp** (B10 open item, RESOLVED, #240):
+    refresh-ffiec stores each report under the frame's OWN quarter (late
+    filers' prior-quarter reports no longer land in the new quarter); a frame
+    without one determinable quarter is stored nowhere. Read-only
+    `tools/diagnose_ffiec_period_mislabels.py --prod` lists rows already
+    mislabeled — **not yet run against prod** (owner).
+  - Sticky ticker column on wide result grids.
+  - **Still open (owner)**: holdco AOCI decisions (coverage ~81% vs parse
+    filings ~86%; year-end-only goodwill for 21 banks; AOCI+HTM basis); FFIEC
+    JWT health in Secret Manager (local copy expired ~2026-08-31); run the
+    mislabel diagnostic in prod.
+
 ## Do-not-touch (other lanes)
 
 Market & Macro + `docs/HOME-MACRO-PLAN.md`; `tests/smoke_live.py` + the deploy smoke job;
