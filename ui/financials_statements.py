@@ -1640,6 +1640,15 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             f"{len(recs_list)} columns · {labels[0]} – {labels[-1]}",
             breaks=structure_breaks(hist.to_dict("records"), since=recs_list[0]["REPDTE"]),
             entity=entity_note(ticker)) + " · " + cap
+    else:
+        # A multi-charter group's columns are TODAY's charters summed at every
+        # period — pro forma before a charter joined (WTFC FY2021-23 include
+        # Macatawa Bank, acquired 2024-08). Say so on the default range too,
+        # not only at depth (REVIEW 2026-10-05 P1-4).
+        # Render path: the persisted charter map only (no network).
+        from data.cert_group import get_cert_group_cached
+        if len(get_cert_group_cached(cert) or []) > 1:
+            cap = entity_note(ticker) + " · " + cap
     if side_by_side:
         # Page pattern (user 2026-06-25): click-to-source table on the left,
         # trend charts tiled two-per-row (2×2) on the right — like Financial

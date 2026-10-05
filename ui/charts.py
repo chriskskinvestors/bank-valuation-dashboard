@@ -176,6 +176,30 @@ def _axis_family(fmt: str) -> str:
     return "#"
 
 
+# Computed deposit ratios (config "source": "computed" — no fdic_field) as
+# (numerator fields, denominator fields) of raw FDIC $K, the SAME definitions
+# as the Deposit/Loan Composition table beside the chart. Without this the
+# "Deposit Funding Mix (%)" trend rendered "Not reported" for every bank
+# (REVIEW 2026-10-05 P1-5). Uninsured is on the insurance base (config).
+_DERIVED_TREND_RATIOS = {
+    "nonint_dep_pct": (("DEPNIDOM",), ("DEP",)),
+    "core_dep_pct": (("COREDEP",), ("DEP",)),
+    "brokered_pct": (("BRO",), ("DEP",)),
+    "uninsured_pct": (("DEPUNINS",), ("DEPINS", "DEPUNINS")),
+}
+
+
+def _derived_ratio_series(fdic_df: pd.DataFrame, key: str):
+    """num / den × 100 per row, or None when a field is absent; a row with a
+    missing input or a non-positive denominator is NaN (never 0)."""
+    num_f, den_f = _DERIVED_TREND_RATIOS[key]
+    if any(f not in fdic_df.columns for f in num_f + den_f):
+        return None
+    num = fdic_df[list(num_f)].apply(pd.to_numeric, errors="coerce").sum(axis=1, min_count=len(num_f))
+    den = fdic_df[list(den_f)].apply(pd.to_numeric, errors="coerce").sum(axis=1, min_count=len(den_f))
+    return (num / den.where(den > 0)) * 100
+
+
 def grouped_trend_chart(
     fdic_df: pd.DataFrame,
     metric_keys: list[str],
@@ -206,6 +230,11 @@ def grouped_trend_chart(
         if not m:
             continue
         field = m.get("fdic_field")
+        if not field and key in _DERIVED_TREND_RATIOS:
+            series = _derived_ratio_series(fdic_df, key)
+            if series is not None and series.notna().any():
+                field = f"__derived_{key}"
+                fdic_df = fdic_df.assign(**{field: series})
         if field and field in fdic_df.columns and fdic_df[field].notna().any():
             plot.append((m, field, _axis_family(m.get("format"))))
     if not plot:
