@@ -35,6 +35,72 @@ def bill_yield_on(bill_6m, repdte, max_gap_days: int = 7) -> float | None:
     return float(s.iloc[-1]) if len(s) else None
 
 
+def _aoci_metrics(fdic_data: dict, sec_data: dict, aoci_bank) -> dict:
+    """AOCI % TCE on both balance sheets (owner 2026-10-05; HTM mark PRE-TAX).
+
+    HoldCo: SEC AOCI at the parent-equity date ÷ parent TCE (data/sec_client —
+    the same TCE tangible book uses). Bank: RC-R Part I item 3 AOCI ($K,
+    strict-summed over the charter group by build_all_bank_metrics) ÷ bank TCE
+    (EQTOT − INTAN, the statement-page convention). The HTM mark is the bank's
+    SCHF − SCHA in both (holdcos hold HTM at the bank). Any missing input or a
+    non-positive TCE → n/a."""
+    def n(d, k):
+        v = (d or {}).get(k)
+        try:
+            return None if v is None or v != v else float(v)
+        except (TypeError, ValueError):
+            return None
+    schf, scha = n(fdic_data, "SCHF"), n(fdic_data, "SCHA")
+    htm_k = (schf - scha) if (schf is not None and scha is not None) else None
+
+    a_h, tce_h = n(sec_data, "aoci_holdco"), n(sec_data, "tce_holdco")
+    ok_h = a_h is not None and tce_h is not None and tce_h > 0
+    eq, intan = n(fdic_data, "EQTOT"), n(fdic_data, "INTAN")
+    tce_b = (eq - intan) if (eq is not None and intan is not None) else None
+    a_b = n({"v": aoci_bank}, "v")
+    ok_b = a_b is not None and tce_b is not None and tce_b > 0
+    return {
+        "aoci_holdco_pct_tce": a_h / tce_h * 100 if ok_h else None,
+        "aoci_htm_holdco_pct_tce": (a_h + htm_k * 1000) / tce_h * 100
+        if (ok_h and htm_k is not None) else None,
+        "aoci_gw_prior": bool((sec_data or {}).get("tce_goodwill_prior")) if ok_h else None,
+        "aoci_sub_pct_tce": a_b / tce_b * 100 if ok_b else None,
+        "aoci_htm_sub_pct_tce": (a_b + htm_k) / tce_b * 100
+        if (ok_b and htm_k is not None) else None,
+    }
+
+
+def _bank_aoci_by_ticker(watchlist, fdic_all, rcr_aoci) -> dict:
+    """{ticker: RC-R AOCI $K} — one store read per quarter for every bank's
+    charter group; a group sums strictly (any charter missing → None)."""
+    import pandas as pd
+    from data.cert_group import get_cert_group
+    plan: dict[str, list] = {}
+    for t in watchlist:
+        rep = (fdic_all.get(t) or {}).get("REPDTE")
+        try:
+            iso = pd.Timestamp(rep).strftime("%Y-%m-%d") if rep is not None else None
+        except (TypeError, ValueError):
+            iso = None
+        try:
+            certs = [int(c) for c in (get_cert_group(t) or [])]
+        except Exception:
+            certs = []
+        if iso and certs:
+            plan.setdefault(iso, []).append((t, certs))
+    out: dict = {}
+    for iso, items in plan.items():
+        try:
+            vals = rcr_aoci([c for _, cs in items for c in cs], iso)
+        except Exception as e:
+            print(f"[metrics] RC-R AOCI unavailable for {iso}: {type(e).__name__}")
+            continue
+        for t, cs in items:
+            got = [vals.get(c) for c in cs]
+            out[t] = None if any(v is None for v in got) else sum(got)
+    return out
+
+
 def build_bank_metrics(
     ticker: str,
     fdic_data: dict,
@@ -42,6 +108,7 @@ def build_bank_metrics(
     price_data: dict,
     fdic_hist: list[dict] | None = None,
     bill_6m=None,
+    aoci_bank=None,
 ) -> dict:
     """
     Build the full set of metrics for a single bank.
@@ -59,6 +126,7 @@ def build_bank_metrics(
     cd_rate = computed.get("cd_book_rate")
     computed["cd_rate_vs_6m_bill"] = (cd_rate - bill) if (
         cd_rate is not None and bill is not None) else None
+    computed.update(_aoci_metrics(fdic_data, sec_data, aoci_bank))
 
     result = {"ticker": ticker}
 
@@ -137,6 +205,7 @@ def build_all_bank_metrics(
     prices_all: dict[str, dict],
     fdic_hist_all: dict[str, list[dict]] | None = None,
     bill_6m=None,
+    rcr_aoci=None,
 ) -> list[dict]:
     """
     Build metrics for all banks in the watchlist.
@@ -154,13 +223,17 @@ def build_all_bank_metrics(
     import time as _t
     per_bank: list[tuple[float, str]] = []
     t_start = _t.time()
+    # RC-R AOCI (bank-level) — injected loader; None (tests) → n/a.
+    bank_aoci = (_bank_aoci_by_ticker(watchlist, fdic_all, rcr_aoci)
+                 if rcr_aoci is not None else {})
     for ticker in watchlist:
         fdic = fdic_all.get(ticker, {})
         sec = sec_all.get(ticker, {})
         price = prices_all.get(ticker, {})
         fdic_hist = fdic_hist_all.get(ticker, [])
         _t0 = _t.time()
-        row = build_bank_metrics(ticker, fdic, sec, price, fdic_hist, bill_6m)
+        row = build_bank_metrics(ticker, fdic, sec, price, fdic_hist, bill_6m,
+                                 aoci_bank=bank_aoci.get(ticker))
         per_bank.append((_t.time() - _t0, ticker))
         rows.append(row)
 

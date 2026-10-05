@@ -269,8 +269,9 @@ def main():
         hist_all = {t: (cache.get(f"fdic_hist:{t}") or []) for t in universe}
         prices_all = get_prices(universe)
         from data.fred_client import bill_6m_series
+        from data.call_report_store import get_rcr_aoci
         agg = build_all_bank_metrics(universe, fdic_all, sec_all, prices_all, hist_all,
-                                     bill_6m=bill_6m_series())
+                                     bill_6m=bill_6m_series(), rcr_aoci=get_rcr_aoci)
         wrote = cache.put_snapshot_if_fresher("watchlist_metrics_snap", {
             "cached_at": datetime.now().isoformat(),
             "n_tickers": len(universe),
