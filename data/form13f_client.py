@@ -23,6 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from data.cloud_storage import save_json, load_json, list_files
+from data.http import get_with_retry
 from config import SEC_USER_AGENT
 
 # v2 (2026-10-02): snapshots written before the common-CUSIP / report-period
@@ -31,6 +32,10 @@ from config import SEC_USER_AGENT
 # off them. The nightly job re-seeds the current quarter; `--backfill`
 # rebuilds past quarters with the corrected code.
 FORM13F_CACHE_PREFIX = "form13f_cache_v2"
+# Searches whose every attempt failed (EDGAR error, not an empty result) —
+# read by jobs/refresh_13f so an outage fails the pass instead of passing as
+# "no holders".
+SEARCH_FAILURES = [0]
 # Instrument words that mark a non-common row (whole words, see the filter).
 _NON_COMMON_WORDS = frozenset({
     "PREFERRED", "PREF", "PFD", "DEPOSITARY", "DEP", "WARRANT", "WARRANTS",
@@ -72,6 +77,7 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
     # Try quoted exact-match search first; fall back to unquoted for rare tickers
     attempts = [f'"{ticker}"', ticker]
     data = {}
+    failed = False
     for q in attempts:
         params = {
             "q": q,
@@ -81,16 +87,24 @@ def _search_13f_for_ticker(ticker: str, limit: int = 40,
             "enddt": end_date,
         }
         try:
-            resp = requests.get(EDGAR_FTS, params=params, headers=HEADERS, timeout=20)
-            resp.raise_for_status()
+            # The shared retry policy, 5xx included: full-text search sheds
+            # load with bursts of 500s, and a swallowed failure read as "no
+            # holders" (2026-10-04 warm pass: 65/597 banks, "0 errors").
+            resp = get_with_retry(EDGAR_FTS, params=params, headers=HEADERS,
+                                  timeout=20, max_attempts=4, retry_5xx=True)
+            if resp is None:
+                raise RuntimeError("EDGAR full-text search: retries exhausted")
             data = resp.json()
             if data.get("hits", {}).get("hits"):
                 break
         except Exception as e:
+            failed = True
             print(f"[13F] Search error for query '{q}': {e}")
             continue
 
     if not data:
+        if failed:
+            SEARCH_FAILURES[0] += 1     # a failed search is not "no holders"
         return []
 
     hits = data.get("hits", {}).get("hits", [])

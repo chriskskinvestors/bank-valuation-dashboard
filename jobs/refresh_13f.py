@@ -75,7 +75,14 @@ def backfill(quarters: list[str]) -> int:
               f"stored, {failed} errors", flush=True)
         grand_found += found
         grand_skipped += skipped
-    print(f"✓ Backfill done in {time.time() - t0:.0f}s", flush=True)
+    from data.form13f_client import SEARCH_FAILURES
+    print(f"✓ Backfill done in {time.time() - t0:.0f}s — "
+          f"{SEARCH_FAILURES[0]} failed EDGAR searches", flush=True)
+    # A failed search leaves that quarter EMPTY (re-runnable: merge-only skips
+    # only stored quarters); >10% failing is an outage — fail so it pages.
+    if SEARCH_FAILURES[0] > 0.10 * len(tickers) * len(quarters):
+        print("✗ widespread EDGAR search failures — re-run the backfill", flush=True)
+        return 1
     if grand_found == 0 and grand_skipped < len(tickers) * len(quarters) * 0.5:
         # Nothing found AND little was pre-stored — outage, not completion.
         print("✗ backfill yielded nothing — EDGAR outage?", flush=True)
@@ -123,9 +130,17 @@ def main() -> int:
         # search is the sensitive endpoint; stay well under SEC guidance.
         time.sleep(0.3)
 
+    from data.form13f_client import SEARCH_FAILURES
     print(f"✓ 13F warm pass: {covered}/{len(tickers)} banks with holders, "
-          f"{failed} errors, {resumed} already done this run, "
-          f"in {time.time() - t0:.0f}s", flush=True)
+          f"{failed} errors, {SEARCH_FAILURES[0]} failed EDGAR searches, "
+          f"{resumed} already done this run, in {time.time() - t0:.0f}s", flush=True)
+    # A failed search reads as "no holders" for that bank; more than 10% of
+    # the universe failing is an EDGAR outage, not sparse coverage — fail the
+    # pass so it pages and gets re-run (2026-10-04: 65/597, exit 0).
+    if SEARCH_FAILURES[0] > 0.10 * len(tickers):
+        print(f"✗ {SEARCH_FAILURES[0]} EDGAR full-text searches failed — outage; "
+              "re-run the job", flush=True)
+        return 1
     if covered == 0:
         # Zero coverage across the whole universe is an outage, not sparse
         # small-bank coverage — fail loudly so the #42 alert pages.

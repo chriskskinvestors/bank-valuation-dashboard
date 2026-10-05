@@ -30,14 +30,19 @@ def is_http_404(exc: Exception) -> bool:
 
 def get_with_retry(url: str, params: dict | None = None,
                    headers: dict | None = None, timeout: int = 15,
-                   max_attempts: int = 3) -> requests.Response | None:
+                   max_attempts: int = 3,
+                   retry_5xx: bool = False) -> requests.Response | None:
     """GET with backoff. Returns the Response, or None if every attempt was
-    eaten by 429s. Raises on non-429 HTTP errors and on the final
-    connection/timeout failure."""
+    eaten by 429s (or, with retry_5xx, by 5xx). Raises on other HTTP errors
+    and on the final connection/timeout failure.
+
+    retry_5xx: also back off and retry a 5xx — for endpoints whose 5xx are
+    transient load-shedding (EDGAR full-text search returned bursts of 500s
+    through a whole 13F warm pass, 2026-10-04: 65/597 banks covered)."""
     for attempt in range(max_attempts):
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=timeout)
-            if resp.status_code == 429:
+            if resp.status_code == 429 or (retry_5xx and resp.status_code >= 500):
                 try:
                     wait = float(resp.headers.get("Retry-After") or 0)
                 except (TypeError, ValueError):
