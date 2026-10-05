@@ -92,6 +92,28 @@ class TestDeepGroupConsolidation(_DbCase):
         self.assertEqual(7000, out[0]["DEP"])
         self.assertEqual(6800, out[1]["ASSET"])
 
+    def test_member_with_nothing_stored_withholds_the_group(self):
+        # REVIEW 2026-10-05 P0-4: a member the backfill missed dropped out of
+        # EVERY period silently. [] → the caller's live complete-or-nothing path.
+        s = self._store
+        s.upsert_history(1, [{"REPDTE": "20260630", "ASSET": 7000, "CERT": 1}])
+        with patch("data.cert_group.get_cert_group", return_value=[1, 2]):
+            self.assertEqual([], s.deep_group_history("FAKE"))
+
+    def test_stale_member_omits_the_newer_period(self):
+        # Cert 2's stored rows stop at 20260331 (incremental missed it): the
+        # 20260630 group sum would be 7000 alone — omitted, never short.
+        s = self._store
+        s.upsert_history(1, [
+            {"REPDTE": "20260630", "ASSET": 7000, "CERT": 1},
+            {"REPDTE": "20260331", "ASSET": 6800, "CERT": 1},
+        ])
+        s.upsert_history(2, [{"REPDTE": "20260331", "ASSET": 3000, "CERT": 2}])
+        with patch("data.cert_group.get_cert_group", return_value=[1, 2]):
+            out = s.deep_group_history("FAKE")
+        self.assertEqual([("20260331", 9800)],
+                         [(r["REPDTE"], r["ASSET"]) for r in out])
+
     def test_single_charter_is_passthrough(self):
         s = self._store
         s.upsert_history(9, [{"REPDTE": "20260630", "ASSET": 42, "CERT": 9}])

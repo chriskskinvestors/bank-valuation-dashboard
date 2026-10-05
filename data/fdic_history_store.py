@@ -200,8 +200,9 @@ def deep_group_history(ticker: str, limit: int | None = None,
     cert_group.fetch_group_history, applied to stored rows instead of live
     fetches. Returns [] when nothing is stored (caller falls back to the
     live 20-quarter path)."""
-    from data.cert_group import (aggregate_records, get_absorbed_charters,
-                                 get_cert_group, held_by)
+    from data.cert_group import (_aggregate_complete_periods,
+                                 get_absorbed_charters, get_cert_group,
+                                 held_by)
     certs = get_cert_group(ticker, cert=cert)
     if not certs:
         return []
@@ -209,19 +210,12 @@ def deep_group_history(ticker: str, limit: int | None = None,
     if len(certs) == 1 and not former:
         return get_cert_history(certs[0], limit=limit)
 
-    stored = {c: get_cert_history(c) for c in certs}
-    stored.update(get_certs_history(former))
-    by_period: dict[str, list[dict]] = {}
-    for c, recs in stored.items():
-        for rec in recs:
-            if c in former and not held_by(rec, hc):
-                continue                      # before the holdco owned it
-            period = str(rec.get("REPDTE") or "")
-            if period:
-                by_period.setdefault(period, []).append(rec)
-    out = []
-    for period in sorted(by_period, reverse=True):
-        recs = sorted(by_period[period],
-                      key=lambda r: -(float(r.get("ASSET") or 0)))
-        out.append(aggregate_records(recs))
+    per_cert = {c: get_cert_history(c) for c in certs}
+    if not all(per_cert.values()):
+        # A member with nothing stored would drop out of EVERY period; return
+        # [] so the caller falls back to the live (complete-or-nothing) path.
+        return []
+    held = {c: [r for r in recs if held_by(r, hc)]
+            for c, recs in get_certs_history(former).items()}
+    out = _aggregate_complete_periods(per_cert, held)
     return out[:limit] if limit else out

@@ -124,6 +124,13 @@ class TestGroupHistoryIncludesFormerCharters(unittest.TestCase):
         h = self._hist(rows, [609], (TMP_HC, [13292]))
         self.assertEqual({r["REPDTE"]: r["ASSET"] for r in h}["20211231"], 2_453_893)
 
+    def test_failed_former_fetch_withholds_not_a_short_fy2021(self):
+        # REVIEW 2026-10-05 P0-4 applied to former charters: losing Mahopac
+        # (13292) would print FY2021 as 5,950,487 for a 7,815,754 operation.
+        rows = {c: r for c, r in TMP_ROWS.items() if c != 13292}
+        h = self._hist(rows, [609], (TMP_HC, [7153, 7748, 13292]))
+        self.assertEqual(h, [])
+
 
 class TestDeepStoreIncludesFormerCharters(unittest.TestCase):
     def test_deep_read_applies_the_same_rule(self):
