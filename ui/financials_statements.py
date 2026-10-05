@@ -811,6 +811,19 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
                 return "n/a", calc(label, "n/a", asof, ref,
                                    [{"label": label, "val": why}], None, True)
             raw = _num(rec.get(fl))
+            if _is_group_record(rec):
+                from data.cert_group import _EXACT_QUOTIENTS
+                if fl in _EXACT_QUOTIENTS:
+                    # Not FDIC's figure for a group: data/cert_group rebuilt
+                    # it from the charters' summed components (REVIEW
+                    # 2026-10-05 P2 — the click-through said "as reported").
+                    num, den, _scale = _EXACT_QUOTIENTS[fl]
+                    op = (f"Σ{num} ÷ Σ{den} across the group's "
+                          f"{rec.get('_charter_count')} charters")
+                    return _pct(raw), calc(label, _pct(raw), asof,
+                                           f"FDIC field {fl}, recomputed for the group",
+                                           [{"label": label + " (recomputed)", "val": _pct(raw)}],
+                                           op, False)
             return _pct(raw), calc(label, _pct(raw), asof, ref,
                                    [{"label": label + " (as reported)", "val": _pct(raw)}], None, True)
         if kind == "diff":
@@ -2329,8 +2342,12 @@ _DEPOSIT_LOAN_COMP = [
 
 # Deposit Trends keeps its beta/cost charts; its left table becomes the
 # deposit side of the composition (with the toggle) + growth.
+# Deposit growth rows only — loan and CRE growth belong to the composition
+# page, not Deposit Trends (REVIEW 2026-10-05 P2).
 _DEPOSIT_TRENDS_TABLE = [_DEPOSIT_LOAN_COMP[2], _DEPOSIT_LOAN_COMP[3],
-                         _DEPOSIT_LOAN_COMP[4]]
+                         (_DEPOSIT_LOAN_COMP[4][0],
+                          [r for r in _DEPOSIT_LOAN_COMP[4][1]
+                           if r[2] in ("DEP", "COREDEP")])]
 
 # Trend groups for the Deposit/Loan Composition page (metric keys pinned by
 # test_statement_trends to exist in config.METRICS_BY_KEY).
