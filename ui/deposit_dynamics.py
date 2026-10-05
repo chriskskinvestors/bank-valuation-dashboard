@@ -150,7 +150,7 @@ def render_deposit_dynamics(ticker: str, show_title: bool = True):
         fig2 = go.Figure()
         fig2.add_trace(go.Scatter(
             x=ctl["date"], y=ctl["nonint_dep_pct"],
-            name="Non-Int Bearing", mode="lines+markers",
+            name="Non-Int Bearing (% of domestic)", mode="lines+markers",
             line=dict(color=COLOR_SUCCESS, width=2.5),
         ))
         if "brokered_pct" in ctl.columns and ctl["brokered_pct"].notna().any():

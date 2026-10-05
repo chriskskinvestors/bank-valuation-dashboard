@@ -17,7 +17,7 @@ from ui.charts import grouped_trend_chart  # noqa: E402
 
 KEYS = ["nonint_dep_pct", "core_dep_pct", "uninsured_pct", "brokered_pct"]
 ROW = {"REPDTE": pd.Timestamp("2026-06-30"), "DEP": 56_985_995,
-       "DEPNIDOM": 13_562_418, "COREDEP": 49_301_968, "BRO": 4_505_000,
+       "DEPNIDOM": 13_562_418, "DEPIDOM": 43_423_577, "COREDEP": 49_301_968, "BRO": 4_505_000,
        "DEPINS": 32_454_573, "DEPUNINS": 22_816_000}
 
 
@@ -25,7 +25,10 @@ class TestDepositMixTrend(unittest.TestCase):
     def test_computed_ratios_are_plotted_with_table_definitions(self):
         fig = grouped_trend_chart(pd.DataFrame([ROW]), KEYS, "Deposit Funding Mix (%)")
         got = {tr.name: float(list(tr.y)[0]) for tr in fig.data}
-        self.assertAlmostEqual(got["Non-Int Dep %"], 13_562_418 / 56_985_995 * 100)
+        # Domestic over domestic (DEPIDOM + DEPNIDOM = DEPDOM; ONB has no
+        # foreign offices, so = ÷ DEP here).
+        self.assertAlmostEqual(got["Non-Int Dep %"],
+                               13_562_418 / (43_423_577 + 13_562_418) * 100)
         self.assertAlmostEqual(got["Core Dep %"], 49_301_968 / 56_985_995 * 100)
         self.assertAlmostEqual(got["Brokered %"], 4_505_000 / 56_985_995 * 100)
         # Insurance base, never ÷ DEP.

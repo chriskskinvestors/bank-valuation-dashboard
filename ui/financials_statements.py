@@ -2239,8 +2239,13 @@ _AQ_BY_LOAN_TYPE = [
 # ── Deposit/Loan Composition (docs/SNL-BUILD-PLAN.md tab 6) ─────────────────
 # Both trees reconcile to the dollar (probed TCBK/BANR 12/31/2025):
 # LNLSGR = LNRE + LNCI + LNCON + LNAG + LS + LNOTHER + LNMUNI + LNDEP
-# (BANR's 397M gap was LNMUNI); DEP = TRN + NTR; NTR = NTRSMMDA (MMDA) +
-# NTRSOTH (other savings) + NTRTIME. HELOC ⊂ 1-4 fam; OO/NOO ⊂ CRE.
+# (BANR's 397M gap was LNMUNI); DEPDOM = TRN + NTR = DEPIDOM + DEPNIDOM;
+# DEP = DEPDOM + foreign offices; NTR = NTRSMMDA (MMDA) + NTRSOTH (other
+# savings) + NTRTIME. HELOC ⊂ 1-4 fam; OO/NOO ⊂ CRE. TRN/NTR/NTRTIME/DEPNIDOM
+# are DOMESTIC-office fields: JPM's $593.5B of foreign-office deposits sat
+# between "Total Nontransaction" and "Total Deposits" unshown, and the
+# domestic numerators were divided by all-office DEP (non-int 22.30% vs
+# 28.24% domestic) — REVIEW 2026-10-05 P1-2.
 _DEPOSIT_LOAN_COMP = [
     ("Loan Composition ($000)", [
         ("Construction & Land", "dollar", "LNRECONS"),
@@ -2279,6 +2284,8 @@ _DEPOSIT_LOAN_COMP = [
         ("Other Savings", "dollar", "NTRSOTH"),
         ("Time Deposits", "dollar", "NTRTIME"),
         ("» Total Nontransaction", "dollar", "NTR"),
+        ("» Total Domestic Deposits", "dollar", "DEPDOM"),
+        ("Deposits in Foreign Offices", "diff", "DEP", "DEPDOM"),
         ("» Total Deposits", "dollar", "DEP"),
         ("Non-Interest-Bearing (domestic)", "dollar", "DEPNIDOM"),
         ("Interest-Bearing (domestic)", "dollar", "DEPIDOM"),
@@ -2296,8 +2303,12 @@ _DEPOSIT_LOAN_COMP = [
         # Trends chart and alert): ÷ DEP mixed in foreign offices — JPM 49.4 %
         # here vs 60.9 % in the chart on the same page (REVIEW 2026-10-05 P1-1).
         ("Est. Uninsured / Insured + Uninsured", "fratio", "DEPUNINS", "DEPINS+DEPUNINS"),
-        ("Non-Interest-Bearing / Deposits", "fratio", "DEPNIDOM", "DEP"),
-        ("Time Deposits / Deposits", "fratio", "NTRTIME", "DEP"),
+        # Domestic numerators over domestic deposits (DEPIDOM + DEPNIDOM =
+        # DEPDOM, both stored across the deep history).
+        ("Non-Interest-Bearing / Domestic Deposits", "fratio", "DEPNIDOM",
+         "DEPIDOM+DEPNIDOM"),
+        ("Time Deposits / Domestic Deposits", "fratio", "NTRTIME",
+         "DEPIDOM+DEPNIDOM"),
         ("Net Loans / Deposits", "ratio", "LNLSNET", "DEP"),
     ]),
     ("Annualized Growth Rates (%)", [

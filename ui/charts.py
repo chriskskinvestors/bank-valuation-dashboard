@@ -182,7 +182,7 @@ def _axis_family(fmt: str) -> str:
 # "Deposit Funding Mix (%)" trend rendered "Not reported" for every bank
 # (REVIEW 2026-10-05 P1-5). Uninsured is on the insurance base (config).
 _DERIVED_TREND_RATIOS = {
-    "nonint_dep_pct": (("DEPNIDOM",), ("DEP",)),
+    "nonint_dep_pct": (("DEPNIDOM",), ("DEPIDOM", "DEPNIDOM")),   # domestic basis
     "core_dep_pct": (("COREDEP",), ("DEP",)),
     "brokered_pct": (("BRO",), ("DEP",)),
     "uninsured_pct": (("DEPUNINS",), ("DEPINS", "DEPUNINS")),

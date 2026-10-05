@@ -1242,7 +1242,7 @@ _METRIC_DESC = {
     "total_equity": "Total bank equity capital.",
     "securities": "Investment securities (HTM + AFS).",
     "uninsured_dep_pct": "Uninsured deposits as a share of total — run-risk gauge.",
-    "nonint_dep_pct": "Non-interest-bearing deposits ÷ total — low-cost, sticky funding.",
+    "nonint_dep_pct": "Domestic non-interest-bearing deposits ÷ domestic deposits — low-cost, sticky funding.",
     "brokered_pct": "Brokered deposits ÷ total — flightier wholesale funding.",
     "loans_deposits": "Net loans ÷ deposits — a liquidity/funding gauge.",
 }

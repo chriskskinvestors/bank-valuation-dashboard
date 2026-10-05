@@ -100,7 +100,11 @@ def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
         # `is not None` numerators (audit P3, owner call): a genuine $0 (e.g.
         # zero brokered deposits) is data and renders 0%, never n/a. A falsy
         # total still yields None (zero denominator).
-        nonint_pct = (nonint / total * 100) if (total and nonint is not None) else None
+        # Domestic over domestic (same basis as analysis/valuation's
+        # nonint_dep_pct): DEPNIDOM ÷ (DEPIDOM + DEPNIDOM), never ÷ all-office DEP.
+        nonint_pct = (nonint / (intbear + nonint) * 100) if (
+            nonint is not None and intbear is not None
+            and intbear + nonint > 0) else None
         # Same basis as analysis/valuation's uninsured_pct (THE definition):
         # uninsured ÷ the insurance base (insured + uninsured), not ÷ DEP.
         insured = r.get("DEPINS")
