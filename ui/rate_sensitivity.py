@@ -121,8 +121,14 @@ def _render_phased_inputs(ticker, latest, inputs, tax_rate):
         {"label": "Current NIM", "value": nim_s,
          "calc": fdic_calc("Current net interest margin", "NIMY", latest, cert, unit="%",
                            entity=entity, value=nim_s, reported=True,
-                           definition="The bank's latest reported net interest margin — the "
-                                       "starting point the rate scenarios shock.")},
+                           # NIMY is calendar-YTD annualized, not the latest
+                           # quarter (HBAN Q2: 3.50% YTD vs 3.39% NIMYQ) —
+                           # REVIEW 2026-10-05 IRR P2. The scenarios and the
+                           # backtest anchor on it consistently (YTD vs YTD).
+                           definition="The bank's reported net interest margin, calendar "
+                                       "year-to-date and annualized (the full year at a "
+                                       "December report) — the starting point the rate "
+                                       "scenarios shock.")},
         {"label": "Earning Assets", "value": fmt_dollars(ea),
          "calc": fdic_calc("Total earning assets", "ERNAST", latest, cert, unit="$ in thousands",
                            entity=entity, value=fmt_dollars(ea), reported=True,
@@ -259,7 +265,9 @@ def render_rate_sensitivity(ticker: str):
     # ── Current curve context from FRED ───────────────────────────────
     try:
         from data.fred_client import latest_value
-        ff = latest_value("FEDFUNDS")
+        # The card is labeled and cited as DFF (daily effective rate); FEDFUNDS
+        # is the MONTHLY average and lagged it (REVIEW 2026-10-05 IRR P2).
+        ff = latest_value("DFF")
         t3m = latest_value("DGS3MO")
         t5 = latest_value("DGS5")
         # Shorter tenor first (house convention #36): 3M − 5Y.
@@ -1185,7 +1193,9 @@ def _render_historical_nim_scatter(hist: list[dict]):
     rows = []
     for r in hist:
         repdte = r.get("REPDTE")
-        nim = r.get("NIMY")
+        # Single-quarter NIM against the slope AT that quarter-end — YTD NIMY
+        # smeared earlier quarters' margins onto each point (IRR P2).
+        nim = r.get("NIMYQ")
         if repdte is None or nim is None:
             continue
         ts = pd.to_datetime(repdte, errors="coerce")
@@ -1272,7 +1282,7 @@ def _render_historical_nim_scatter(hist: list[dict]):
         )
 
     apply_standard_layout(
-        fig, title="Historical NIM vs 5Y–3M Curve Slope",
+        fig, title="Historical NIM (single quarter) vs 5Y–3M Curve Slope",
         height=CHART_HEIGHT_FULL,
         xaxis_title="5Y − 3M Slope (pp)",
         yaxis_title="NIM (%)",
