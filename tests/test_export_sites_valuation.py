@@ -202,7 +202,7 @@ class _ExportSite(unittest.TestCase):
         self.assertEqual(src["Starting loans / share ($)"], 300.0)
         self.assertEqual(src["Target CET1 (%)"], 10.0)
         self.assertEqual(src["Terminal growth (%)"], 2.5)
-        self.assertEqual(src["ROATCE (normalized, %)"], 14.0)
+        self.assertEqual(src["ROATCE (TTM, >3× spike quarters clipped, %)"], 14.0)
 
 
 class TestProjectedFcfe(_ExportSite):
