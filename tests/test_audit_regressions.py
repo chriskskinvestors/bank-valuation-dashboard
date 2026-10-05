@@ -497,9 +497,27 @@ class TestPastDueLoansNotAssets(unittest.TestCase):
 class TestA19FedFunds(unittest.TestCase):
     """Quarters beyond the static table derive from FRED instead of vanishing."""
 
-    def test_table_quarter_still_served(self):
-        from analysis.deposit_dynamics import _get_fed_funds
-        self.assertEqual(_get_fed_funds("2025-12-31"), 4.00)
+    def test_every_quarter_is_the_fred_average(self):
+        # The static table is gone (it said 4.00 for 2025Q4; FRED's Oct-Dec
+        # 2025 monthly mean is 3.90 — REVIEW 2026-10-05 P0-2).
+        import analysis.deposit_dynamics as dd
+        self.assertFalse(hasattr(dd, "FED_FUNDS_QUARTERLY"))
+        dd._FED_FUNDS_LIVE.clear()
+        fred = types.ModuleType("data.fred_client")
+        fred.fetch_series = lambda sid, years=3: pd.DataFrame({
+            "date": pd.to_datetime(["2025-10-01", "2025-11-01", "2025-12-01"]),
+            "value": [4.09, 3.88, 3.73],
+        })
+        old = sys.modules.get("data.fred_client")
+        sys.modules["data.fred_client"] = fred
+        try:
+            self.assertAlmostEqual(dd._get_fed_funds("2025-12-31"), 3.90, places=2)
+        finally:
+            dd._FED_FUNDS_LIVE.clear()
+            if old is not None:
+                sys.modules["data.fred_client"] = old
+            else:
+                sys.modules.pop("data.fred_client", None)
 
     def test_missing_quarter_derives_from_fred(self):
         import analysis.deposit_dynamics as dd

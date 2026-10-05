@@ -15,30 +15,17 @@ from __future__ import annotations
 import pandas as pd
 
 
-# Fed Funds Effective Rate (quarterly average, %) — public data from FRED FEDFUNDS series.
-# Used as the benchmark for deposit beta calculations. Keys are quarter-end dates.
-FED_FUNDS_QUARTERLY = {
-    "2019-03-31": 2.40, "2019-06-30": 2.40, "2019-09-30": 2.13, "2019-12-31": 1.64,
-    "2020-03-31": 1.25, "2020-06-30": 0.06, "2020-09-30": 0.09, "2020-12-31": 0.09,
-    "2021-03-31": 0.08, "2021-06-30": 0.07, "2021-09-30": 0.09, "2021-12-31": 0.08,
-    "2022-03-31": 0.20, "2022-06-30": 1.21, "2022-09-30": 2.56, "2022-12-31": 4.10,
-    "2023-03-31": 4.65, "2023-06-30": 5.08, "2023-09-30": 5.33, "2023-12-31": 5.33,
-    "2024-03-31": 5.33, "2024-06-30": 5.33, "2024-09-30": 5.07, "2024-12-31": 4.50,
-    "2025-03-31": 4.33, "2025-06-30": 4.33, "2025-09-30": 4.12, "2025-12-31": 4.00,
-    "2026-03-31": 3.85,
-}
-
-
-# Quarters beyond the static table, derived live from FRED (memoized).
-_FED_FUNDS_LIVE: dict[str, float] = {}
+# Fed funds effective rate, quarterly average (%), from FRED FEDFUNDS monthly
+# means. The hand-typed table this replaced was wrong for 13 of its 29
+# quarters (e.g. 2026Q1 3.85 vs 3.64; 2022-23 entries were each quarter's LAST
+# month, 2022Q2 1.21 vs 0.77) and drove the cycle-start detection and the
+# "Fed funds fell N pp" caption (REVIEW 2026-10-05 P0-2).
+_FED_FUNDS_LIVE: dict[str, float] = {}   # quarter-end -> average (memoized)
 
 
 def _get_fed_funds(date_str: str) -> float | None:
-    """Look up Fed funds rate (quarterly avg) for a given quarter-end date.
-
-    Static table first; quarters beyond its last entry are derived from FRED's
-    monthly FEDFUNDS series. Previously a new quarter simply wasn't in the
-    table, its rows were dropna'd, and the beta window silently truncated."""
+    """Fed funds rate (quarterly average of FRED's monthly FEDFUNDS) for a
+    quarter-end date, or None when FRED is unavailable (n/a, never a guess)."""
     if not date_str:
         return None
     # Handle pandas Timestamp
@@ -46,9 +33,6 @@ def _get_fed_funds(date_str: str) -> float | None:
         date_str = date_str.strftime("%Y-%m-%d")
     elif isinstance(date_str, str) and len(date_str) > 10:
         date_str = date_str[:10]
-    v = FED_FUNDS_QUARTERLY.get(date_str)
-    if v is not None:
-        return v
     if date_str in _FED_FUNDS_LIVE:
         return _FED_FUNDS_LIVE[date_str]
     try:
@@ -71,24 +55,24 @@ def _get_fed_funds(date_str: str) -> float | None:
     return None
 
 
-def _cost_of_funding(row: dict) -> float | None:
-    """
-    Compute annualized cost of interest-bearing liabilities %.
-
-    Note: FDIC's INTEXPY covers ALL interest-bearing liabilities — deposits +
-    borrowings + fed funds purchased + repo liabilities. For pure-deposit banks
-    this approximates deposit cost well, but for banks with heavy wholesale
-    funding (large money-center banks), INTEXPY understates the true pure
-    deposit cost because low-cost repos dilute the blended average.
-
-    The cycle beta we compute from this is therefore a "funding beta", not a
-    "deposit beta" in the pure sense. For banks with predominantly deposit
-    funding (>80% of liabilities), the two are nearly equivalent.
-    """
-    intexpy = row.get("INTEXPY")
-    if intexpy is not None:
-        return intexpy
-    return None
+def _interest_bearing_deposits(r: dict):
+    """Domestic + foreign-office interest-bearing deposits ($K), or None.
+    A record without DEPIFOR (fetched since 2026-10-05) counts foreign IB as 0
+    only when the bank has no foreign-office deposits (DEP ≈ DEPDOM) — JPM
+    carries $550B there, so guessing 0 would overstate its cost ~1.3x."""
+    def _v(k):   # FDIC nulls arrive as None or NaN (domestic-only DEPIFOR)
+        x = r.get(k)
+        return None if x is None or pd.isna(x) else x
+    dom = _v("DEPIDOM")
+    if dom is None:
+        return None
+    foreign = _v("DEPIFOR")
+    if foreign is None:
+        dep, depdom = _v("DEP"), _v("DEPDOM")
+        if dep is None or depdom is None or dep - depdom > 0.005 * dep:
+            return None
+        foreign = 0
+    return dom + foreign
 
 
 def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
@@ -112,7 +96,6 @@ def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
         intbear = r.get("DEPIDOM")
         uninsured = r.get("DEPUNINS")
         brokered = r.get("BRO")
-        cod = _cost_of_funding(r)
 
         # `is not None` numerators (audit P3, owner call): a genuine $0 (e.g.
         # zero brokered deposits) is data and renders 0%, never n/a. A falsy
@@ -136,10 +119,39 @@ def build_deposit_timeline(hist_records: list[dict]) -> pd.DataFrame:
             "nonint_dep_pct": nonint_pct,
             "uninsured_pct": uninsured_pct,
             "brokered_pct": brokered_pct,
-            "cost_of_deposits": cod,
+            "edep_ytd": r.get("EDEP"),
+            "ib_dep": _interest_bearing_deposits(r),
         })
 
     df = pd.DataFrame(rows).dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+
+    # Cost of INTEREST-BEARING deposits, SINGLE quarter, annualized: interest
+    # on deposits (EDEP is calendar-YTD -> de-cumulated; Q1 as filed) x 4 /
+    # average interest-bearing deposits (this and the prior quarter-end) — the
+    # basis analysis/rate_sensitivity reads the cycle beta on (its int-bearing
+    # deposit beta). It replaced FDIC's INTEXPY —
+    # a YTD-annualized ratio over EARNING ASSETS — under which the cycle beta
+    # subtracted a 9-month from a 6-month figure and reported deposit costs
+    # RISING into a cut cycle (ONB +0.39pp vs +0.04 quarterly; REVIEW
+    # 2026-10-05 P0-1). Both inputs are $K sums, so charter groups work too
+    # (INTEXPY is average-based and was dropped for them). A quarter whose
+    # prior quarter-end is missing is None, never a mixed span.
+    by_date = {d: (e, t) for d, e, t in zip(df["date"], df["edep_ytd"], df["ib_dep"])}
+    cod = []
+    for d, e, t in zip(df["date"], df["edep_ytd"], df["ib_dep"]):
+        prev = by_date.get(d - pd.offsets.QuarterEnd(1))
+        q_int = None
+        if e is not None and pd.notna(e):
+            if d.quarter == 1:
+                q_int = e
+            elif prev and prev[0] is not None and pd.notna(prev[0]):
+                q_int = e - prev[0]
+        avg_dep = ((t + prev[1]) / 2
+                   if prev and t is not None and prev[1] is not None
+                   and pd.notna(t) and pd.notna(prev[1]) else None)
+        cod.append(q_int * 4 / avg_dep * 100
+                   if q_int is not None and avg_dep and avg_dep > 0 else None)
+    df["cost_of_deposits"] = cod
 
     # Attach Fed funds
     df["fed_funds"] = df["date"].apply(_get_fed_funds)
