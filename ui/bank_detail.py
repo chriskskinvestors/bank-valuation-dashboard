@@ -562,7 +562,9 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
     prev = _num(quote.get("close"))
     o = _num(quote.get("open")); hi = _num(quote.get("high")); lo = _num(quote.get("low"))
     vol = _num(quote.get("volume")) or _num(row.get("volume"))
-    shares = _num(fund.get("shares_outstanding"))
+    # The count market cap is priced on (cover page when newer than the
+    # balance sheet) — Shares Outstanding sits beside Market Cap here.
+    shares = _num(fund.get("shares_for_market_cap") or fund.get("shares_outstanding"))
     dy = _num(row.get("dividend_yield"))
     mcap = _num(row.get("market_cap"))
 
@@ -1207,7 +1209,7 @@ _CATEGORY_DESC = {
 _METRIC_DESC = {
     "change_pct": "Price change vs the prior close.",
     "volume": "Shares traded.",
-    "market_cap": "Shares outstanding × price.",
+    "market_cap": "Latest reported shares outstanding (10-Q/10-K cover page) × price.",
     "eps": "Trailing-12-month diluted EPS (SEC).",
     "pe_ratio": "Price ÷ TTM diluted EPS. Lower = cheaper on earnings.",
     "tbvps": "Tangible book value per share = (equity − intangibles) ÷ shares.",

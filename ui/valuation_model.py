@@ -198,7 +198,9 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         payout_ratio = max(0.0, min(0.95, dps / base_eps))
 
     # Starting loans per share
-    loans_per_share = (loans[0] * 1000 / shares) if (loans and shares > 0) else 0
+    # None (not 0, and never the old 200.0 input fallback) when FDIC loans or
+    # the share count are missing: loans/share drives the DCF's capital need.
+    loans_per_share = (loans[0] * 1000 / shares) if (loans and shares > 0) else None
 
     return {
         # None (not a $2 placeholder) when SEC EPS is missing — a fabricated
@@ -490,7 +492,9 @@ def render_valuation_model(ticker: str):
     title_bar(f"{name} ({ticker})", "Valuation Model")
     st.caption(
         f"{name}. FCFE DCF + Warranted P/TBV with scenario sensitivity. "
-        "Defaults are derived from trailing data; override any input."
+        "Base EPS, TBV/share, ROATCE, loans/share and trailing loan growth come "
+        "from the bank's filings; growth, cost of equity, terminal growth and "
+        "target CET1 are editable assumptions. Override any input."
     )
 
     defaults = _derive_defaults(ticker, hist, sec)
@@ -558,8 +562,10 @@ def render_valuation_model(ticker: str):
             )
             loans_ps = st.number_input(
                 "Starting loans / share ($)",
-                value=float(defaults.get("loans_per_share") or 200.0),
+                value=(float(defaults["loans_per_share"])
+                       if defaults.get("loans_per_share") is not None else None),
                 step=1.0, format="%.0f",
+                placeholder="Not in filings — enter to model",
                 key=f"dcf_loans_ps_{ticker}",
             )
             roatce_pct = st.number_input(
@@ -578,11 +584,15 @@ def render_valuation_model(ticker: str):
                 min_value=-5.0, max_value=25.0, value=5.0, step=0.5,
                 key=f"dcf_eps_g_{ticker}",
             )
+            _lg = defaults.get("loan_growth_trailing_pct")
             loan_growth_avg = st.slider(
                 "Loan growth rate (avg %)",
                 min_value=-5.0, max_value=25.0,
-                value=float(defaults.get("loan_growth_trailing_pct") or 4.0),
+                value=float(_lg if _lg is not None else 4.0),
                 step=0.5,
+                help=("Seeded from trailing 4-quarter FDIC loan growth."
+                      if _lg is not None else
+                      "No 5-quarter FDIC loan history — 4% is an assumption."),
                 key=f"dcf_loan_g_{ticker}",
             )
             payout_ratio = st.slider(
@@ -623,9 +633,9 @@ def render_valuation_model(ticker: str):
     # price (needs TBV/share) are headline fair values — never compute them off
     # a fabricated placeholder. If either couldn't be derived and the user
     # hasn't typed one, stop here with an honest message instead of a made-up
-    # verdict. Requiring TBV/share also guarantees a real share count, so every
-    # downstream per-share input (loans/share) is real too.
-    if base_eps is None or tbvps is None or roatce_pct is None:
+    # verdict. Loans/share drives the DCF's capital need, so it is required
+    # too (TBV/share can come from the release with no share count behind it).
+    if base_eps is None or tbvps is None or roatce_pct is None or loans_ps is None:
         missing = []
         if base_eps is None:
             missing.append("trailing EPS")
@@ -633,6 +643,8 @@ def render_valuation_model(ticker: str):
             missing.append("tangible book value per share")
         if roatce_pct is None:
             missing.append("ROATCE")
+        if loans_ps is None:
+            missing.append("loans per share")
         st.warning(
             "Cannot compute a DCF fair value or warranted price — "
             + ", ".join(missing)

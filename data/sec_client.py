@@ -900,7 +900,7 @@ def get_latest_fundamentals(cik: int) -> dict:
     # gap usually means a post-quarter issuance or buyback (e.g. SFST's
     # April-2026 raise: 8.25M at quarter-end vs 9.46M on the May cover).
     # Recorded here so validation can surface it; never silently "fixed".
-    result["shares_outstanding_cover"] = _latest_dei_share_count(facts)[0]
+    result["shares_outstanding_cover"], _cover_end = _latest_dei_share_count(facts)
     sh, cov = result.get("shares_outstanding"), result.get("shares_outstanding_cover")
     # A multi-class filer's undimensioned cover count is one class at most
     # (OCFC: voting only) — not comparable to the all-class total.
@@ -951,6 +951,18 @@ def get_latest_fundamentals(cik: int) -> dict:
                 print(f"[SEC] share/equity INCOHERENT cik {cik}: newest share "
                       f"evidence {share_end} is {gap_days}d older than equity "
                       f"{eq_end} — per-share metrics render n/a")
+
+    # Market cap prices the CURRENT share count: the 10-Q/10-K cover count
+    # when it is dated after the balance sheet (book-per-share metrics stay on
+    # the quarter-end count, coherent with the equity they divide). BAFN
+    # converted its Series D/E preferred into 22,856,000 common shares after
+    # 2026-06-30: quarter-end 4,106,905 vs the Aug-5 cover 26,962,815 — the
+    # market cap was 6.6x too small. A multi-class filer's undimensioned
+    # cover count is one class only, never the total.
+    result["shares_for_market_cap"] = (
+        cov if (cov and cov > 0 and _cover_end and equity_date
+                and _cover_end > equity_date and not class_shares)
+        else result.get("shares_outstanding"))
 
     # Compute derived values
     equity = result.get("book_value_total")
