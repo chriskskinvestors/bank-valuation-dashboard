@@ -684,5 +684,150 @@ class TestParentheticalRatioForm(unittest.TestCase):
         self.assertEqual(tt["implied_price"], 19.58)
 
 
+# ── Hotfix pass (first universe run on prod, 2026-10-05) ──────────────────
+# Verbatim sentences behind the plausible-wrong cells the board showed.
+
+FSBW_AGG = ("Under the terms of the agreement, the aggregate consideration will "
+            "consist of 430,176 shares of FS Bancorp common stock and "
+            "$16,832,742 in cash. Pacific West shareholders will have the right "
+            "to elect shares of FS Bancorp common stock or cash, subject to "
+            "proration.")
+EQBK_AGG = ("(i) 1,934,452 shares of the Company's Class A common stock, par "
+            "value $0.01 per share (\"Common Stock\") and (ii) $32,500,000 in "
+            "cash. The cash consideration is subject to reduction in the event "
+            "that Frontier does not deliver a minimum of $99 million of equity.")
+MCBS_AGG = ("First IC shareholders will receive 3,384,588 shares of MetroCity "
+            "common stock and $111,965,213 in cash, subject to adjustment, for "
+            "total consideration consisting of approximately 46% stock and 54% "
+            "cash.")
+CIVB_PER_SHARE = (
+    "each share of Farmers common stock (other than Dissenting Shares, as "
+    "defined in the Merger Agreement) will be converted into the right to "
+    "receive $69,850 in cash and approximately 2,869 Civista common shares, "
+    "resulting in aggregate merger consideration payable by Civista of "
+    "approximately $34.925 million in cash and 1,434,491 Civista common "
+    "shares.")
+BFC_FEE_TYPO = ("Termination Fee. Centre will pay BFC a termination fee equal "
+                "to $5,300,000 million in the event (i) the Merger Agreement is "
+                "terminated by BFC because Centre's board changed its "
+                "recommendation.")
+FITB_FEE = ("The Merger Agreement provides certain termination rights for both "
+            "Comerica and Fifth Third and further provides that a termination "
+            "fee of $500,000,000 will be payable by either Comerica or Fifth "
+            "Third, as applicable, in the event of a termination.")
+
+
+class TestHotfixGuards(unittest.TestCase):
+
+    def test_aggregate_cash_is_not_per_share(self):
+        # Three real aggregates that rendered as per-share cash on the board.
+        for txt in (FSBW_AGG, EQBK_AGG, MCBS_AGG):
+            with self.subTest(txt=txt[:30]):
+                self.assertIsNone(extract_cash_per_share(txt))
+                t = extract_terms(txt)
+                self.assertIsNone(t["cash_per_share"])
+                self.assertIsNone(t["implied_price_stated"])
+        # The per-share forms the pass-one fixtures use still parse.
+        self.assertEqual(extract_cash_per_share(CLST_PR), 19.58)
+        self.assertEqual(extract_cash_per_share(OSBC_8K), 15.93)
+        self.assertEqual(extract_cash_per_share(PB_STELLAR), 11.36)
+        self.assertEqual(extract_cash_per_share(SBCF_8K), 1000.0)
+
+    def test_civista_500_share_target_is_mixed_not_cash(self):
+        # $69,850 cash + 2,869 Civista shares PER Farmers share is genuine
+        # (a 500-share bank) — but never "Cash" with a $69,850 implied price.
+        self.assertEqual(extract_cash_per_share(CIVB_PER_SHARE), 69850.0)
+        r = extract_exchange_ratio(CIVB_PER_SHARE)
+        self.assertEqual((r[0], r[1], r[2]), (2869.0, "Civista", ""))
+        t = extract_terms(CIVB_PER_SHARE)
+        self.assertEqual(t["consideration"], "mixed")
+        # 2,869 × $20.00 + $69,850 = $127,230 per Farmers share (hand)
+        v, _n = implied_offer(t, 20.00, basis_label="CIVB $20.00")
+        self.assertEqual(v, 127230.0)
+
+    def test_cash_with_unparsed_share_count_is_ambiguous(self):
+        # Same sentence shape, but a share-count form the ratio regexes do
+        # not know: cash parses, classification must stay None.
+        txt = CIVB_PER_SHARE.replace("approximately 2,869 Civista common shares",
+                                     "2,869 shares of Civista's common equity")
+        t = extract_terms(txt)
+        self.assertEqual(t["cash_per_share"], 69850.0)
+        self.assertIsNone(t["exchange_ratio"])
+        self.assertIsNone(t["consideration"])
+
+    def test_fee_typo_and_tight_gap(self):
+        self.assertIsNone(extract_termination_fee(BFC_FEE_TYPO))   # "$5,300,000 million"
+        self.assertEqual(extract_termination_fee(FITB_FEE), 500_000_000)
+        # A loose gap once reached across to an unrelated dollar figure.
+        self.assertIsNone(extract_termination_fee(
+            "The termination fee, and Bank First, which has total assets of "
+            "$5.3 billion, agreed to customary covenants."))
+        # Payee clauses still allowed.
+        self.assertEqual(extract_termination_fee(QNBC_8K), 1_575_000)
+        self.assertEqual(extract_termination_fee(
+            "a termination fee payable by VBI to Seacoast of $31.4 million"),
+            31_400_000)
+
+    def test_spaced_ordinal_quarter(self):
+        self.assertEqual(close_phrase_to_date("in the 4 th quarter of 2025"),
+                         "2025-12-31")
+        self.assertEqual(close_phrase_to_date("in the 1 st quarter of 2027"),
+                         "2027-03-31")
+
+    def test_self_deal_rows_never_render(self):
+        from ui.transactions import _recent_rows
+        rows = _recent_rows([
+            {"status": "pending", "announce_date": "2026-09-08",
+             "buyer_ticker": "EFSI", "target_ticker": "EFSI"},
+            {"status": "pending", "announce_date": "2026-09-08",
+             "buyer_ticker": "JMSB", "target_ticker": "EFSI"},
+        ], date(2026, 10, 5))
+        self.assertEqual([r["buyer_ticker"] for r in rows], ["JMSB"])
+
+
+class TestPendingLegendGuards(unittest.TestCase):
+    """ma_pending: unreadable legends yield no row; the ratio sentence
+    arbitrates direction over the legend."""
+
+    def _run(self, legend, universe, cik, subject):
+        from tests.test_ma_pending import _Harness, _filings
+        h = _Harness()
+        return h._run(_filings([
+            ("425", "2026-08-10", "0001-26-1", "d4_425.htm", ""),
+        ]), texts=(legend, True), universe=universe, cik=cik, subject=subject,
+            today="2026-08-12")
+
+    def test_legend_with_digits_yields_no_row(self):
+        from tests.test_ma_pending import UNIVERSE
+        legend = ("Filed by: First Hawaiian, Inc. Pursuant to Rule 425 Subject "
+                  "Company: Cincinnati, Ohio - July 21, 2026. First Financial "
+                  "Bancorp Commission File No.: 000-10661 definitive agreement")
+        rows, ok = self._run(legend, UNIVERSE, 36377, "First Hawaiian Bank")
+        self.assertTrue(ok)
+        self.assertEqual(rows, [])
+
+    def test_ratio_side_overrides_legend_direction(self):
+        # Tri-County's own 425s legend HBT (the registrant) as the Subject
+        # Company; the ratio sentence says Tri-County holders receive HBT
+        # shares -> Tri-County is the TARGET -> a sale row, not "TYFG
+        # acquires HBT".
+        universe = {"HBT": {"name": "HBT Financial", "fdic_cert": 111, "cik": 1000},
+                    "TYFG": {"name": "Tri-County Financial Group", "fdic_cert": 222,
+                             "cik": 2000}}
+        legend = ("Filed by: Tri-County Financial Group Pursuant to Rule 425 "
+                  "Subject Company: HBT Financial, Inc. Commission File No.: "
+                  "001-38870 This filing relates to the proposed transaction "
+                  "between HBT Financial, Inc. and Tri-County Financial Group "
+                  "pursuant to the Agreement and Plan of Merger. Tri-County "
+                  "shareholders will receive 1.25 HBT Financial shares for each "
+                  "Tri-County share.")
+        rows, ok = self._run(legend, universe, 2000, "First State Bank")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["direction"], "sale")
+        self.assertEqual(rows[0]["counterparty_ticker"], "HBT")
+        self.assertEqual(rows[0]["target_cik"], 2000)
+
+
 if __name__ == "__main__":
     unittest.main()
