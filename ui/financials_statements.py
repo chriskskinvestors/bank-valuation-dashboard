@@ -2214,7 +2214,9 @@ _BYLT_ROWS = [
 
 def _bylt_section(title, prefix, total_field):
     rows = [(lb, "dollar", prefix + sfx) for lb, sfx in _BYLT_ROWS]
-    rows.append(("Agricultural & other (residual)", "residual", total_field,
+    # For JPM the residual is mostly foreign-office RE + other revolving
+    # consumer, not agriculture (REVIEW 2026-10-05 P2).
+    rows.append(("All other, incl. agricultural (residual)", "residual", total_field,
                  *[prefix + s for s in _BYLT_LEAVES]))
     rows.append(("» Total", "dollar", total_field))
     return (title, rows)
@@ -2238,8 +2240,11 @@ _AQ_BY_LOAN_TYPE = [
 
 # ── Deposit/Loan Composition (docs/SNL-BUILD-PLAN.md tab 6) ─────────────────
 # Both trees reconcile to the dollar (probed TCBK/BANR 12/31/2025):
-# LNLSGR = LNRE + LNCI + LNCON + LNAG + LS + LNOTHER + LNMUNI + LNDEP
-# (BANR's 397M gap was LNMUNI); DEPDOM = TRN + NTR = DEPIDOM + DEPNIDOM;
+# LNLSGR = LNRE + LNCI + LNCON + LNAG + LS + LNOTHER + LNMUNI + LNDEP + LNFG
+# (BANR's 397M gap was LNMUNI); LNRE = its five domestic leaves + LNREFOR;
+# LNCON = LNAUTO + LNCRCD + LNCONOTH + LNCONRP (JPM's foreign-office RE,
+# foreign-government loans and other revolving credit were unshown, so the
+# categories didn't sum — REVIEW 2026-10-05 P2, verified JPM/ONB/HBAN); DEPDOM = TRN + NTR = DEPIDOM + DEPNIDOM;
 # DEP = DEPDOM + foreign offices; NTR = NTRSMMDA (MMDA) + NTRSOTH (other
 # savings) + NTRTIME. HELOC ⊂ 1-4 fam; OO/NOO ⊂ CRE. TRN/NTR/NTRTIME/DEPNIDOM
 # are DOMESTIC-office fields: JPM's $593.5B of foreign-office deposits sat
@@ -2256,15 +2261,18 @@ _DEPOSIT_LOAN_COMP = [
         ("of which: Owner-Occupied", "dollar", "LNRENROW"),
         ("of which: Non-Owner-Occupied", "dollar", "LNRENROT"),
         ("Farmland", "dollar", "LNREAG"),
+        ("Real Estate in Foreign Offices", "dollar", "LNREFOR"),
         ("» Total Real Estate Loans", "dollar", "LNRE"),
         ("Commercial & Industrial", "dollar", "LNCI"),
         ("Consumer", "dollar", "LNCON"),
         ("of which: Auto", "dollar", "LNAUTO"),
         ("of which: Credit Cards", "dollar", "LNCRCD"),
         ("of which: Other Consumer", "dollar", "LNCONOTH"),
+        ("of which: Other Revolving Credit", "dollar", "LNCONRP"),
         ("Agricultural Production", "dollar", "LNAG"),
         ("Municipal & States", "dollar", "LNMUNI"),
         ("Loans to Depository Institutions", "dollar", "LNDEP"),
+        ("Loans to Foreign Governments", "dollar", "LNFG"),
         ("Leases", "dollar", "LS"),
         ("Other Loans", "dollar", "LNOTHER"),
         ("» Gross Loans & Leases", "dollar", "LNLSGR"),
@@ -2280,7 +2288,7 @@ _DEPOSIT_LOAN_COMP = [
     ("Deposit Composition ($000)", [
         ("Transaction Accounts", "dollar", "TRN"),
         ("of which: Demand Deposits", "dollar", "DDT"),
-        ("Savings & MMDA", "dollar", "NTRSMMDA"),
+        ("Money Market Deposit Accounts", "dollar", "NTRSMMDA"),
         ("Other Savings", "dollar", "NTRSOTH"),
         ("Time Deposits", "dollar", "NTRTIME"),
         ("» Total Nontransaction", "dollar", "NTR"),
