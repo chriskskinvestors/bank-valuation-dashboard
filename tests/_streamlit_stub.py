@@ -21,6 +21,7 @@ tests/smoke_views.py and tests/test_render_smoke.py intentionally keep their
 own forced rich fakes: they run as standalone script processes (CI invokes
 `python tests/test_render_smoke.py` directly) and drive full page renders.
 """
+import contextlib
 import sys
 import types
 
@@ -76,6 +77,11 @@ def install():
             setattr(st, attr, _passthru)
     if not hasattr(st, "session_state"):
         st.session_state = {}
+    # st.container() is called at render time (e.g. ui/capital_dynamics'
+    # fresh-capital slot) and used as `with slot:` — without it a suite that
+    # renders such a block passes only when another suite added it first.
+    if not hasattr(st, "container"):
+        st.container = lambda *a, **k: contextlib.nullcontext()
     # ui.history_range.range_picker does `import streamlit as st` INSIDE the
     # function, so it always sees this module, not a per-test fake bound onto
     # the page module. The default pick keeps every table on today's range.

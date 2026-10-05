@@ -21,10 +21,18 @@ def _yn(v) -> str:
         return "Yes"
     if v is False:
         return "No"
-    return "n/a"
+    return "—"
 
 
 _GENERATIONAL = {"ii", "iii", "iv"}
+
+
+def _cap_part(p: str) -> str:
+    """One alphabetic run, capitalized; a "Mc" prefix keeps its inner capital
+    ("MCGRATH" → "McGrath"). "Mac" is left alone — Mack/Macy/Mackay are not
+    MacKay, and the all-caps source can't tell them apart."""
+    c = p.capitalize()
+    return "Mc" + c[2:].capitalize() if len(c) > 2 and c.startswith("Mc") else c
 
 
 def _person_name(name: str) -> str:
@@ -37,7 +45,7 @@ def _person_name(name: str) -> str:
         return s
     return " ".join(
         w.upper() if w.lower().strip(".,") in _GENERATIONAL
-        else re.sub(r"[A-Za-z]+", lambda m: m.group(0).capitalize(), w)
+        else re.sub(r"[A-Za-z]+", lambda m: _cap_part(m.group(0)), w)
         for w in s.split())
 
 
@@ -72,12 +80,12 @@ def render_people_summary(ticker: str):
                     unsafe_allow_html=True)
         body = ""
         for p in people:
-            committees = ", ".join(p["committees"]) if p.get("committees") else "n/a"
+            committees = ", ".join(p["committees"]) if p.get("committees") else "—"
             body += ("<tr>"
                      f'<td style="text-align:left;">{_h.escape(p["name"])}</td>'
-                     f'<td style="text-align:right;">{p["age"] if p["age"] is not None else "n/a"}</td>'
-                     f'<td style="text-align:left;">{_h.escape(p["position"] or "n/a")}</td>'
-                     f'<td style="text-align:right;">{p["director_since"] or "n/a"}</td>'
+                     f'<td style="text-align:right;">{p["age"] if p["age"] is not None else "—"}</td>'
+                     f'<td style="text-align:left;">{_h.escape(p["position"] or "—")}</td>'
+                     f'<td style="text-align:right;">{p["director_since"] or "—"}</td>'
                      f'<td style="text-align:left;">{_yn(p["independent"])}</td>'
                      f'<td style="text-align:left;">{_h.escape(committees)}</td>'
                      "</tr>")
@@ -96,7 +104,7 @@ def render_people_summary(ticker: str):
         link = f" [DEF 14A filed {proxy.get('filed')}]({src})" if src else ""
         st.caption("AI-extracted from the proxy statement and guarded "
                    "(names verified verbatim against the filing; anything the "
-                   "proxy doesn't state is n/a, never inferred). May be "
+                   "proxy doesn't state shows —, never inferred). May be "
                    f"incomplete — verify against the source:{link}.")
 
         bios = [p for p in people if p.get("bio")]
@@ -145,7 +153,7 @@ def render_people_summary(ticker: str):
             "<tr>"
             f'<td style="text-align:left;">{_h.escape(_person_name(r["name"]))}</td>'
             f'<td style="text-align:left;">{_h.escape(r["role"])}</td>'
-            f'<td style="text-align:left;">{_h.escape(r["latest_date"] or "n/a")}</td>'
+            f'<td style="text-align:left;">{_h.escape(r["latest_date"] or "—")}</td>'
             "</tr>" for r in roster)
         st.markdown(
             '<div class="ksk-grid"><table><thead><tr>'

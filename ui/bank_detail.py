@@ -34,15 +34,18 @@ _MC_FMT = METRICS_BY_KEY.get("market_cap", {})
 
 
 def _usd_b(v):
-    """Dollars → $X.XB / $XXX.XM."""
+    """Dollars → $X,XXX.XXB / $XXX.XM. Thousands separator on mega-bank
+    totals ("$4,091.39B", owner decision 2026-10-05 — billions kept, no $T
+    tier) and the sign before the "$" (never "$-1.2B")."""
     v = _num(v)
     if v is None:
         return None
-    if abs(v) >= 1e9:
-        return f"${v/1e9:.2f}B"
-    if abs(v) >= 1e6:
-        return f"${v/1e6:.1f}M"
-    return f"${v:,.0f}"
+    sign, a = ("-" if v < 0 else ""), abs(v)
+    if a >= 1e9:
+        return f"{sign}${a/1e9:,.2f}B"
+    if a >= 1e6:
+        return f"{sign}${a/1e6:,.1f}M"
+    return f"{sign}${a:,.0f}"
 
 
 def _usd_b_thou(v):

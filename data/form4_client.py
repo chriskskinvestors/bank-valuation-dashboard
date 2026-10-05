@@ -109,6 +109,34 @@ def _fetch_form4_xml(accession: str, cik: int) -> str | None:
         return None
 
 
+def _issuer_matches(xml_text: str, cik: int) -> bool:
+    """True when this Form 4's <issuer><issuerCik> is `cik`.
+
+    A CIK's submissions feed also lists Form 4s that company filed as a
+    REPORTING OWNER of another issuer's stock — JPM's lists accession
+    0001193125-26-258526, where JPMORGAN CHASE & CO reports as a 10% owner
+    of BlackRock MuniHoldings Fund (issuerCik 0001034665); BAC's 30 newest
+    Form 4s held 19 such filings (2026-10-05). Ingesting those booked another
+    company's securities as the bank's own insider activity.
+
+    CIKs compare as integers (EDGAR zero-pads: "0000019617" == 19617). An
+    issuerCik that is present but unparseable can't be attributed → False
+    (skip, never guess). The element is schema-required on every real EDGAR
+    ownership document; one absent entirely carries no conflicting issuer,
+    so it is kept."""
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return False
+    raw = root.findtext("issuer/issuerCik")
+    if raw is None:
+        return True
+    try:
+        return int(raw.strip()) == int(cik)
+    except (TypeError, ValueError):
+        return False
+
+
 def _parse_form4(xml_text: str) -> list[dict]:
     """Parse Form 4 XML → list of transaction dicts."""
     if not xml_text:
@@ -345,8 +373,8 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
     all_transactions = []
     for entry in form4_accessions:
         xml = _fetch_form4_xml(entry["accession"], cik)
-        if not xml:
-            continue
+        if not xml or not _issuer_matches(xml, cik):
+            continue  # missing, or the bank is the reporting owner elsewhere
         txs = _parse_form4(xml)
         for tx in txs:
             tx["filing_date"] = entry["filing_date"]
@@ -543,7 +571,9 @@ def poll_form4_firehose(ticker_ciks: dict, pages: int = 2) -> tuple[int, int]:
         if any(tx.get("accession") == accession for tx in existing):
             continue  # already merged (or the nightly sweep got it first)
         xml = _fetch_form4_xml(accession, cik)
-        if not xml:
+        # The feed's (Issuer) entry already names the issuer; the XML check
+        # keeps this seam honest on its own, same rule as the nightly sweep.
+        if not xml or not _issuer_matches(xml, cik):
             continue
         txs = _parse_form4(xml)
         if not txs:

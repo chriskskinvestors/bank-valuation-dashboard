@@ -66,6 +66,48 @@ class TestPeriodStats(unittest.TestCase):
         self.assertEqual(s["high"], 10.0)
 
 
+class TestRangePositionAndDrawdown(unittest.TestCase):
+    """UX review P2-16 (owner decision 2026-10-05): the statistics panel adds
+    the last close's position in the window's range and the max drawdown."""
+
+    DF = pd.DataFrame({"close": [100.0, 110.0, 105.0],
+                       "high": [101.0, 112.0, 106.0],
+                       "low": [99.0, 108.0, 103.0],
+                       "volume": [1000, 3000, 2000]})
+
+    def test_hand_computed(self):
+        s = _period_stats(self.DF)
+        self.assertAlmostEqual(s["range_pos_pct"], (105 - 99) / (112 - 99) * 100)  # 46.15
+        self.assertAlmostEqual(s["max_drawdown_pct"], (105 / 110 - 1) * 100)      # -4.545
+
+    def test_monotonic_rise_has_zero_drawdown(self):
+        s = _period_stats(pd.DataFrame({"close": [10.0, 11.0, 12.0]}))
+        self.assertEqual(s["max_drawdown_pct"], 0.0)
+        self.assertEqual(s["range_pos_pct"], 100.0)
+
+    def test_flat_or_thin_window_is_absent_not_guessed(self):
+        flat = _period_stats(pd.DataFrame({"close": [10.0, 10.0]}))
+        self.assertIsNone(flat["range_pos_pct"])             # high == low
+        one = _period_stats(pd.DataFrame({"close": [10.0]}))
+        self.assertIsNone(one["max_drawdown_pct"])
+        bad = _period_stats(pd.DataFrame({"close": [10.0, 0.0, 9.0]}))
+        self.assertIsNone(bad["max_drawdown_pct"])           # non-positive price
+
+    def test_panel_rows(self):
+        from ui.stock_chart import _stats_rows
+        rows = dict(_stats_rows(_period_stats(self.DF), "1Y"))
+        self.assertEqual(rows["Position in 1Y range"], "46%")
+        self.assertEqual(rows["Max drawdown"], "-4.5%")
+        self.assertEqual(rows["Return"], "+5.0%")
+        empty = dict(_stats_rows(_period_stats(pd.DataFrame()), "1M"))
+        self.assertTrue(all(v == "—" for v in empty.values()), empty)
+
+    def test_return_rounding_to_zero_is_unsigned(self):
+        from ui.stock_chart import _stats_rows
+        s = _period_stats(pd.DataFrame({"close": [100.0, 99.97]}))
+        self.assertEqual(dict(_stats_rows(s, "1M"))["Return"], "0.0%")
+
+
 class TestNearestSizeOrder(unittest.TestCase):
     COHORT = [
         {"ticker": "ME", "total_assets": 100.0},

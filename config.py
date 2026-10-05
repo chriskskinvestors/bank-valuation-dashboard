@@ -220,7 +220,8 @@ METRICS = [
         # ⚠️ flag: reported earnings materially inflated by a one-time item
         # (loan recovery, tax benefit). Reported ROATCE is real but not
         # sustainable; use ROATCE adj for valuation.
-        "key": "earnings_distorted", "label": "1-time", "source": "computed",
+        "key": "earnings_distorted", "label": "One-time Earnings Item",
+        "header": "1-time", "source": "computed",
         "format": "flag",
         "category": "Fair Value",
     },

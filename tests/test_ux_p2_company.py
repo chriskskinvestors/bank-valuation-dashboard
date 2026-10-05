@@ -15,7 +15,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -78,6 +78,17 @@ class TestPeopleNames(unittest.TestCase):
         self.assertEqual(ps._person_name("O'NEILL JAMES JR"), "O'Neill James Jr")
         self.assertEqual(ps._person_name("SMITH JOHN III"), "Smith John III")
 
+    def test_mc_prefix_keeps_inner_capital(self):
+        # Was "Mcgrath John" / "Mcdonald Ann" — the inner capital was lost.
+        self.assertEqual(ps._person_name("MCGRATH JOHN P"), "McGrath John P")
+        self.assertEqual(ps._person_name("SMITH-MCDONALD ANN"), "Smith-McDonald Ann")
+        # "Mac" is ambiguous from all-caps (Mack, Macy) — plain capitalize;
+        # a bare "MC" token stays "Mc".
+        self.assertEqual(ps._person_name("MACKAY ANN"), "Mackay Ann")
+        self.assertEqual(ps._person_name("MACY MC"), "Macy Mc")
+        # Filer-cased input is never re-cased.
+        self.assertEqual(ps._person_name("Mcgrath John"), "Mcgrath John")
+
     def test_issuer_row_detected_against_display_name(self):
         with patch.object(ps, "get_name", return_value="JPMorgan Chase"):
             self.assertTrue(ps._is_issuer("JPMORGAN CHASE & CO", "JPM"))
@@ -99,6 +110,60 @@ class TestDocLabel(unittest.TestCase):
         self.assertEqual(rd.doc_label({"form": "DEF 14A"}), "Proxy (DEF 14A)")
         self.assertEqual(rd.doc_label({"form": "8-K", "is_earnings": True}),
                          "Earnings Release (ER)")
+
+
+class TestPeopleAbsentDash(unittest.TestCase):
+    """Owner rule 2026-09-30: an absent value renders "—" on screen; the
+    Excel export keeps its own n/a (the raw None goes to table_export)."""
+
+    def _render(self):
+        st = MagicMock()
+        export = MagicMock()
+        person = {"name": "Jane Roe", "age": None, "position": None,
+                  "role": None, "director_since": None, "independent": None,
+                  "committees": [], "bio": None}
+        with patch.object(ps, "st", st), patch.object(ps, "title_bar"), \
+             patch.object(ps, "table_export", export), \
+             patch.object(ps, "get_name", return_value="Test Bancorp"), \
+             patch.object(ps, "get_cik", return_value=123), \
+             patch("data.people.get_proxy_people",
+                   return_value={"people": [person], "filed": None,
+                                 "source_url": None}), \
+             patch("data.people.get_insider_roster",
+                   return_value=[{"name": "DOE JOHN", "role": "Director",
+                                  "latest_date": None}]):
+            ps.render_people_summary("TEST")
+        html = " ".join(str(c.args[0]) for c in st.markdown.call_args_list
+                        if c.args)
+        cap = " ".join(str(c.args[0]) for c in st.caption.call_args_list
+                       if c.args)
+        return html, cap, export
+
+    def test_yn_absent_is_dash(self):
+        self.assertEqual(ps._yn(None), "—")
+        self.assertEqual(ps._yn(True), "Yes")
+        self.assertEqual(ps._yn(False), "No")
+
+    def test_tables_render_dash_never_na(self):
+        html, cap, _ = self._render()
+        self.assertNotIn("n/a", html)
+        self.assertNotIn("n/a", cap)
+        # Age, Position, Director Since, Independent, Committees — all absent.
+        self.assertIn('<td style="text-align:right;">—</td>'
+                      '<td style="text-align:left;">—</td>'
+                      '<td style="text-align:right;">—</td>'
+                      '<td style="text-align:left;">—</td>'
+                      '<td style="text-align:left;">—</td>', html)
+        # Section 16 roster: absent latest filing date.
+        self.assertIn('<td style="text-align:left;">Director</td>'
+                      '<td style="text-align:left;">—</td>', html)
+
+    def test_export_keeps_raw_absent_values(self):
+        _, _, export = self._render()
+        df = export.call_args.args[0]
+        self.assertIsNone(df["Independent"].iloc[0])
+        self.assertIsNone(df["Position"].iloc[0])
+        self.assertNotIn("—", df.astype(str).to_numpy().ravel().tolist())
 
 
 if __name__ == "__main__":

@@ -319,13 +319,17 @@ def detect_alerts(timeline_df: pd.DataFrame) -> list[dict]:
                     "value": change,
                 })
 
-    # 4. Uninsured deposit concentration > 40%
+    # 4. Uninsured deposit concentration > 40%. Stated as a fact against the
+    # watch level, not a "run risk" verdict: the same 49% reads very
+    # differently for a GSIB than for a community bank (UX review P2-21,
+    # owner decision 2026-10-05: neutral wording, thresholds unchanged).
     unins_pct = latest.get("uninsured_pct")
     if unins_pct is not None and unins_pct > 40.0:
         alerts.append({
             "severity": "high" if unins_pct > 55.0 else "medium",
             "code": "uninsured_high",
-            "message": f"Uninsured deposits at {unins_pct:.0f}% of total — elevated run risk",
+            "message": (f"Uninsured deposits at {unins_pct:.0f}% of total — "
+                        "above the 40% watch level"),
             "value": unins_pct,
         })
 

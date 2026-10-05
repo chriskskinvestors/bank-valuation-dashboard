@@ -390,12 +390,11 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
 
 
     # ── Holding-company regulatory capital (SEC 10-K/10-Q — SNL basis) ──
+    # Lives on ONE basis: Company Reported › Regulatory Capital (UX review
+    # P2-24, owner decision 2026-10-05 — it is the company's own reported
+    # figure). Templated keeps the FDIC analysis and points there.
     st.markdown("---")
-    # ONE Annual/Quarterly control per page (UX-P1-21): the statement table's
-    # toggle above (render_statement key "capadq_period_…") also drives the
-    # holding-company block, which therefore renders no radio of its own here.
-    _render_holdco_capital(
-        ticker, period=st.session_state.get(f"capadq_period_{ticker}", "Annual"))
+    st.markdown(holdco_capital_pointer_html(ticker), unsafe_allow_html=True)
 
     # ── RC-R Part I capital walk (SNL Capital Adequacy table) ──────────
     st.markdown("---")
@@ -404,6 +403,21 @@ def render_capital_dynamics(ticker: str, watchlist: list[str] | None = None):
     # ── Capital Return Attribution (SEC-sourced) ────────────────────────
     st.markdown("---")
     _render_capital_return_attribution(ticker, rng)
+
+
+def holdco_capital_pointer_html(ticker: str) -> str:
+    """One-line pointer from Templated › Capital Adequacy to the holding-
+    company capital table on Company Reported › Regulatory Capital (the
+    shareable ?basis= deep link app.py honours)."""
+    from urllib.parse import quote
+    href = (f"?s=Company&bank={quote(ticker)}&tab={quote('Regulatory Capital')}"
+            f"&basis={quote('Company Reported')}")
+    return ('<div class="ksk-sec">Holding-company regulatory capital</div>'
+            '<div style="font-size:var(--fs-sm);color:var(--text-muted)">'
+            "The holding company's own reported CET1, Tier 1, Total and "
+            "leverage ratios (SEC 10-K/10-Q) are on "
+            f'<a href="{href}" target="_self">Company Reported › Regulatory '
+            "Capital</a>.</div>")
 
 
 def _render_holdco_capital(ticker: str, period: str | None = None):
@@ -1064,7 +1078,7 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
     sy = yld.get("total_shareholder_yield_pct")
 
     def _yp(v):
-        return f"{v:.1f}%" if v is not None else "n/a"
+        return f"{v:.1f}%" if v is not None else "—"
 
     ledger("Capital Return — TTM", [
         ("Total Return Ratio",
@@ -1076,15 +1090,16 @@ def _render_capital_return_attribution(ticker: str, rng: str = DEFAULT_CHART):
         ("Buyback Ratio",
          (f"{bb_ratio:.0f}%" if ttm.get("buyback_ratio_ttm") is not None else "—")
          + _mut((fmt_dollars(ttm.get("buybacks_ttm"), 2) + " TTM") if ttm.get("buybacks_ttm") else "")),
-        # ":+z" formats: a change that rounds to zero prints "+0.00%", never
-        # "-0.00%" (UX-P1-11); period changes keep the leading sign.
+        # A change that rounds to zero prints "0.00%" — no sign either way
+        # (owner rule, UX-P1-11); real changes keep the leading sign.
         ("Share Reduction",
-         (f"{sc_change:+z.2f}%" if sc_change is not None else "—")
+         ((f"{sc_change:+.2f}%" if round(sc_change, 2) != 0 else "0.00%")
+          if sc_change is not None else "—")
          + _mut("TTM" if sc_change is not None else "")),
         ("Shareholder Yield",
          (f"{sy:.2f}%" if sy is not None else "—")
          # One component can be None while the total is known (capital_return's
-         # one-known convention) — that side renders n/a, never a format crash.
+         # one-known convention) — that side renders "—", never a format crash.
          + _mut((f"{_yp(yld.get('dividend_yield_pct'))} div + {_yp(yld.get('buyback_yield_pct'))} bb")
                 if sy is not None else "")),
     ])
