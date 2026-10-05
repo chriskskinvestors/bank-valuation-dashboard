@@ -181,6 +181,22 @@ _RATIO_CONVERT_RE = re.compile(
     r"(?:will\s+be|shall\s+be|is)\s+converted\s+into\s+(?:the\s+right\s+to\s+"
     r"receive\s+)?(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
     r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock")
+# Mixed consideration: "receive 2.5814 shares of Old Second common stock and
+# $15.93 in cash for each share of Bancorp Financial's common stock"
+# (live-verified OSBC PR 2025-02-25).
+_RATIO_MIXED_RE = re.compile(
+    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+and\s+\$\s?[\d,]+"
+    r"(?:\.\d+)?\s+in\s+cash\s+for\s+each(?:\s+share\s+of)?\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+(?:common\s+stock|shares?|stock)")
+# Election: "each share of VBI common stock will be converted ... into the
+# right to receive (i) $1,000.00 in cash, (ii) 38.5000 shares of Seacoast
+# common stock" (live-verified SBCF 8-K 2025-05-29).
+_RATIO_ELECTION_RE = re.compile(
+    r"each\s+share\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+"
+    r"(?:will\s+be|shall\s+be|is)\s+converted[^.;]{0,60}?right\s+to\s+receive"
+    r".{0,80}?\(ii\)\s+(\d{1,3}(?:\.\d{1,4})?)\s+shares?\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock")
 # "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
 _PR_TICKER_RE = re.compile(
     r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
@@ -204,6 +220,10 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
     for m in _RATIO_BARE_RE.finditer(text):
         found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     for m in _RATIO_CONVERT_RE.finditer(text):
+        found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
+    for m in _RATIO_MIXED_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
+    for m in _RATIO_ELECTION_RE.finditer(text):
         found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
@@ -400,6 +420,378 @@ def extract_stated_value(text: str) -> int | None:
     return vals.pop()
 
 
+# ── Deal terms (Recent Deals tab — owner directive 2026-10-05) ────────────
+#
+# Structured merger terms read off the SAME announcement text the legs above
+# already hold (PR + 425 legend + merger-agreement 8-K where the corpus has
+# it). Every extractor is STRICT in the house style: several DISTINCT
+# candidates -> None; nothing inferred; n/a over a plausible-wrong number.
+# Ground truth hand-read from the live filings (2026-10-05):
+#   FHB/TriCo 2026-07-13 (all-stock): 2.095 ratio; "representing $63.12 per
+#     share" stated; "expect to close the transaction by the end of 2026";
+#     "termination fee of $80,000,000" (merger-agreement 8-K Item 1.01); no
+#     premium stated. The PR's "cash in lieu of fractional shares" must NOT
+#     read as cash consideration, and the deck's "Premium deposit franchise"
+#     / "Core deposit premium" must NOT read as a price premium.
+#   Catalyst/Lakeside 2026-04-08 (all-cash): "$19.58 in cash for each
+#     outstanding share" / "$19.58 per share in cash"; "expected to close in
+#     the third quarter of 2026".
+#   Old Second/Bancorp Financial 2025-02-25 (mixed, fixed): "2.5814 shares of
+#     Old Second common stock and $15.93 in cash for each share"; "approximately
+#     75% stock and 25% cash"; close "third quarter of 2025"; fee $8,500,000.
+#   Seacoast/Villages 2025-05-29 (election): "(i) $1,000.00 in cash, (ii)
+#     38.5000 shares of Seacoast common stock or (iii) a 25%-75% combination
+#     ... at the shareholder's election"; proration 25% cash / 75% stock;
+#     fee "$31.4 million".
+#   QNB/Victory 2025-09-23: "termination fee to QNB of $1,575,000"; close
+#     "fourth quarter of 2025 or first quarter of 2026" (a stated range -> its
+#     later bound, phrase kept verbatim).
+
+_NUM = r"(\d{1,4}(?:,\d{3})*(?:\.\d{1,4})?)"
+
+# "$19.58 in cash for each share" / "$19.58 per share in cash" / "$15.93 in
+# cash (the "Cash Consideration") for each share" / "$1,000.00 in cash,".
+# A unit word between the number and "in cash" ("$41.1 million in cash")
+# is an AGGREGATE, not per share — the \s+in\s+cash adjacency excludes it.
+_CASH_PER_SHARE_RE = re.compile(
+    r"\$\s?" + _NUM + r"\s+(?:per\s+share\s+)?in\s+cash\b", re.IGNORECASE)
+_CASH_CONSID_RE = re.compile(
+    r"cash\s+consideration\s+of\s+\$\s?" + _NUM + r"\s+per\s+share",
+    re.IGNORECASE)
+
+# Stated per-share value of the offer: "representing $63.12 per share",
+# "the implied purchase price is $62.60 per Bancorp Financial common
+# share", "implied value of $25.00 per share", "per share deal value of
+# $19.58".
+_IMPLIED_PRICE_RE = re.compile(
+    r"(?:representing|represents|implied\s+(?:purchase\s+)?(?:value|price)\s+(?:of|is)|implies\s+"
+    r"a\s+value\s+of|valued\s+at|a\s+value\s+of|equates\s+to)\s+"
+    r"(?:approximately\s+|about\s+)?\$\s?" + _NUM +
+    r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
+_IMPLIED_PRICE_DECK_RE = re.compile(
+    r"per\s+share\s+(?:deal\s+|transaction\s+)?value\s+of\s+\$\s?" + _NUM,
+    re.IGNORECASE)
+
+# Premium as STATED: "a premium of approximately 28% to ..." / "a 28%
+# premium to the closing price". Window-gated to PRICE context (closing /
+# unaffected / trading / VWAP / market price) and rejected near "deposit" or
+# "book" (core-deposit premium, P/TBV premium are different animals).
+_PREMIUM_A_RE = re.compile(
+    r"premium\s+of\s+(?:approximately\s+|about\s+)?(\d{1,3}(?:\.\d+)?)\s?%",
+    re.IGNORECASE)
+_PREMIUM_B_RE = re.compile(
+    r"(\d{1,3}(?:\.\d+)?)\s?%\s+premium\b", re.IGNORECASE)
+_PRICE_CTX = ("price", "closing", "close", "trading", "vwap", "market",
+              "unaffected")
+_NOT_PRICE_CTX = ("deposit", "book", "tangible")
+
+# Termination fee: "termination fee of $80,000,000", "termination fee to QNB
+# of $1,575,000", "termination fee of $31.4 million", "a $10 million
+# termination fee". Dollar amounts only — a "4% of deal value" fee is n/a.
+_TERM_FEE_A_RE = re.compile(
+    r"termination\s+fee\s+(?:[^.$;]{0,60}?)(?:of|equal\s+to|in\s+the\s+amount"
+    r"\s+of)\s+(?:up\s+to\s+)?(?:approximately\s+)?\$\s?" + _NUM +
+    r"\s*(million|billion)?", re.IGNORECASE)
+_TERM_FEE_B_RE = re.compile(
+    r"\$\s?" + _NUM + r"\s*(million|billion)?\s+termination\s+fee",
+    re.IGNORECASE)
+
+# Expected close, as stated. The time phrase is captured up to the sentence
+# or the "subject to" clause and kept VERBATIM; the date is derived only
+# from quarter / half / month / year-end wording (a range -> its later bound).
+_EXPECTED_CLOSE_RE = re.compile(
+    r"(?:expected|anticipated|expects?|anticipates?|expect)\s+to\s+"
+    r"(?:close|be\s+completed|be\s+consummated|complete|consummate)"
+    r"(?:\s+(?:the|this)\s+(?:transaction|merger|acquisition|mergers))?\s+"
+    r"((?:in|during|by|on\s+or\s+before|before|prior\s+to|late\s+in|early"
+    r"\s+in|around)\s+[^.;]{3,90})", re.IGNORECASE)
+_CLOSE_CUT_RE = re.compile(
+    r",?\s+(?:subject\s+to|pending|assuming|contingent|following|and\s+is|"
+    r"which|with\s+the)\b", re.IGNORECASE)
+_ORD = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+        "fourth": 4, "4th": 4}
+_Q_RE = re.compile(
+    r"\b(first|second|third|fourth|1st|2nd|3rd|4th)\s+(?:calendar\s+|fiscal"
+    r"\s+)?quarter\s+(?:of\s+)?(20\d\d)\b|\bq([1-4])\s*(20\d\d)\b",
+    re.IGNORECASE)
+_HALF_RE = re.compile(
+    r"\b(first|second)\s+half\s+of\s+(20\d\d)\b", re.IGNORECASE)
+_YEAR_END_RE = re.compile(
+    r"\b(?:end\s+of|year[-\s]end)\s+(20\d\d)\b", re.IGNORECASE)
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july",
+           "august", "september", "october", "november", "december")
+_MONTH_RE = re.compile(
+    r"\b(" + "|".join(_MONTHS) + r")\s+(?:(\d{1,2}),\s+)?(20\d\d)\b",
+    re.IGNORECASE)
+
+# Consideration-mix phrasings and the stated split.
+_ALL_STOCK_RE = re.compile(
+    r"all[-\s]stock|100\s?%\s+(?:common\s+)?stock|stock[-\s]for[-\s]stock",
+    re.IGNORECASE)
+_ALL_CASH_RE = re.compile(r"all[-\s]cash|100\s?%\s+cash", re.IGNORECASE)
+_ELECTION_RE = re.compile(
+    r"(?:shareholder|stockholder|holder)s?['’]?s?\s+election|elect(?:ion)?\s+"
+    r"to\s+receive|may\s+elect", re.IGNORECASE)
+_MIX_STOCK_CASH_RE = re.compile(
+    r"(\d{1,3})\s?%\s+(?:common\s+)?stock\s+and\s+(\d{1,3})\s?%\s+cash",
+    re.IGNORECASE)
+_MIX_CASH_STOCK_RE = re.compile(
+    r"(\d{1,3})\s?%\s+cash\s+and\s+(\d{1,3})\s?%\s+(?:common\s+)?stock",
+    re.IGNORECASE)
+_PRORATION_RE = re.compile(
+    r"(\d{1,3})\s?%\s+of\s+[^.]{0,80}?receive\s+the\s+cash\s+consideration"
+    r"\s+and\s+(\d{1,3})\s?%\s+[^.]{0,80}?receive\s+the\s+stock\s+"
+    r"consideration", re.IGNORECASE)
+
+
+def _num(s: str) -> float:
+    return float(s.replace(",", ""))
+
+
+def _single(values) -> float | int | None:
+    """The one distinct value, else None (ambiguous -> never a guess)."""
+    vals = set(values)
+    return vals.pop() if len(vals) == 1 else None
+
+
+def extract_cash_per_share(text: str) -> float | None:
+    """Cash consideration per TARGET share, or None. "cash in lieu of
+    fractional shares" carries no dollar figure and never matches."""
+    found = [round(_num(m.group(1)), 4)
+             for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE)
+             for m in rx.finditer(text)]
+    return _single(found)
+
+
+def extract_implied_price(text: str) -> float | None:
+    """Per-share offer value as STATED in the text, or None."""
+    found = [round(_num(m.group(1)), 4)
+             for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE)
+             for m in rx.finditer(text)]
+    return _single(found)
+
+
+def extract_premium_pct(text: str) -> float | None:
+    """Premium to the target's market price, as STATED (percent), or None.
+    Only price-context premiums count; deposit/book premiums are skipped."""
+    found = []
+    for rx in (_PREMIUM_A_RE, _PREMIUM_B_RE):
+        for m in rx.finditer(text):
+            before = text[max(0, m.start() - 60):m.start()].lower()
+            after = text[m.end():m.end() + 160].lower()
+            if any(w in before for w in _NOT_PRICE_CTX) \
+                    or any(w in after[:60] for w in _NOT_PRICE_CTX):
+                continue
+            if not any(w in after for w in _PRICE_CTX):
+                continue
+            found.append(round(_num(m.group(1)), 2))
+    return _single(found)
+
+
+def extract_termination_fee(text: str) -> int | None:
+    """Termination fee in RAW DOLLARS, or None (absent, non-dollar, or
+    several distinct amounts — e.g. a deal with two different fees)."""
+    found = []
+    for rx in (_TERM_FEE_A_RE, _TERM_FEE_B_RE):
+        for m in rx.finditer(text):
+            v = _num(m.group(1))
+            unit = (m.group(2) or "").lower()
+            if unit == "billion":
+                v *= 1_000_000_000
+            elif unit == "million":
+                v *= 1_000_000
+            elif v < 1000:
+                continue            # "$4 termination fee" — not a fee amount
+            found.append(int(round(v)))
+    return _single(found)
+
+
+def _quarter_end(q: int, year: int) -> str:
+    m = q * 3
+    d = {3: 31, 6: 30, 9: 30, 12: 31}[m]
+    return f"{year:04d}-{m:02d}-{d:02d}"
+
+
+def _month_end(month: int, year: int) -> str:
+    import calendar
+    return f"{year:04d}-{month:02d}-{calendar.monthrange(year, month)[1]:02d}"
+
+
+def close_phrase_to_date(phrase: str) -> str | None:
+    """ISO period-end for an expected-close phrase, or None when the wording
+    does not pin a period (e.g. "early 2027", "mid-2027", "later this year").
+    quarter -> quarter end; half -> Jun 30 / Dec 31; "end of 2026" ->
+    Dec 31; "March 2027" -> month end; "March 31, 2027" -> that day; a
+    range ("Q4 2025 or Q1 2026") -> the later bound."""
+    dates = []
+    for m in _Q_RE.finditer(phrase):
+        if m.group(1):
+            dates.append(_quarter_end(_ORD[m.group(1).lower()], int(m.group(2))))
+        else:
+            dates.append(_quarter_end(int(m.group(3)), int(m.group(4))))
+    for m in _HALF_RE.finditer(phrase):
+        dates.append(f"{int(m.group(2))}-06-30" if m.group(1).lower() == "first"
+                     else f"{int(m.group(2))}-12-31")
+    for m in _YEAR_END_RE.finditer(phrase):
+        dates.append(f"{int(m.group(1))}-12-31")
+    for m in _MONTH_RE.finditer(phrase):
+        month = _MONTHS.index(m.group(1).lower()) + 1
+        year = int(m.group(3))
+        if m.group(2):
+            dates.append(f"{year:04d}-{month:02d}-{int(m.group(2)):02d}")
+        else:
+            dates.append(_month_end(month, year))
+    return max(dates) if dates else None
+
+
+def extract_expected_close(text: str) -> tuple[str | None, str | None]:
+    """(phrase, date) — the stated expected-close wording (verbatim, cut at
+    the "subject to" clause) and its period-end date. Several statements
+    that resolve to the SAME date are fine (PR + 8-K); distinct dates ->
+    phrase kept, date None. The phrase reported is the first one that
+    pins a period (a 425 legend's "by the end of the year" must not mask
+    the PR's "by the end of 2026")."""
+    phrases, dated = [], []
+    for m in _EXPECTED_CLOSE_RE.finditer(text):
+        raw = _CLOSE_CUT_RE.split(m.group(1), maxsplit=1)[0]
+        raw = " ".join(raw.split()).strip(" ,")
+        if not raw:
+            continue
+        phrases.append(raw)
+        d = close_phrase_to_date(raw)
+        if d:
+            dated.append((raw, d))
+    if not phrases:
+        return None, None
+    if not dated:
+        return phrases[0], None
+    if len({d for _p, d in dated}) != 1:
+        return dated[0][0], None
+    return dated[0]
+
+
+def extract_mix_pcts(text: str) -> tuple[float, float] | None:
+    """(stock %, cash %) as stated ("75% stock and 25% cash"; a proration
+    "25% ... cash consideration and 75% ... stock consideration"), or None."""
+    found = set()
+    for m in _MIX_STOCK_CASH_RE.finditer(text):
+        found.add((float(m.group(1)), float(m.group(2))))
+    for m in _MIX_CASH_STOCK_RE.finditer(text):
+        found.add((float(m.group(2)), float(m.group(1))))
+    for m in _PRORATION_RE.finditer(text):
+        found.add((float(m.group(2)), float(m.group(1))))
+    found = {p for p in found if abs(p[0] + p[1] - 100) < 0.01}
+    return found.pop() if len(found) == 1 else None
+
+
+def classify_consideration(text: str, ratio, cash) -> str | None:
+    """'stock' | 'cash' | 'mixed' | 'election' | None from the extracted
+    components first, the PR's own wording second."""
+    if ratio and cash:
+        return "election" if _ELECTION_RE.search(text) else "mixed"
+    if ratio:
+        return "stock"
+    if cash:
+        return "cash"
+    if _ALL_STOCK_RE.search(text) and not _ALL_CASH_RE.search(text):
+        return "stock"
+    if _ALL_CASH_RE.search(text) and not _ALL_STOCK_RE.search(text):
+        return "cash"
+    return None
+
+
+def implied_offer(terms: dict, acq_price, *, basis_label: str) -> tuple[float | None, str | None]:
+    """Per-share offer value at an acquirer price, from the terms'
+    consideration structure. (value, note) or (None, None) when the structure
+    cannot be priced honestly. Shared by the at-announce leg (prior close)
+    and the live merger-arb leg (current price)."""
+    mix = terms.get("consideration")
+    ratio, cash = terms.get("exchange_ratio"), terms.get("cash_per_share")
+    if mix == "cash" and cash:
+        return float(cash), f"${cash:,.2f} cash per share"
+    if acq_price is None:
+        return None, None
+    if mix == "stock" and ratio:
+        return (round(ratio * acq_price, 4),
+                f"{ratio} × {basis_label} ${acq_price:,.2f}")
+    if mix == "mixed" and ratio and cash:
+        return (round(ratio * acq_price + cash, 4),
+                f"{ratio} × {basis_label} ${acq_price:,.2f} + ${cash:,.2f} cash")
+    if mix == "election" and ratio and cash:
+        pcts = terms.get("stock_pct"), terms.get("cash_pct")
+        if pcts[0] is None or pcts[1] is None:
+            return None, None
+        v = ratio * acq_price * pcts[0] / 100 + cash * pcts[1] / 100
+        return (round(v, 4),
+                f"blended at the stated {pcts[0]:g}% stock / {pcts[1]:g}% cash "
+                f"proration: {ratio} × {basis_label} ${acq_price:,.2f} and "
+                f"${cash:,.2f} cash")
+    return None, None
+
+
+def extract_terms(text: str) -> dict:
+    """Pure (no network) term extraction from announcement text."""
+    ratio_hit = extract_exchange_ratio(text)
+    ratio = ratio_hit[0] if ratio_hit else None
+    cash = extract_cash_per_share(text)
+    pcts = extract_mix_pcts(text)
+    phrase, close_date = extract_expected_close(text)
+    return {
+        "consideration": classify_consideration(text, ratio, cash),
+        "exchange_ratio": ratio,
+        "acq_side": ratio_hit[1] if ratio_hit else None,
+        "tgt_side": ratio_hit[2] if ratio_hit else None,
+        "cash_per_share": cash,
+        "stock_pct": pcts[0] if pcts else None,
+        "cash_pct": pcts[1] if pcts else None,
+        "implied_price_stated": extract_implied_price(text),
+        "premium_pct": extract_premium_pct(text),
+        "expected_close_phrase": phrase,
+        "expected_close_date": close_date,
+        "termination_fee_usd": extract_termination_fee(text),
+    }
+
+
+def build_terms(text: str, announce_date: str, acq_tick: str | None = None,
+                tgt_tick: str | None = None, close_lookup=None) -> tuple[dict, bool]:
+    """
+    Deal terms for one announcement: extract_terms plus the acquirer's close
+    before announce (press convention, _close_before) and the implied
+    per-share price at announce — stated when the PR states it, else
+    computed from the consideration structure and labeled so.
+
+    ``acq_tick``/``tgt_tick`` override the PR-pair resolution of the ratio's
+    sides (ma_pending resolves them through the live universe);
+    ``close_lookup`` is the price function (default _close_before — callers
+    that bind their own name pass it so one seam serves both). Returns
+    (terms, ok): ok=False only when the price lookup FAILED (no FMP key /
+    fetch error) — the caller must not cache; every absent field is an
+    honest None.
+    """
+    t = extract_terms(text)
+    pairs = _pr_ticker_pairs(text)
+    if t["exchange_ratio"]:
+        acq_tick = acq_tick or _ticker_for_side(t["acq_side"], pairs)
+        tgt_tick = tgt_tick or _ticker_for_side(t["tgt_side"], pairs)
+    t["acq_ticker"] = acq_tick
+    t["tgt_ticker"] = tgt_tick
+    close, close_date, ok = None, None, True
+    if t["exchange_ratio"] and acq_tick and announce_date:
+        close, close_date, ok = (close_lookup or _close_before)(acq_tick, announce_date)
+    t["acq_close_at_announce"] = close
+    t["acq_close_date"] = close_date
+    if t["implied_price_stated"] is not None:
+        t["implied_price"] = t["implied_price_stated"]
+        t["implied_price_basis"] = "stated"
+        t["implied_price_note"] = "per-share value as stated in the announcement"
+    else:
+        v, note = implied_offer(t, close, basis_label=f"{acq_tick} close {close_date}")
+        t["implied_price"] = v
+        t["implied_price_basis"] = "computed" if v is not None else None
+        t["implied_price_note"] = f"computed: {note}" if note else None
+    return t, ok
+
+
 def _efts_hits(target_query: str, startdt: str, enddt: str) -> list[dict] | None:
     """EFTS hits for a quoted phrase over 8-Ks in a window; None on failure."""
     try:
@@ -553,7 +945,9 @@ def resolve_announcement(target_name: str, acquirer_name: str,
                 result["value_usd"] = comp["value_usd"]
                 result["value_basis"] = "computed"
                 result["value_note"] = comp["value_note"]
-        return result, ok
+        terms, t_ok = build_terms(text, cand["file_date"])
+        result["terms"] = terms
+        return result, ok and t_ok
     # Nothing classified as the announcement. Only claim a cacheable n/a if
     # every candidate was actually readable.
     return None, not fetch_failed
@@ -748,10 +1142,13 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
             if comp:
                 value, basis = comp["value_usd"], "computed"
                 note = comp["value_note"]
+        terms, t_ok = build_terms(text, ann["file_date"])
+        fetch_failed = fetch_failed or not t_ok
         rows.append({
             "announce_date": ann["file_date"],
             "direction": direction,
             "counterparty_name": counterparty,
+            "terms": terms,
             "counterparty_cik": None,
             "value_usd": value, "value_basis": basis, "value_note": note,
             "target_cik": None,
@@ -803,7 +1200,7 @@ def find_terminated_deals(subject_cik, subject_name: str) -> tuple[list[dict], b
 
     Returns ([{termination_date, announce_date, counterparty_name,
                value_usd, value_basis, value_note, direction | None,
-               announce_url, termination_url}], ok) — ok=False on any fetch
+               terms (build_terms), announce_url, termination_url}], ok) — ok=False on any fetch
     failure (caller must not cache). Strict: a termination 8-K with no
     back-linkable announcement is DROPPED (never a counterparty guess).
     """
@@ -893,10 +1290,13 @@ def find_terminated_deals(subject_cik, subject_name: str) -> tuple[list[dict], b
                 direction = "sale"
             elif subj_tok in ratio_hit[1].lower():
                 direction = "acquisition"
+        terms, t_ok = build_terms(ann_text, ann["file_date"])
+        fetch_failed = fetch_failed or not t_ok
         deals.append({
             "termination_date": term["file_date"],
             "announce_date": ann["file_date"],
             "counterparty_name": others[0][0],
+            "terms": terms,
             "value_usd": value,
             "value_basis": basis,
             "value_note": note,

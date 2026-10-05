@@ -1,10 +1,23 @@
 """Transactions — top-level section (docs/SNL-BUILD-PLAN.md §14).
 
 Owner-decided structure (2026-07-13): the §14 five SNL sub-tabs plus the
-existing universe insider feed KEPT as its own sub-tab. Sub-tabs render as
-they are BUILT — no empty placeholders:
+existing universe insider feed KEPT as its own sub-tab; 2026-10-05 owner
+directive put a universe-wide deal board FIRST. Sub-tabs render as they
+are BUILT — no empty placeholders:
 
-  Transactions Summary — per-bank aggregate view with the SNL
+  Recent Deals — universe-wide, no picker: every PENDING deal plus every
+      deal announced in the last 24 months (completed/terminated greyed
+      with their date), newest first, one row per deal. Columns grouped
+      Deal / Terms (ratio, cash, implied $/sh at announce, value, stated
+      premium) / Valuation at announce (P/TBV, P/assets, core deposit
+      premium, P/E on TTM EPS, target assets) / Merger arb (pending only:
+      target price, implied offer at the acquirer's live price, gross and
+      annualized spread to the STATED expected-close period end) /
+      Agreement (termination fee, disclosed votes and approvals). Reads
+      ONLY the deal-comps snapshot (terms are compiled nightly by
+      jobs/refresh_deal_comps from data/ma_announcements.build_terms) plus
+      the warm price cache for the arb legs. n/a over guess throughout.
+  By Bank (was "Transactions Summary") — per-bank aggregate view with the SNL
       Aggregate/Details toggle: transaction volume chart (M&A value bars +
       all-transaction count line, multi-decade), Top Transactions by
       Value, transaction-type pie (M&A / branch / terminated from our deal
@@ -68,11 +81,13 @@ from utils.formatting import fmt_dollars
 
 def render_transactions():
     st.markdown("### Transactions")
-    sel = lazy_tabs(["Transactions Summary", "Detailed M&A History",
+    sel = lazy_tabs(["Recent Deals", "By Bank", "Detailed M&A History",
                      "Detailed Offerings", "Private Equity Transactions",
                      "Comparable Deal Analysis", "Insider Activity"],
                     key="transactions")
-    if sel == "Transactions Summary":
+    if sel == "Recent Deals":
+        _render_recent_deals()
+    elif sel == "By Bank":
         _render_summary()
     elif sel == "Detailed M&A History":
         _render_ma_history()
@@ -86,7 +101,367 @@ def render_transactions():
         _render_insider_feed()
 
 
-# ── Transactions Summary ──────────────────────────────────────────────────
+# ── Recent Deals (first tab — owner directive 2026-10-05) ────────────────
+
+_RECENT_DAYS = 730                  # announced in the last 24 months
+_ARB_PRICE_MAX_AGE_S = 4 * 86400    # a warm quote older than a long weekend
+                                    # is not a live arb input — n/a
+_PENDING_HTML = ('<span style="color:var(--warning,#d97706);font-weight:600;">'
+                 'Pending</span>')
+
+
+def _fmt_pct(x, places: int = 1) -> str:
+    return "—" if x is None else f"{x * 100:.{places}f}%"
+
+
+def _fmt_px(x) -> str:
+    return "—" if x is None else f"${x:,.2f}"
+
+
+def _td(inner: str, align: str = "right", title: str | None = None) -> str:
+    t = f' title="{_h.escape(title)}"' if title else ""
+    return f'<td style="text-align:{align};"{t}>{inner}</td>'
+
+
+def _ticker_link(ticker: str | None) -> str:
+    if not ticker:
+        return ""
+    esc = _h.escape(ticker)
+    return f'<a href="?s=Company&bank={esc}" target="_self">{esc}</a>'
+
+
+def _recent_rows(deals: list[dict], today) -> list[dict]:
+    """Every pending deal plus every deal announced in the last 24 months,
+    newest announcement first (completed/terminated keep their own date
+    as the fallback sort key)."""
+    from datetime import timedelta
+    floor = (today - timedelta(days=_RECENT_DAYS)).isoformat()
+
+    def _date(d):
+        return (d.get("announce_date") or d.get("completion_date")
+                or d.get("termination_date") or "")
+    rows = [d for d in deals
+            if d.get("status") == "pending" or _date(d) >= floor]
+    rows.sort(key=_date, reverse=True)
+    return rows
+
+
+def _render_recent_deals():
+    from datetime import date
+    from data.deal_comps import get_comps_snapshot, merger_arb
+    from data.price_cache_store import get_prices
+
+    st.caption("Every pending bank deal in the universe plus every deal "
+               "announced in the last 24 months, newest first. Terms are "
+               "read verbatim from the announcement press release, Rule 425 "
+               "legend and merger-agreement 8-K (ratio, cash, mix, stated "
+               "per-share value, premium, expected close, termination fee); "
+               "valuation multiples come from the deal-comps engine at the "
+               "announce anchor; merger-arb figures use the warm price cache "
+               "and the STATED expected-close period end. — = not disclosed "
+               "or not sourceable, never estimated.")
+
+    snap = get_comps_snapshot()
+    if not snap:
+        st.info("The universe deal snapshot has not been compiled yet — the "
+                "refresh-deal-comps job builds it (nightly, or run it "
+                "manually after deploy).")
+        return
+    today = date.today()
+    rows = _recent_rows(snap["deals"], today)
+    pending = [d for d in rows if d.get("status") == "pending"]
+    completed = [d for d in rows if d.get("status") == "completed"]
+    terminated = [d for d in rows if d.get("status") == "terminated"]
+    pill_row([
+        stat_pill("PENDING", f"{len(pending):,}"),
+        stat_pill("DEALS (24M + PENDING)", f"{len(rows):,}"),
+        stat_pill("COMPLETED", f"{len(completed):,}"),
+        stat_pill("TERMINATED", f"{len(terminated):,}"),
+        stat_pill("SNAPSHOT", _h.escape(str(snap.get("built_at", ""))[:10])),
+    ], margin="2px 0 12px")
+    if not rows:
+        from ui.states import empty_state
+        empty_state("No deals announced in the last 24 months and none pending")
+        return
+
+    # Live prices for the pending deals' two sides (warm cache, bulk read;
+    # frozen quotes were dropped at ingest; stale rows are n/a here).
+    syms = sorted({t for d in pending
+                   for t in (d.get("buyer_ticker"), d.get("target_ticker"))
+                   if t})
+    try:
+        warm = get_prices(syms, max_age_s=_ARB_PRICE_MAX_AGE_S) if syms else {}
+    except Exception as e:                      # price store down ≠ blank tab
+        print(f"[transactions] warm prices: {type(e).__name__}: {e}")
+        warm = {}
+
+    cert_map = _cert_ticker_map()
+    body = ""
+    export_rows = []
+    for d in rows:
+        terms = d.get("terms") or {}
+        ms = d.get("milestones") or {}
+        status = d.get("status")
+        muted = status != "pending"
+        tr_style = ' style="color:var(--text-muted);"' if muted else ""
+
+        # ── Deal ──
+        ann = d.get("announce_date")
+        if ann and d.get("announce_url"):
+            ann_cell = (f'<a href="{_h.escape(d["announce_url"])}" '
+                        f'target="_blank">{_h.escape(ann)}</a>')
+        else:
+            ann_cell = _h.escape(ann) if ann else "—"
+        tgt_tick = d.get("target_ticker") or cert_map.get(d.get("target_cert") or 0)
+        tgt_name = _h.escape(d.get("target_name") or "")
+        tgt_cell = " ".join(p for p in (_ticker_link(tgt_tick), tgt_name) if p) or "—"
+        acq_tick = d.get("buyer_ticker")
+        acq_cell = " ".join(p for p in (_ticker_link(acq_tick),
+                                        _h.escape(d.get("buyer_name") or "")) if p) or "—"
+        if status == "pending":
+            status_cell = _PENDING_HTML
+        elif status == "completed":
+            status_cell = f"Completed {_h.escape(d.get('completion_date') or '')}"
+        else:
+            status_cell = f"Terminated {_h.escape(d.get('termination_date') or '')}"
+        mix = terms.get("consideration")
+        mix_title = None
+        if terms.get("stock_pct") is not None:
+            mix_title = (f"{terms['stock_pct']:g}% stock / "
+                         f"{terms['cash_pct']:g}% cash as stated")
+        mix_cell = _h.escape(mix.capitalize()) if mix else "—"
+
+        # ── Terms ──
+        ratio = terms.get("exchange_ratio")
+        cash = terms.get("cash_per_share")
+        implied = terms.get("implied_price")
+        implied_cell = "—"
+        if implied is not None:
+            sup = "*" if terms.get("implied_price_basis") == "computed" else ""
+            implied_cell = f"{_fmt_px(implied)}{sup}"
+        val = d.get("value_usd")
+        if val is not None:
+            basis = d.get("value_basis") or ""
+            val_note = d.get("value_note") or f"{basis} in the announcement release"
+            val_cell = f"{_fmt_bn(val)}{'*' if basis == 'computed' else ''}"
+        else:
+            val_note, val_cell = None, "—"
+        prem = terms.get("premium_pct")
+        prem_cell = "—" if prem is None else f"{prem:.1f}%"
+
+        # ── Valuation at announce ──
+        p = d.get("p_tbv")
+        if p:
+            ptbv_note = (f"{d.get('tbv_basis')} TBV {_fmt_bn(d.get('tbv_usd'))} "
+                         f"as of {d.get('tbv_asof')}")
+            if d.get("value_note"):
+                ptbv_note += f" · {d['value_note']}"
+            ptbv_cell = f"{p:.2f}x"
+        elif d.get("flagged"):
+            ptbv_note, ptbv_cell = d["flagged"], "n/a†"
+        else:
+            ptbv_note, ptbv_cell = None, "—"
+        pe = d.get("p_e")
+        eps = d.get("ttm_eps")
+        pe_note = (f"TTM diluted EPS ${eps:,.2f} at {d.get('eps_asof')} ÷ implied "
+                   f"${implied:,.2f}" if eps is not None and implied is not None
+                   else None)
+        pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
+        assets = d.get("comp_assets") or d.get("target_assets")
+
+        # ── Merger arb (pending only) ──
+        arb = {"implied_offer": None, "offer_note": None, "gross_spread": None,
+               "days_to_close": None, "annualized_spread": None}
+        tgt_q = acq_q = None
+        if status == "pending":
+            tgt_q = warm.get((tgt_tick or "").upper()) if tgt_tick else None
+            acq_q = warm.get((acq_tick or "").upper()) if acq_tick else None
+            arb = merger_arb(terms, (acq_q or {}).get("price"),
+                             (tgt_q or {}).get("price"), today,
+                             acq_ticker=acq_tick)
+        tgt_px = (tgt_q or {}).get("price")
+        tgt_px_note = (f"{tgt_tick} warm quote as of {(tgt_q or {}).get('updated_at')}"
+                       if tgt_px is not None else None)
+        close_phrase = terms.get("expected_close_phrase")
+        close_date = terms.get("expected_close_date")
+        if close_date:
+            close_cell = _h.escape(close_date)
+        elif close_phrase:
+            close_cell = _h.escape(close_phrase[:28])
+        else:
+            close_cell = "—"
+        close_note = (f"as stated: “{close_phrase}”" if close_phrase else None)
+        days = arb["days_to_close"]
+        days_cell = "—" if days is None else f"{days:,}"
+
+        # ── Agreement ──
+        fee = terms.get("termination_fee_usd")
+        if fee is not None:
+            fee_cell = _fmt_bn(fee)
+            if val:
+                fee_cell += f" ({fee / val * 100:.1f}%)"
+        else:
+            fee_cell = "—"
+        bits = []
+        for v in (ms.get("votes") or []):
+            bits.append(f'<a href="{_h.escape(v["url"])}" target="_blank">'
+                        f'{_h.escape(v["side"].capitalize())} vote '
+                        f'{_h.escape(v["date"])}</a>')
+        reg = ms.get("regulatory_approval")
+        if reg:
+            bits.append(f'<a href="{_h.escape(reg["url"])}" target="_blank">'
+                        f'Reg. approval {_h.escape(reg["date"])}</a>')
+        approvals_cell = " · ".join(bits) if bits else "—"
+
+        body += (
+            f"<tr{tr_style}>"
+            + _td(ann_cell, "left") + _td(tgt_cell, "left") + _td(acq_cell, "left")
+            + _td(status_cell, "left") + _td(mix_cell, "left", mix_title)
+            + _td(f"{ratio:g}" if ratio else "—")
+            + _td(_fmt_px(cash))
+            + _td(implied_cell, title=terms.get("implied_price_note"))
+            + _td(val_cell, title=val_note)
+            + _td(prem_cell, title="premium to the target's price as stated in "
+                                   "the announcement" if prem is not None else None)
+            + _td(ptbv_cell, title=ptbv_note)
+            + _td(_fmt_pct(d.get("price_assets")))
+            + _td(_fmt_pct(d.get("core_dep_premium")))
+            + _td(pe_cell, title=pe_note)
+            + _td(_fmt_bn(assets))
+            + _td(_fmt_px(tgt_px), title=tgt_px_note)
+            + _td(_fmt_px(arb["implied_offer"]), title=arb["offer_note"])
+            + _td(_fmt_pct(arb["gross_spread"]))
+            + _td(close_cell, "left", close_note)
+            + _td(days_cell)
+            + _td(_fmt_pct(arb["annualized_spread"]))
+            + _td(fee_cell)
+            + _td(approvals_cell, "left")
+            + "</tr>")
+        export_rows.append({
+            "Announced": ann, "Target": tgt_tick, "Target name": d.get("target_name"),
+            "Acquirer": acq_tick, "Acquirer name": d.get("buyer_name"),
+            "Status": status, "Completed": d.get("completion_date"),
+            "Terminated": d.get("termination_date"),
+            "Consideration": mix, "Stock mix (%)": terms.get("stock_pct"),
+            "Cash mix (%)": terms.get("cash_pct"),
+            "Exchange ratio (x)": ratio, "Cash per share ($)": cash,
+            "Implied price at announce ($)": implied,
+            "Implied price basis": terms.get("implied_price_basis"),
+            "Implied price note": terms.get("implied_price_note"),
+            "Deal value ($)": val, "Value basis": d.get("value_basis"),
+            "Value note": d.get("value_note"),
+            "Premium as stated (%)": prem,
+            "P/TBV (x)": d.get("p_tbv"), "TBV basis": d.get("tbv_basis"),
+            "TBV as of": d.get("tbv_asof"),
+            "P/Assets (%)": (d["price_assets"] * 100
+                             if d.get("price_assets") is not None else None),
+            "Core deposit premium (%)": (d["core_dep_premium"] * 100
+                                         if d.get("core_dep_premium") is not None else None),
+            "P/E at announce (x)": pe, "TTM EPS at announce ($)": eps,
+            "EPS as of": d.get("eps_asof"),
+            "Target assets ($)": assets,
+            "Target price ($)": tgt_px, "Target price as of": (tgt_q or {}).get("updated_at"),
+            "Acquirer price ($)": (acq_q or {}).get("price"),
+            "Implied offer now ($)": arb["implied_offer"],
+            "Gross spread (%)": (arb["gross_spread"] * 100
+                                 if arb["gross_spread"] is not None else None),
+            "Expected close (stated)": close_phrase,
+            "Expected close date": close_date,
+            "Days to close": days,
+            "Annualized spread (%)": (arb["annualized_spread"] * 100
+                                      if arb["annualized_spread"] is not None else None),
+            "Termination fee ($)": fee,
+            "Termination fee (% of value)": (fee / val * 100 if fee is not None and val else None),
+            "Shareholder votes": "; ".join(f"{v['side']} {v['date']}"
+                                            for v in (ms.get("votes") or [])) or None,
+            "Regulatory approval": (reg or {}).get("date"),
+            "Announcement URL": d.get("announce_url"),
+        })
+
+    group = ('<tr>'
+             '<th colspan="5" style="text-align:left;">Deal</th>'
+             '<th colspan="5" style="text-align:left;">Terms</th>'
+             '<th colspan="5" style="text-align:left;">Valuation at announce</th>'
+             '<th colspan="6" style="text-align:left;">Merger arb (pending, live)</th>'
+             '<th colspan="2" style="text-align:left;">Agreement</th>'
+             '</tr>')
+    cols = ('<tr>'
+            '<th style="text-align:left;">Announced</th>'
+            '<th style="text-align:left;">Target</th>'
+            '<th style="text-align:left;">Acquirer</th>'
+            '<th style="text-align:left;">Status</th>'
+            '<th style="text-align:left;">Consid.</th>'
+            '<th>Ratio</th><th>Cash/sh</th><th>Implied $/sh</th>'
+            '<th>Deal value</th><th>Premium</th>'
+            '<th>P/TBV</th><th>P/Assets</th><th>Core dep prem</th>'
+            '<th>P/E</th><th>Target assets</th>'
+            '<th>Target px</th><th>Implied offer</th><th>Gross spread</th>'
+            '<th style="text-align:left;">Exp. close</th><th>Days</th>'
+            '<th>Annualized</th>'
+            '<th>Term. fee</th><th style="text-align:left;">Vote / approvals</th>'
+            '</tr>')
+    st.markdown(
+        '<div class="ksk-grid" style="overflow-x:auto;"><table><thead>'
+        + group + cols + "</thead><tbody>" + body + "</tbody></table></div>",
+        unsafe_allow_html=True)
+    st.caption(f"{len(rows):,} deals · pending first by announce date, "
+               "completed/terminated greyed · * = computed (hover for the "
+               "formula: implied \$/sh = ratio × acquirer close before announce "
+               "+ cash; deal value = ratio × close × target shares) · "
+               "† = P/TBV outside the 0.2x–8x sanity band · premium only as "
+               "stated in the release, never from our own prices · P/E = "
+               "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
+               "announce (n/m = loss) · arb: implied offer at the acquirer's "
+               "current price, gross spread = offer ÷ target price − 1, "
+               "annualized = gross × 365 ÷ days to the STATED expected-close "
+               "period end (hover Exp. close for the wording) · term. fee % = "
+               "fee ÷ deal value · sources: EDGAR 8-K/425/EX-99, FDIC "
+               "structure + financials, SEC companyfacts, warm price cache.")
+
+    try:
+        import pandas as pd
+        from ui.chrome import table_export
+        built = str(snap.get("built_at", ""))[:10]
+        table_export(pd.DataFrame(export_rows), f"recent_deals_{built}",
+                     key="recent_deals_export",
+                     formats={"Announced": "date", "Completed": "date",
+                              "Terminated": "date", "TBV as of": "date",
+                              "EPS as of": "date", "Expected close date": "date",
+                              "Regulatory approval": "date",
+                              "Stock mix (%)": "pct", "Cash mix (%)": "pct",
+                              "Cash per share ($)": "usd2",
+                              "Implied price at announce ($)": "usd2",
+                              "Deal value ($)": "usd", "Premium as stated (%)": "pct",
+                              "P/TBV (x)": "x", "P/Assets (%)": "pct",
+                              "Core deposit premium (%)": "pct",
+                              "P/E at announce (x)": "x",
+                              "TTM EPS at announce ($)": "usd2",
+                              "Target assets ($)": "usd", "Target price ($)": "usd2",
+                              "Acquirer price ($)": "usd2",
+                              "Implied offer now ($)": "usd2",
+                              "Gross spread (%)": "pct", "Days to close": "int",
+                              "Annualized spread (%)": "pct",
+                              "Termination fee ($)": "usd",
+                              "Termination fee (% of value)": "pct"},
+                     provenance={"Page": "Transactions › Recent Deals",
+                                 "Source": "EDGAR announcement 8-K / Rule 425 / "
+                                           "merger-agreement 8-K (terms), FDIC "
+                                           "structure + financials, SEC companyfacts "
+                                           "(TBV, EPS), warm price cache (arb)",
+                                 "Snapshot built": built or None,
+                                 "Prices as of": max((q.get("updated_at") or ""
+                                                      for q in warm.values()),
+                                                     default=None),
+                                 "Note": "Terms verbatim from the filings; absent = "
+                                         "not disclosed. Implied price/offer and deal "
+                                         "value marked computed follow the formulas in "
+                                         "their note columns. Annualized spread uses "
+                                         "the stated expected-close period end."})
+    except Exception:
+        pass
+
+
+# ── By Bank (per-bank summary) ──────────────────────────────────────────────────
 
 def _deal_year(d: dict) -> int | None:
     dt = (d.get("completion_date") or d.get("termination_date")
