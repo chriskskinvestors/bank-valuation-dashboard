@@ -254,6 +254,46 @@ class TestPreferredSubtracted(unittest.TestCase):
         self.assertIsNone(r["tbvps"])
 
 
+# OCFC 10-Q 0001004702-26-000120, Jun 30 2026: "Total stockholders' equity"
+# 2,411,080 ($K), no NCI line; voting 96,604,195 + non-voting common-
+# equivalent 1,812,000 = 98,416,195 shares (per-class iXBRL facts, see
+# tests/test_multiclass_shares.py). The dei cover count 96,645,219 is the
+# VOTING class only. BVPS = 2,411,080,000 / 98,416,195 = 24.4988134321
+# (release: 24.50); the voting-only count gave 24.9477421123.
+OCFC_Q2 = "0001004702-26-000120"
+OCFC = _facts({
+    NCI: [_e("2026-06-30", 2411080000, OCFC_Q2, "10-Q", "2026-08-07")],
+}, dei=[_e("2026-08-03", 96645219, OCFC_Q2, "10-Q", "2026-08-07")])
+OCFC["_class_shares"] = {
+    "end": "2026-06-30", "value": 98416195.0, "status": "resolved", "reason": "",
+    "classes": {"ocfc:VotingCommonStockMember": 96604195.0,
+                "ocfc:NonvotingCommonEquivalentStockMember": 1812000.0},
+    "accession": "000100470226000120", "form": "10-Q"}
+
+
+class TestMultiClassShares(unittest.TestCase):
+    """Per-class sum at the balance-sheet date is THE count (snapshot mirror)."""
+    END = datetime(2026, 6, 30)
+
+    def test_class_sum_replaces_single_class_cover_count(self):
+        r = _row(OCFC, self.END)
+        self.assertEqual(r["shares"], 98_416_195)
+        self.assertAlmostEqual(r["bvps"], 24.4988134321, places=8)
+        self.assertEqual(r["_sh_prov"]["accn"], OCFC_Q2)        # dashed for the link
+
+    def test_unresolved_class_count_is_na_not_cover_count(self):
+        f = copy.deepcopy(OCFC)
+        f["_class_shares"].update(value=None, status="unresolved")
+        r = _row(f, self.END)
+        self.assertIsNone(r["shares"])
+        self.assertIsNone(r["bvps"])
+
+    def test_class_record_for_another_date_is_ignored(self):
+        r = _row(OCFC, datetime(2026, 3, 31))      # no equity → n/a, but no
+        self.assertIsNone(r["bvps"])               # class count misapplied
+        self.assertNotEqual(r["shares"], 98_416_195)
+
+
 class TestAsOfAnchors(unittest.TestCase):
     """The per-period readers resolve facts as they stood at the date."""
 
