@@ -57,6 +57,15 @@ class TestStoreRoundtrip(_DbCase):
         self.assertEqual(1, len(recs))
         self.assertEqual(5100, recs[0]["ASSET"])
 
+    def test_bulk_read_matches_per_cert_reads(self):
+        s = self._store
+        s.upsert_history(101, [{"REPDTE": "20211231", "ASSET": 1865267},
+                               {"REPDTE": "20210930", "ASSET": 1932677}])
+        s.upsert_history(102, [{"REPDTE": "20211231", "ASSET": 1551206}])
+        got = s.get_certs_history([101, 102, 103])
+        self.assertEqual({101: s.get_cert_history(101), 102: s.get_cert_history(102)}, got)
+        self.assertEqual({}, s.get_certs_history([]))
+
     def test_record_without_repdte_is_dropped(self):
         s = self._store
         n = s.upsert_history(101, [{"ASSET": 1}, {"REPDTE": "", "ASSET": 2}])

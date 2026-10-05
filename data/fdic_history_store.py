@@ -139,6 +139,26 @@ def get_cert_history(cert: int, limit: int | None = None) -> list[dict]:
     return out
 
 
+def get_certs_history(certs: list[int]) -> dict[int, list[dict]]:
+    """Stored records for many certs in ONE query — {cert: records}, for the
+    former charters behind a holdco (WFC: 253), where a query per cert would
+    cost a round trip each on every deep read."""
+    if not certs:
+        return {}
+    from sqlalchemy import bindparam, text
+    from data.fdic_client import null_unreported_capital, null_undefined_quotients
+    sql = text("SELECT cert, fields FROM fdic_history WHERE cert IN :certs "
+               "ORDER BY repdte DESC").bindparams(bindparam("certs", expanding=True))
+    with _get_engine().connect() as conn:
+        rows = conn.execute(sql, {"certs": [int(c) for c in certs]}).fetchall()
+    out: dict[int, list[dict]] = {}
+    for c, f in rows:
+        rec = f if isinstance(f, dict) else json.loads(f)
+        out.setdefault(int(c), []).append(
+            null_undefined_quotients(null_unreported_capital(rec)))
+    return out
+
+
 def max_repdte(cert: int) -> str | None:
     """Newest stored quarter for a cert (backfill/append checkpoint)."""
     from sqlalchemy import text
@@ -180,16 +200,22 @@ def deep_group_history(ticker: str, limit: int | None = None,
     cert_group.fetch_group_history, applied to stored rows instead of live
     fetches. Returns [] when nothing is stored (caller falls back to the
     live 20-quarter path)."""
-    from data.cert_group import aggregate_records, get_cert_group
+    from data.cert_group import (aggregate_records, get_absorbed_charters,
+                                 get_cert_group, held_by)
     certs = get_cert_group(ticker, cert=cert)
     if not certs:
         return []
-    if len(certs) == 1:
+    hc, former = get_absorbed_charters(certs[0])
+    if len(certs) == 1 and not former:
         return get_cert_history(certs[0], limit=limit)
 
+    stored = {c: get_cert_history(c) for c in certs}
+    stored.update(get_certs_history(former))
     by_period: dict[str, list[dict]] = {}
-    for c in certs:
-        for rec in get_cert_history(c):
+    for c, recs in stored.items():
+        for rec in recs:
+            if c in former and not held_by(rec, hc):
+                continue                      # before the holdco owned it
             period = str(rec.get("REPDTE") or "")
             if period:
                 by_period.setdefault(period, []).append(rec)
