@@ -591,7 +591,13 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         uninsured is not None and insured is not None and insured + uninsured > 0) else None
     core_dep_pct = (coredep / dep * 100) if (dep and coredep is not None) else None
     brokered_pct = (brokered / dep * 100) if (dep and brokered is not None) else None
-    nonint_dep_pct = (depnidom / dep * 100) if (dep and depnidom is not None) else None
+    # DEPNIDOM is DOMESTIC-office: ÷ domestic deposits (DEPIDOM + DEPNIDOM =
+    # DEPDOM), not all-office DEP — JPM 22.30% vs 28.24% (REVIEW 2026-10-05
+    # P1-2). Identical for the domestic-only majority.
+    depidom = fdic_data.get("DEPIDOM")
+    nonint_dep_pct = (depnidom / (depidom + depnidom) * 100) if (
+        depnidom is not None and depidom is not None
+        and depidom + depnidom > 0) else None
 
     # ── Loan concentration ───────────────────────────────────────────────
     loans_gross = fdic_data.get("LNLSGR") or fdic_data.get("LNLSNET")
