@@ -552,6 +552,27 @@ def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
     return subcategory_betas, asset_durations
 
 
+def _acquisition_note(ticker, cert, hist) -> str:
+    """ " · † includes …" when a whole-bank acquisition completed inside the
+    trailing year the YoY growth spans — that growth is the target's balance
+    sheet, not organic, and the volume model projects it forward (HBAN loans
+    +40.9% unflagged, REVIEW 2026-10-05 IRR P2). Cached deals only; "" on a
+    miss (unflagged, never blocking)."""
+    from ui.history_range import acquisitions_between, group_acquisitions
+    end = pd.to_datetime((hist or [{}])[0].get("REPDTE"), errors="coerce")
+    if pd.isna(end):
+        return ""
+    deals = acquisitions_between(group_acquisitions(ticker, cert),
+                                 end - pd.DateOffset(years=1), end)
+    if not deals:
+        return ""
+    names = ", ".join(f"{d.get('target_name') or 'a bank'} "
+                      f"({pd.to_datetime(d['date']).strftime('%b %Y')})"
+                      for d in deals[:3])
+    return (f" · † includes the acquisition of {names} — not organic growth, "
+            "and the volume projection carries it forward")
+
+
 def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     """
     Show per-year NIM, NII, and EPS impact of parallel rate scenarios with
@@ -686,6 +707,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             f"deposits {_g('deposits_growth')} · "
             f"earning assets {_g('earning_assets_growth')} · "
             f"securities {_g('securities_growth')}"
+            + _acquisition_note(ticker, cert, hist)
         )
 
     # ── My Assumptions: per-bank subcategory betas + asset durations ───
