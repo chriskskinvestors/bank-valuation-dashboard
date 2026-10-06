@@ -258,7 +258,8 @@ def get_ma_history(cert: int, cik: int | None = None,
     # board still carried a dateline self-deal and a flipped cash deal).
     # v13: announcement resolver party/context gates + whole-accession
     # re-gating (third-party lender filings anchored several large deals).
-    key = f"ma_history:v13:{cert}:{int(cik) if cik else 0}"
+    # v14: 425 "Filed by:" self identity (TYFG/HBT flip survived v12/v13).
+    key = f"ma_history:v14:{cert}:{int(cik) if cik else 0}"
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
