@@ -323,16 +323,36 @@ _TXS = [
 ]
 
 
+class _Oct6(dt.datetime):
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 10, 6, 12, 0)
+
+
 class TestInsiderActivityExports(_ExportCapture):
 
-    def _render(self):
+    def _render(self, complete_since=None, prices=None):
         import ui.insider_activity as ia
+        import data.form4_client as f4
         calls = self._capture()
+        self.ledgers, self.tables, self.labels, self.captions = [], [], [], []
+        self.figs = []
+        self.st.expander = lambda label, **k: (self.labels.append(label), _Ctx())[1]
+        self.st.caption = lambda text, **k: self.captions.append(text)
+        self.st.plotly_chart = lambda fig, **k: self.figs.append(fig)
+        hist = {"transactions": [dict(t) for t in _TXS],
+                "complete_since": complete_since}
         with patch.object(ia, "get_cik", lambda t: 946673), \
              patch.object(ia, "get_name", lambda t: "Banner Corporation"), \
-             patch.object(ia, "fetch_insider_trades",
-                          lambda cik, months_back=12: [dict(t) for t in _TXS]), \
-             patch("data.fmp_client.get_history", lambda t, rng: None):
+             patch.object(ia, "fetch_insider_history",
+                          lambda cik, months_back=12: hist), \
+             patch.object(ia, "datetime", _Oct6), \
+             patch.object(f4, "datetime", _Oct6), \
+             patch.object(ia, "ledger",
+                          lambda title, items: self.ledgers.append(dict(items))), \
+             patch("ui.tables.ksk_table",
+                   lambda df, **k: self.tables.append(df)), \
+             patch("data.fmp_client.get_history", lambda t, rng: prices):
             ia.render_insider_activity("BANR")
         self.assertEqual(len(calls), 2, "transactions + per-insider exports")
         return calls
@@ -394,6 +414,72 @@ class TestInsiderActivityExports(_ExportCapture):
         self.assertEqual(src["CIK"], 946673)
         self.assertIn("open-market P/S", src["Scope"])
         self.assertIn("Activity by insider", src["Page"])
+        self.assertNotIn("Coverage", src)
+
+    # ── Truncated history (fetch_insider_history's complete_since) ──────
+    # Frozen today 2026-10-06. Window starts: 3M (91d) 2026-07-07, 6M ledger
+    # (180d) 2026-04-09, 6M table (182d) 2026-04-07, 1Y (365d) 2025-10-06.
+
+    FLAG = "history truncated: covers since 2026-05-07"
+
+    def test_untruncated_shows_numbers(self):
+        self._render()
+        led = self.ledgers[0]
+        self.assertEqual(led["Total Txns (12M)"], "3")
+        self.assertTrue(led["6M Buys"].startswith("$61"))
+        self.assertFalse(any("n/a" in v for v in led.values()))
+        win = self.tables[0].set_index("Window")
+        self.assertFalse((win == "n/a").any().any())
+        self.assertFalse(any("truncated" in c for c in self.captions))
+
+    def test_windows_predating_coverage_render_na(self):
+        # Coverage since 2026-05-07 (BAC's every-own-filing walk): 3M is
+        # complete; the 6M/1Y windows and the 12M count start earlier.
+        calls = self._render("2026-05-07")
+        led = self.ledgers[0]
+        for k in ("Total Txns (12M)", "6M Buys", "6M Sells", "Net Flow (6M)",
+                  "Buy/Sell Ratio"):
+            self.assertTrue(led[k].startswith("n/a "), k)
+            self.assertIn(self.FLAG, led[k])
+        win = self.tables[0].set_index("Window")
+        # 3M: SMITH bought $61,250 (09-10) and sold $24,000 (08-01).
+        self.assertEqual(win.loc["3M", "Buyers : Sellers"], "1 : 1")
+        self.assertNotEqual(win.loc["3M", "Bought"], "n/a")
+        for label in ("6M", "1Y"):
+            self.assertEqual(list(win.loc[label]), ["n/a"] * 4, label)
+        self.assertTrue(any(c.startswith("**History truncated: covers since "
+                                         "2026-05-07**") for c in self.captions))
+        self.assertIn(f"Activity by insider (1 people · {self.FLAG})", self.labels)
+        for _label, data, _kw in calls:
+            self.assertEqual(_source(_load(data))["Coverage"], self.FLAG)
+
+    def test_window_starting_on_coverage_day_is_complete(self):
+        # 6M table window starts 2026-04-07: complete when coverage starts
+        # that day, n/a one day later. The ledger's 180d 6M (04-09) is
+        # complete for both.
+        self._render("2026-04-07")
+        self.assertNotEqual(self.tables[0].set_index("Window").loc["6M", "Bought"],
+                            "n/a")
+        self.tables.clear()
+        self.ledgers.clear()
+        self._render("2026-04-08")
+        self.assertEqual(self.tables[0].set_index("Window").loc["6M", "Bought"],
+                         "n/a")
+        self.assertFalse(self.ledgers[0]["6M Buys"].startswith("n/a"))
+
+    def test_price_chart_shades_the_unfetched_span(self):
+        # get_history's frame: datetime64 `date` (fmp_client coerces it).
+        import pandas as pd
+        prices = pd.DataFrame({
+            "date": pd.to_datetime(["2025-10-06", "2026-05-07", "2026-10-02"]),
+            "close": [45.0, 50.0, 52.0]})
+        self._render(prices=prices)
+        self.assertEqual(self.figs[0].layout.shapes, ())
+        self._render("2026-05-07", prices=prices)
+        (shape,) = self.figs[0].layout.shapes
+        self.assertEqual(pd.Timestamp(shape.x0), pd.Timestamp("2025-10-06"))
+        self.assertEqual(pd.Timestamp(shape.x1), pd.Timestamp("2026-05-07"))
+        self.assertEqual(self.figs[0].layout.annotations[0].text, self.FLAG)
 
 
 if __name__ == "__main__":

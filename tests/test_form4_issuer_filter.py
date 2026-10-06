@@ -255,7 +255,7 @@ class TestNightlySweepExcludesForeignIssuer(unittest.TestCase):
     """fetch_insider_trades (the refresh-insider job's force=True path)."""
 
     def setUp(self):
-        clear = getattr(f4.fetch_insider_trades, "clear", None)
+        clear = getattr(f4.fetch_insider_history, "clear", None)
         if clear:
             clear()
         self.saved = {}
