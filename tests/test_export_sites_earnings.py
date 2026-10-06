@@ -572,7 +572,8 @@ class TestResultsBoard(_ExportSite):
             "eps_surprise": 5.0, "eps_act_src": "release, adj.",
             "eps_basis": "adjusted",
             "rev_act": 150_000_000.0, "rev_est": 148_000_000.0,
-            "rev_surprise": 1.35, "reaction_session": "2026-07-15",
+            "rev_surprise": 1.35, "rev_basis": "reported",
+            "reaction_session": "2026-07-15",
             "pr_headline": "AAA reports Q2", "pr_url": "https://ir.example/q2",
             "pending": False, "awaiting": False, "px_react": 2.5,
             "px_react_live": False, "rel": None,
@@ -593,19 +594,20 @@ class TestResultsBoard(_ExportSite):
         self.assertEqual(kw["key"], "exp_earnings_results")
         g = self._grid(ws)
         hdr = g[0]
-        self.assertEqual(hdr[:21], [
+        self.assertEqual(hdr[:22], [
             "Ticker", "Bank", "Reported", "When", "Period Ending", "Status",
             "EPS Act ($)", "EPS Act Source", "EPS Est ($)", "EPS Surprise (%)",
             "EPS Basis",
             "Rev Act ($)", "Rev Act Source", "Rev Est ($)", "Rev Surprise (%)",
+            "Rev Basis",
             "Px React (%)", "Px React Live", "Reaction Session", "Release URL",
             "Release Headline", "Release Period End"])
         # One column per _REL_METRICS entry, unit in the header ($M → $).
-        self.assertEqual(hdr[21:24], ["Release EPS adj ($)", "Release EPS GAAP ($)",
+        self.assertEqual(hdr[22:25], ["Release EPS adj ($)", "Release EPS GAAP ($)",
                                       "Release Revenue ($)"])
         self.assertIn("Release NIM (%)", hdr)
         self.assertIn("Release TBV/sh ($)", hdr)
-        self.assertEqual(len(hdr), 21 + len(self.E._REL_METRICS))
+        self.assertEqual(len(hdr), 22 + len(self.E._REL_METRICS))
         a = dict(zip(hdr, g[1]))
         self.assertEqual(a["Ticker"], "AAA")
         self.assertEqual(a["Reported"], dt.datetime(2026, 7, 15))
@@ -618,6 +620,7 @@ class TestResultsBoard(_ExportSite):
         self.assertEqual(a["Rev Act ($)"], 150_000_000.0)   # unscaled
         self.assertEqual(a["Rev Act Source"], "FMP")
         self.assertEqual(a["Rev Est ($)"], 148_000_000.0)
+        self.assertEqual(a["Rev Basis"], "reported")
         self.assertEqual(a["Px React (%)"], 2.5)
         self.assertIs(a["Px React Live"], False)
         self.assertEqual(a["Release URL"], "https://ir.example/q2")
