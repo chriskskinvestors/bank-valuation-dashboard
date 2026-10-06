@@ -1249,7 +1249,8 @@ def _load_deals(ticker: str):
     with st.spinner("Assembling deal history — first load pulls FDIC "
                     "structure records and EDGAR announcement filings "
                     "(cached 7 days)…"):
-        deals = get_ma_history(cert, cik=cik, name=get_name(ticker) or ticker)
+        deals = get_ma_history(cert, cik=cik, name=get_name(ticker) or ticker,
+                               ticker=ticker)
     return deals, cert, cik
 
 

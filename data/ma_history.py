@@ -124,6 +124,18 @@ def _assets_before(cert: int | None, iso_date: str) -> tuple[int | None, str | N
     return int(asset_k) * 1000, f"{repdte[:4]}-{repdte[4:6]}-{repdte[6:]}", True
 
 
+def _same_holdco(out_cert, acq_cert) -> bool:
+    """Both certs report the same FDIC high holder (RSSDHCR). False when
+    either is unknown — an internal consolidation is only ever asserted on
+    two matching, non-empty holders."""
+    if not out_cert or not acq_cert:
+        return False
+    from data.fdic_client import get_holdco_rssd_for_cert
+    a = get_holdco_rssd_for_cert(int(out_cert))
+    b = get_holdco_rssd_for_cert(int(acq_cert))
+    return bool(a and b and a == b)
+
+
 # ── Branch-package extraction (712 headers + 722 office rows) ─────────────
 
 def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
@@ -182,7 +194,7 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
             "value_note": None,
             "target_cik": None,
             "announce_url": None,
-            "terms": None,
+            "terms": None, "internal": False,
             "milestones": None,
         })
     for date, n in office_counts.items():
@@ -204,14 +216,15 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
                 "value_note": None,
                 "target_cik": None,
                 "announce_url": None,
-                "terms": None,
+                "terms": None, "internal": False,
                 "milestones": None,
             })
     return deals
 
 
 def get_ma_history(cert: int, cik: int | None = None,
-                   name: str | None = None) -> list[dict]:
+                   name: str | None = None,
+                   ticker: str | None = None) -> list[dict]:
     """
     All completed structure deals for an FDIC cert, newest-first.
 
@@ -259,7 +272,9 @@ def get_ma_history(cert: int, cik: int | None = None,
     # v13: announcement resolver party/context gates + whole-accession
     # re-gating (third-party lender filings anchored several large deals).
     # v14: 425 "Filed by:" self identity (TYFG/HBT flip survived v12/v13).
-    key = f"ma_history:v14:{cert}:{int(cik) if cik else 0}"
+    # v15: wire-feed announcements + wire pending leg (acquirers EDGAR cannot
+    # reach), internal charter consolidations flagged, ticker-aware terms.
+    key = f"ma_history:v15:{cert}:{int(cik) if cik else 0}"
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):
@@ -275,7 +290,7 @@ def get_ma_history(cert: int, cik: int | None = None,
     if structure is None or branch is None or sold is None:
         return []
 
-    from data.ma_announcements import resolve_announcement
+    from data.ma_announcements import resolve_announcement, resolve_announcement_wire
 
     deals: list[dict] = []
     cache_ok = True
@@ -320,9 +335,17 @@ def get_ma_history(cert: int, cik: int | None = None,
         cache_ok = cache_ok and ok
         ann, ann_ok = (None, True)
         if assets is not None and ok:
-            ann, ann_ok = resolve_announcement(target_name, acquirer_name,
-                                               ev["date"])
+            ann, ann_ok = resolve_announcement(
+                target_name, acquirer_name, ev["date"],
+                acquirer_ticker=ticker if direction == "acquisition" else None)
             cache_ok = cache_ok and ann_ok
+            if ann is None and ann_ok and ticker and direction == "acquisition":
+                # EDGAR has nothing (non-filer acquirer, or a release EDGAR's
+                # quoted-name search cannot reach): the acquirer's own wire
+                # releases are the next primary source.
+                ann, w_ok = resolve_announcement_wire(ticker, target_name,
+                                                      acquirer_name, ev["date"])
+                cache_ok = cache_ok and w_ok
             # Spec: target assets AT ANNOUNCEMENT. Re-anchor at the announce
             # date when one resolved (the completion-anchored probe already
             # proved SDI coverage); deals with no announcement keep the
@@ -333,10 +356,21 @@ def get_ma_history(cert: int, cik: int | None = None,
                 cache_ok = cache_ok and a_ok
                 if a_ok and a_assets is not None:
                     assets, repdte = a_assets, a_repdte
+        # Internal charter consolidation: both certs under ONE holding
+        # company and no announcement anywhere (EDGAR or wire). Foresight's
+        # five charters folding into one on 2025-05-01 and Hometown's two on
+        # 2026-08-22 are structure events, not deals — they sat on the deal
+        # board as acquisitions with no terms (live 2026-10-06). A real deal
+        # whose charters merge after the holdco closing ALSO shares the holder
+        # at that point, so the no-announcement condition is what makes this
+        # safe: PNC/FirstBank carries its announcement.
+        internal = (ann is None and direction == "acquisition"
+                    and _same_holdco(target_cert, cert))
         deals.append({
             "completion_date": ev["date"],
             "deal_kind": "whole_company",
             "direction": direction,
+            "internal": internal,
             "counterparty": ev["other_institution"],
             "branch_count": None,
             "event_code": ev["event_type"],
@@ -396,6 +430,7 @@ def get_ma_history(cert: int, cik: int | None = None,
             "announce_url": None,
             "terms": None,
             "milestones": None,
+            "internal": False,
         })
 
     for d in deals:
@@ -442,10 +477,10 @@ def get_ma_history(cert: int, cik: int | None = None,
     # else the leading two words (case-folded — "American Bank Holding
     # Company" vs FDIC's "American Bank, National Association"); a false
     # positive here hides an open deal (safe), never shows a closed one.
-    if cik:
+    if cik or ticker:
         from data.ma_announcements import brand_token, token_in
         from data.ma_pending import find_pending_deals
-        pending, pd_ok = find_pending_deals(cik, subject_name)
+        pending, pd_ok = find_pending_deals(cik, subject_name, ticker=ticker)
         cache_ok = cache_ok and pd_ok
 
         def _lead_words(name: str) -> str:

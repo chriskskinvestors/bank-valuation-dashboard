@@ -251,7 +251,9 @@ def compute_multiples(deal: dict) -> tuple[dict, bool]:
 def _dedupe_key(deal: dict, buyer_cert) -> tuple:
     acc = None
     url = deal.get("announce_url") or ""
-    if url:
+    if url and "sec.gov/Archives" not in url:
+        acc = url                 # wire URL: the story itself is the key
+    elif url:
         acc = url.rsplit("/", 2)[-2] if "/" in url else url
     if acc:
         return ("acc", acc)
@@ -295,7 +297,8 @@ def build_comps_snapshot(banks: list[dict],
         # throw inside one bank's ma_history must not abort the whole
         # snapshot (an un-guarded call here crashed refresh-deal-comps).
         try:
-            deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+            deals = get_ma_history(cert, cik=cik, name=b.get("name"),
+                                   ticker=b.get("ticker"))
             if not deals:
                 # get_ma_history returns [] BOTH for "no deals" and for a
                 # failed FDIC history fetch (never cached), so a 429 during
@@ -305,7 +308,8 @@ def build_comps_snapshot(banks: list[dict],
                 # and the retry is instant; a failure refetches.
                 for wait in _EMPTY_HISTORY_RETRY_WAITS:
                     _time.sleep(wait)
-                    deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+                    deals = get_ma_history(cert, cik=cik, name=b.get("name"),
+                                           ticker=b.get("ticker"))
                     if deals:
                         break
         except Exception as e:
@@ -317,7 +321,7 @@ def build_comps_snapshot(banks: list[dict],
             continue
         covered += 1
         for d in deals:
-            if d.get("deal_kind") != "whole_company":
+            if d.get("deal_kind") != "whole_company" or d.get("internal"):
                 continue
             if d.get("direction") == "sale" and d.get("status") in (
                     "completed", "pending"):
