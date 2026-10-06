@@ -134,17 +134,24 @@ def _ticker_link(ticker: str | None) -> str:
 
 
 def _recent_rows(deals: list[dict], today) -> list[dict]:
-    """Every pending deal plus every deal announced in the last 24 months,
-    newest announcement first (completed/terminated keep their own date
-    as the fallback sort key)."""
+    """Every pending deal plus every deal announced OR closed/terminated in
+    the last 24 months, newest announcement first (completed/terminated
+    keep their own date as the fallback sort key). Closing counts too: a
+    deal announced 25 months ago that closed last quarter is a recent deal
+    (Busey/CrossFirst, announced 2024-08-27, closed 2025-06-21, was missing
+    from the first universe board on the announce-only rule)."""
     from datetime import timedelta
     floor = (today - timedelta(days=_RECENT_DAYS)).isoformat()
 
     def _date(d):
         return (d.get("announce_date") or d.get("completion_date")
                 or d.get("termination_date") or "")
+
+    def _recent(d):
+        return any((d.get(k) or "") >= floor
+                   for k in ("announce_date", "completion_date", "termination_date"))
     rows = [d for d in deals
-            if (d.get("status") == "pending" or _date(d) >= floor)
+            if (d.get("status") == "pending" or _recent(d))
             # A pending row whose target resolved to the acquirer itself is
             # a legend-parse artifact (live: EFSI "acquiring" EFSI at a 100%
             # "spread") — never shown.
@@ -160,7 +167,7 @@ def _render_recent_deals():
     from data.price_cache_store import get_prices
 
     st.caption("Every pending bank deal in the universe plus every deal "
-               "announced in the last 24 months, newest first. Terms are "
+               "announced or closed in the last 24 months, newest first. Terms are "
                "read verbatim from the announcement press release, Rule 425 "
                "legend and merger-agreement 8-K (ratio, cash, mix, stated "
                "per-share value, premium, expected close, termination fee); "
