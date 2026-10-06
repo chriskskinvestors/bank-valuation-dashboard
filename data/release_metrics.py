@@ -177,6 +177,15 @@ def _conn(n: int) -> str:
 # into "and <num>% … respectively" belongs to the pair parser.
 _RESP_TAIL = re.compile(
     r"^\s*(?:%\s*)?and\s+(?:\d[\d.]*|\.\d+)\s*%[^.;]{0,40}respectively", re.I)
+# The DOLLAR pair: "book value per share and tangible book value per share
+# … of $14.50 and $14.09, respectively" (CCNB 2Q26 wire release, prod
+# 2026-10-06: first-$-after-label served TBV $14.50 against the company's
+# $14.09 — one candidate, inside every band, nothing to disagree with).
+# A value trailed by "and $X" is one side of a pair whatever follows, so
+# the generic patterns never take it; only the respectively-anchored pair
+# patterns below may bind a pair, by ORDER. An unanchored pair yields
+# nothing (the table fills it, else n/a) — never the first value.
+_RESP_TAIL_USD = re.compile(r"^\s*and\s+\$\s?\d{1,3}\.\d{2}\b", re.I)
 
 
 def _pct_metric(text: str, label_re: str, band) -> float | None:
@@ -264,6 +273,18 @@ _TBV_PATS = [
     re.compile(r"tangible book value of (?:the )?(?:company'?s |bank'?s )?"
                r"common (?:stock|shares)[^$%]{0,50}?\b(?:was|were|of|at)\s*"
                r"\$\s?(\d{1,3}\.\d{2})\s*per (?:common )?share", re.I),
+    # Pair forms (see _RESP_TAIL_USD): label FIRST — "<label> and <other>
+    # … of/were $(V1) and $V2, respectively" — and label SECOND — "<other>
+    # and <label> … of/were $V1 and $(V2), respectively". Respectively-
+    # anchored so an unrelated "and" can never bind. The label-first form
+    # is derived into the BV lists below by the label replace; the
+    # label-second form starts with "and", so each label adds its own.
+    re.compile(_TBV_LABEL + r"\s+and\s+[^$%.;]{3,70}?\b(?:of|was|were|at)\s*"
+               r"\$\s?(\d{1,3}\.\d{2})\s+and\s+\$\s?\d{1,3}\.\d{2}"
+               r"[^.;]{0,40}respectively", re.I),
+    re.compile(r"\band\s+" + _TBV_LABEL + r"[^$%]{0,40}?\b(?:of|was|were|at)\s*"
+               r"\$\s?\d{1,3}\.\d{2}\s+and\s+\$\s?(\d{1,3}\.\d{2})"
+               r"[^.;]{0,40}respectively", re.I),
 ]
 _TBV_BAND = (1.0, 500.0)
 
@@ -284,6 +305,9 @@ _VERB_TO = (r"[^$%]{0,40}?\b(?:increased|decreased|rose|fell|grew|declined|"
 _BV_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_LABEL, 1), re.I)
             for p in _TBV_PATS if p.pattern.startswith(_TBV_LABEL)] + [
     re.compile(_BV_LABEL + _VERB_TO, re.I),
+    re.compile(r"\band\s+" + _BV_LABEL + r"[^$%]{0,40}?\b(?:of|was|were|at)\s*"
+               r"\$\s?\d{1,3}\.\d{2}\s+and\s+\$\s?(\d{1,3}\.\d{2})"
+               r"[^.;]{0,40}respectively", re.I),
     # "the book value of the Company's common stock … was $X per share" —
     # the TBV sentence of the same shape is kept out by the lookbehind.
     re.compile(r"(?<!tangible )book value of (?:the )?(?:company'?s |bank'?s )?"
@@ -482,6 +506,8 @@ def _dollar_metric(text: str, pats, band) -> float | None:
     def _gen():
         for pat in pats:
             for m in pat.finditer(text):
+                if _RESP_TAIL_USD.match(text[m.end():m.end() + 40]):
+                    continue              # the pair patterns own this value
                 yield m.start(), m.group(1), m.end()
     return _clean(text, _gen(), band, _AGREE_USD)
 
@@ -1304,7 +1330,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v23:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v24:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1373,7 +1399,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v23:{int(cik)}"
+    key = f"release_metrics:v24:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

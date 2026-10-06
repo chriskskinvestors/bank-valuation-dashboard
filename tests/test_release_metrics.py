@@ -238,6 +238,54 @@ class TestPerShare(unittest.TestCase):
         self.assertEqual(m["tbv_ps"], 12.20)
         self.assertIsNone(m["bv_ps"])                      # not a BV sentence
 
+    # CCNB 2Q26 wire release (prod 2026-10-06): the DOLLAR pair form. First-
+    # $-after-label handed TBV the BV value — $14.50 served against the
+    # company's $14.09, inside every band, one candidate so nothing to
+    # disagree with: a plausible-wrong number. Same construct the percent
+    # pair parser already owns (test_respectively_pair_maps_values_by_order).
+    # The real sentence, verbatim.
+    def test_dollar_respectively_pair_maps_values_by_order(self):
+        m = x("<p>The Company reported book value per share and tangible book "
+              "value per share at June 30, 2026 of $14.50 and $14.09, "
+              "respectively, compared to $14.13 and $13.72 at March 31, "
+              "2026.</p>")
+        self.assertEqual(m["tbv_ps"], 14.09)
+        # BV: the pair parser binds $14.50 (asserted on the prose layer —
+        # a prose-only fixture has no table rows, so the preferred-equity
+        # gate renders the bare BV label n/a by design; the live story has
+        # tables and serves it).
+        from data.release_metrics import (_BV_BAND, _BV_PATS, _dollar_metric,
+                                          _flat_text)
+        self.assertEqual(_dollar_metric(_flat_text(
+            "<p>The Company reported book value per share and tangible book "
+            "value per share at June 30, 2026 of $14.50 and $14.09, "
+            "respectively, compared to $14.13 and $13.72 at March 31, "
+            "2026.</p>"), _BV_PATS, _BV_BAND), 14.50)
+
+    def test_dollar_pair_label_first_takes_first_value(self):
+        m = x("<p>Tangible book value per share and book value per share "
+              "were $14.09 and $14.50, respectively.</p>")
+        self.assertEqual(m["tbv_ps"], 14.09)
+        from data.release_metrics import (_BV_BAND, _BV_PATS, _dollar_metric,
+                                          _flat_text)
+        self.assertEqual(_dollar_metric(_flat_text(
+            "<p>Tangible book value per share and book value per share "
+            "were $14.09 and $14.50, respectively.</p>"), _BV_PATS, _BV_BAND),
+            14.50)
+
+    def test_unanchored_dollar_pair_never_takes_first_value(self):
+        # No "respectively" → the pair patterns can't bind; the generic
+        # pattern must not take the first dollar either. n/a beats $14.50.
+        m = x("<p>Book value per share and tangible book value per share at "
+              "June 30, 2026 were $14.50 and $14.09.</p>")
+        self.assertIsNone(m["tbv_ps"])
+
+    def test_dollar_pair_guard_leaves_plain_sentences_alone(self):
+        m = x("<p>Tangible book value per share of $23.45 and total assets "
+              "of $1.2 billion.</p>")
+        self.assertEqual(m["tbv_ps"], 23.45)   # "and $1.2 billion" is not a pair
+
+
     def test_tbv_excluding_aoci_sentence_is_a_variant(self):
         gaap = ("<p>The tangible book value of the Company's common stock on "
                 "June 30, 2026, was $12.20 per share compared to $12.08 on "
