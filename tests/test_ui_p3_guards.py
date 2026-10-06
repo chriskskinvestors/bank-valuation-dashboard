@@ -58,18 +58,18 @@ class TestVlineNoneGuard(unittest.TestCase):
 
 
 class TestBankDetailRoatceFallbackBasis(unittest.TestCase):
-    """Item 4 — ROATCE fallback on the INTAN basis, same as the engine."""
+    """Item 4 superseded by REVIEW 2026-09-24 P1-5 (2026-10-06): the card no
+    longer computes its own ROATCE from the FDIC record at all — one engine
+    definition (holdco TTM, else the labeled bank FDIC blend). Pin that the
+    inline YTD ÷ TCE fallback (and its INTAN "or 0") stays gone."""
 
-    def test_fallback_subtracts_total_intangibles(self):
+    def test_no_inline_roatce_fallback(self):
         src = _read("ui", "bank_detail.py")
-        marker = 'roatce_v = disp("roatce_blended")'
-        self.assertIn(marker, src, "ROATCE fallback block moved/renamed?")
-        block = src.split(marker)[1].split("performance = [")[0]
-        self.assertIn('"INTAN"', block,
-                      "fallback must subtract INTAN (total intangibles)")
-        self.assertNotIn('"INTANGW"', block,
-                         "INTANGW (goodwill only) breaks basis continuity "
-                         "with analysis/valuation.compute_roatce")
+        start = src.index("def _render_valuation_performance_tables")
+        block = src[start:src.index("def _fmt_repdte", start)]
+        self.assertNotIn('fdic_rec.get("NETINC")', block)
+        self.assertNotIn('"INTANGW"', block)
+        self.assertIn('"ROATCE (HoldCo, TTM)"', block)
 
 
 class TestMacroTodayHighlightEt(unittest.TestCase):
