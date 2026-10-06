@@ -109,8 +109,18 @@ class TestTtmDividendWindow(unittest.TestCase):
 
     def test_restatement_latest_filing_wins(self):
         entries = [_entry(_q_start(e), e, 0.25) for e in self.q[:4]]
-        entries.append(_entry(_q_start(self.q[1]), self.q[1], 0.30, filed="2026-06-01"))
+        # The restating filing carries the whole window: one vintage.
+        entries += [_entry(_q_start(e), e, 0.30 if e == self.q[1] else 0.25,
+                           filed="2026-06-01") for e in self.q[:4]]
         self.assertAlmostEqual(_extract_ttm_dividend(_facts(entries)), 1.05, places=9)
+
+    def test_lone_restated_quarter_beside_older_vintage_is_none(self):
+        # One quarter re-filed at a new value while the rest of the window is
+        # the older vintage, and no FY/YTD to rebuild it on one basis: n/a,
+        # never a sum across two vintages (tests/test_ttm_vintage.py).
+        entries = [_entry(_q_start(e), e, 0.25) for e in self.q[:4]]
+        entries.append(_entry(_q_start(self.q[1]), self.q[1], 0.30, filed="2026-06-01"))
+        self.assertIsNone(_extract_ttm_dividend(_facts(entries)))
 
 
 if __name__ == "__main__":

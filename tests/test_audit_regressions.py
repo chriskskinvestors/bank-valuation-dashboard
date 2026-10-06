@@ -703,14 +703,19 @@ class TestTtmWindowIntegrity(unittest.TestCase):
         ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
         self.assertEqual(ttm, 33.0)
 
-    def test_restatement_latest_filing_wins(self):
+    def test_restatement_inside_window_is_one_vintage_or_none(self):
         from data.sec_client import _extract_ttm_value
         entries = self.SFST_SHAPE + [
             # Q2 restated from 6.0 → 6.5 in a later filing
             ("2025-04-01", "2025-06-30", 6.5, "10-Q", "2026-05-01"),
         ]
-        ttm = _extract_ttm_value(_flow_facts(entries), "NetIncomeLoss")
-        self.assertEqual(ttm, 33.5)
+        # The old stitch, 6.5 + 8 + (29 − 19) + 9 = 33.5, put the restated Q2
+        # beside a Q4 derived from the ORIGINAL 9M (which holds Q2 at 6.0):
+        # 33.5 if the FY 10-K still held 6.0, 33.0 if it held 6.5 — unknown.
+        # No consistent vintage can be assembled (the restating filing tags
+        # no Q1-25 comparative) → None (review 2026-10-05 Valuation P1-7;
+        # tests/test_ttm_vintage.py).
+        self.assertIsNone(_extract_ttm_value(_flow_facts(entries), "NetIncomeLoss"))
 
 
 class TestTtmOrNoneInvariant(unittest.TestCase):
