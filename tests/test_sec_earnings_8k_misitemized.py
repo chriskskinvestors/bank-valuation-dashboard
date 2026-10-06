@@ -156,8 +156,31 @@ _NPB_SUBS = _subs([
 ])
 
 
+# The Q1 2.02 8-Ks' EX-99.1s (excerpted): real releases, never notices.
+_FBP_Q1_991 = (
+    "<html><body><p>Exhibit 99.1</p><p><b>FIRST BANCORP. ANNOUNCES EARNINGS "
+    "FOR THE QUARTER ENDED MARCH 31, 2026</b></p><p>SAN JUAN, Puerto Rico "
+    "&#8211; April 22, 2026 &#8211; First BanCorp. (NYSE: FBP) today "
+    "reported a net income of $88.8 million.</p></body></html>").encode()
+_NPB_Q1_991 = (
+    "<html><body>" + _NPB_HEAD +
+    "<p><b>NORTHPOINTE BANCSHARES, INC. REPORTS FIRST QUARTER 2026 "
+    "RESULTS</b></p><p>GRAND RAPIDS, MICHIGAN, April 21, 2026 &#8211; "
+    "Northpointe Bancshares, Inc. (NYSE: NPB) today reported net income to "
+    "common stockholders of $21.7 million.</p></body></html>").encode()
+
+
+def _q1_202(site, cik, acc_dash, doc, ex991):
+    """Serve a 2.02 8-K's index + EX-99.1 (the finder's notice check)."""
+    acc = acc_dash.replace("-", "")
+    site[f"{_ARCH}/{cik}/{acc}/{acc_dash}-index.htm"] = _index(
+        cik, acc_dash, [("8-K", "8k.htm", "8-K"), ("EX-99.1", doc, "EX-99.1")])
+    site[f"{_ARCH}/{cik}/{acc}/{doc}"] = ex991
+    return site
+
+
 def _fbp_site(ex991=_FBP_Q2_991):
-    return {
+    return _q1_202({
         "https://data.sec.gov/submissions/CIK0001057706.json": _FBP_SUBS,
         f"{_ARCH}/1057706/000105770626000020/0001057706-26-000020-index.htm":
             _index(FBP, "0001057706-26-000020", [
@@ -165,11 +188,11 @@ def _fbp_site(ex991=_FBP_Q2_991):
                 ("EXHIBIT 99.1", "exhibit991.htm", "EX-99.1"),
                 ("EXHIBIT 99.2", "exhibit992.htm", "EX-99.2")]),
         f"{_ARCH}/1057706/000105770626000020/exhibit991.htm": ex991,
-    }
+    }, FBP, "0001057706-26-000010", "exhibit991q1.htm", _FBP_Q1_991)
 
 
 def _npb_site(q2_991=None):
-    return {
+    return _q1_202({
         "https://data.sec.gov/submissions/CIK0001336706.json": _NPB_SUBS,
         f"{_ARCH}/1336706/000133670626000068/0001336706-26-000068-index.htm":
             _index(NPB, "0001336706-26-000068", [
@@ -188,7 +211,7 @@ def _npb_site(q2_991=None):
         f"{_ARCH}/1336706/000133670626000059/q22026earningscallslides.htm":
             b"<html><body><img src='q22026earningscallslides001.jpg'>"
             b"</body></html>",
-    }
+    }, NPB, "0001336706-26-000035", "npb-202603x8kxexx991.htm", _NPB_Q1_991)
 
 
 class _Site(unittest.TestCase):
@@ -224,8 +247,9 @@ class TestMisitemizedReleaseSelected(_Site):
                                "accession": "000105770626000020",
                                "date": "2026-07-22", "cik": FBP})
         # The 8-K/A and the May 5.02 8-K (still Q1, ≤ the 2.02's quarter)
-        # are never fetched.
-        self.assertEqual(len(self.calls), 3)
+        # are never fetched: submissions, the 2.02 8-K's notice check
+        # (index + EX-99.1), the 2.01 8-K's index + EX-99.1.
+        self.assertEqual(len(self.calls), 5)
 
     def test_npb_skips_newer_appointment_release_takes_q2_release(self):
         self.serve(_npb_site())
@@ -279,18 +303,22 @@ class TestUnprovenExhibitFallsBackTo202(_Site):
         self.serve(site)
         self.assertEqual(se8k._latest_earnings_8k(FBP)["accession_dash"],
                          "0001057706-26-000010")
-        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(len(self.calls), 4)
 
     def test_same_quarter_as_202_never_fetched(self):
         # A 7.01 deck filed AFTER the Q2 2.02 release reports no newer
-        # quarter — no exhibit fetch at all.
-        self.serve({"https://data.sec.gov/submissions/CIK0000000077.json":
-                    _subs([("8-K", "2026-08-01", "0000000077-26-000009", "7.01"),
-                           ("8-K", "2026-07-21", "0000000077-26-000005",
-                            "2.02,9.01")])})
+        # quarter — its exhibit is never fetched (only the 2.02 8-K's own
+        # notice check: index + EX-99.1).
+        self.serve(_q1_202(
+            {"https://data.sec.gov/submissions/CIK0000000077.json":
+             _subs([("8-K", "2026-08-01", "0000000077-26-000009", "7.01"),
+                    ("8-K", "2026-07-21", "0000000077-26-000005",
+                     "2.02,9.01")])},
+            77, "0000000077-26-000005", "ex991.htm",
+            _FBP_Q2_991.replace(b"July 22, 2026", b"July 21, 2026")))
         self.assertEqual(se8k._latest_earnings_8k(77)["accession_dash"],
                          "0000000077-26-000005")
-        self.assertEqual(len(self.calls), 1)
+        self.assertEqual(len(self.calls), 3)
 
 
 SSB = 764038
@@ -308,8 +336,17 @@ _SSB_NOTICE_BODY = (
     "October 21, 2026, after the market closes.</p></body></html>")
 
 
+# SSB's real Q2 2.02 EX-99.1 opening (excerpted) — names no later date.
+_SSB_Q2_991 = (
+    "<html><body><p>Exhibit 99.1</p><p><b>SouthState Corporation Reports "
+    "Second Quarter 2026 Results</b></p><p>WINTER HAVEN, FL &#8211; July "
+    "23, 2026 &#8211; SouthState Corporation (NYSE: SSB) today released its "
+    "unaudited results of operations for the second quarter of 2026.</p>"
+    "</body></html>").encode()
+
+
 def _ssb_site(headline: str):
-    return {
+    return _q1_202({
         "https://data.sec.gov/submissions/CIK0000764038.json": _SSB_SUBS,
         f"{_ARCH}/764038/000119312526411326/0001193125-26-411326-index.htm":
             _index(SSB, "0001193125-26-411326", [
@@ -318,7 +355,7 @@ def _ssb_site(headline: str):
         f"{_ARCH}/764038/000119312526411326/ssb-ex99_1.htm":
             ("<html><body><p>Exhibit 99.1</p><p><b>" + headline + "</b></p>"
              + _SSB_NOTICE_BODY).encode(),
-    }
+    }, SSB, "0001104659-26-086278", "ssb-ex99_1.htm", _SSB_Q2_991)
 
 
 class TestFutureDatedNoticeRejected(_Site):
@@ -358,7 +395,7 @@ class TestCachingAndFailure(_Site):
         self.serve(_npb_site())
         se8k._latest_earnings_8k(NPB)
         n = len(self.calls)
-        cache.invalidate("earnings_8k_latest:v2:1336706")   # past the 2h TTL
+        cache.invalidate("earnings_8k_latest:v3:1336706")   # past the 2h TTL
         self.assertEqual(se8k._latest_earnings_8k(NPB)["accession_dash"],
                          "0001336706-26-000059")
         self.assertEqual(len(self.calls), n + 1)        # submissions only
@@ -376,7 +413,7 @@ class TestCachingAndFailure(_Site):
             # Never the older Q1 2.02 8-K in place of an unverified newer one.
             self.assertIsNone(se8k._latest_earnings_8k(FBP))
             self.assertEqual(se8k.latest_periodic_filing(FBP)["form"], "10-Q")
-        self.assertIsNone(cache.get("earnings_8k_latest:v2:1057706",
+        self.assertIsNone(cache.get("earnings_8k_latest:v3:1057706",
                                     max_age_s=None))
         self.assertIsNone(cache.get(
             "earnings_8k_misitemized:v2:000105770626000020", max_age_s=None))
