@@ -185,6 +185,11 @@ def build_bank_metrics(
     #  "reconstructed" = the XBRL TTM from data/sec_client).
     result["eps_source"] = computed.get("eps_source")
     result["eps_conflict"] = computed.get("eps_conflict")
+    # OTC market cap (owner spec 2026-10-06): market_cap_source labels the
+    # card's Market Cap when the count came from a non-SEC filer's own
+    # release; shares_outstanding is the count the cap was priced on.
+    result["market_cap_source"] = computed.get("market_cap_source")
+    result["shares_outstanding"] = computed.get("shares_outstanding")
     # SEC XBRL-API lag diagnostics (analysis/valuation._sec_facts_lag): the
     # bank-detail card dates its reconstructed per-share values by these.
     for key in ("sec_facts_lag", "sec_facts_as_of", "sec_filed_period",

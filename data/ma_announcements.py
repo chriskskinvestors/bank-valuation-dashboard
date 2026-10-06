@@ -54,6 +54,7 @@ re-fetched by every nightly refresh-deal-comps run.
 from __future__ import annotations
 
 import html as _html
+import random
 import re
 import time
 from datetime import date, datetime, timedelta
@@ -72,7 +73,12 @@ _MAX_CANDIDATES = 16            # accession groups fetched per deal — big
                                 # announcement; oldest-first stays the safe
                                 # order (the first doc IN TIME passing the
                                 # announce gates is the announcement)
-_PAUSE_S = 0.15                 # stay far under EDGAR's 10 req/s
+_PAUSE_S = 0.3                  # EDGAR allows 10 req/s; the whole-accession
+                                # reads (index + up to 3 documents) made 0.15s
+                                # pacing burst past it (429s through the
+                                # 2026-10-06 walk, then the 4h task timeout)
+_MAX_REGATES = 4                # whole-accession re-gates per deal
+_429_WAITS = (3, 6, 12)         # seconds before retrying a 429
 _DOC_404_TTL_S = 90 * 86400     # a 404 on an immutable EDGAR archive document
                                 # is permanent; remember it so the nightly job
                                 # never re-fetches the same dead 2001-vintage
@@ -938,13 +944,27 @@ def build_terms(text: str, announce_date: str, acq_tick: str | None = None,
     return t, ok
 
 
+def _get_429_aware(url: str, params: dict | None = None):
+    """requests.get with a 429 backoff (EDGAR's "Too Many Requests"). Kept on
+    plain requests.get — not data.http.get_with_retry — so the suites' wire
+    mocks on this module's requests.get still intercept every fetch."""
+    resp = None
+    for i, wait in enumerate((0,) + _429_WAITS):
+        if wait:
+            time.sleep(wait + random.uniform(0, 1))
+        resp = requests.get(url, params=params, headers=_headers(), timeout=30)
+        if getattr(resp, "status_code", None) != 429:
+            break
+    return resp
+
+
 def _efts_hits(target_query: str, startdt: str, enddt: str) -> list[dict] | None:
     """EFTS hits for a quoted phrase over 8-Ks in a window; None on failure."""
     try:
-        resp = requests.get(EDGAR_FTS, params={
+        resp = _get_429_aware(EDGAR_FTS, params={
             "q": f'"{target_query}"', "forms": "8-K",
             "dateRange": "custom", "startdt": startdt, "enddt": enddt,
-        }, headers=_headers(), timeout=30)
+        })
         resp.raise_for_status()
         return resp.json().get("hits", {}).get("hits", [])
     except Exception as e:
@@ -1080,7 +1100,7 @@ def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
     url = (f"https://www.sec.gov/Archives/edgar/data/{int(cik)}/"
            f"{adsh.replace('-', '')}/{doc}")
     try:
-        resp = requests.get(url, headers=_headers(), timeout=30)
+        resp = _get_429_aware(url)
         resp.raise_for_status()
         return _strip_html(resp.text), True
     except Exception as e:
@@ -1126,6 +1146,7 @@ def resolve_announcement(target_name: str, acquirer_name: str,
         return None, False
 
     fetch_failed = False
+    regates = 0
     party = [c for c in _candidates(hits) if _filed_by_a_party(c, acq_tok, tgt_tok)]
     for cand in party[:_MAX_CANDIDATES]:
         time.sleep(_PAUSE_S)
@@ -1146,6 +1167,16 @@ def resolve_announcement(target_name: str, acquirer_name: str,
 
         full = None
         if not _gates(text):
+            # Only a document that at least NAMES the target earns the
+            # whole-accession read (index + up to three documents): the
+            # 2026-10-06 walk re-read every party filing and burst EDGAR's
+            # rate limit. Capped per deal as well.
+            low = text.lower()
+            names_target = (tq.lower() in low
+                            or bool(tgt_tok and token_in(tgt_tok, low)))
+            if not names_target or regates >= _MAX_REGATES:
+                continue
+            regates += 1
             # The single EFTS-matched document is often the wrong one to
             # judge: the press release says "Bremer Financial" while the
             # exact charter phrase "Bremer Bank" sits in the 8-K body (Old

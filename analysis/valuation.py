@@ -575,6 +575,16 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
     facts_lag = _sec_facts_lag(ticker, sec_data.get("sec_as_of"))
+    # Market-cap share count: the SEC cover-page count when newer than the
+    # balance sheet, else the balance-sheet count; a bank with NEITHER (a
+    # non-SEC filer) gets the tied-out count from its own earnings release
+    # (owner spec 2026-10-06, data/release_shares) — labeled, or nothing.
+    mc_shares = sec_data.get("shares_for_market_cap") or shares
+    mc_source = None
+    if mc_shares is None and ticker:
+        otc_shares = _otc_release_shares(ticker)
+        if otc_shares:
+            mc_shares, mc_source = otc_shares, "company_release"
 
     # ── Deposit composition ─────────────────────────────────────────────
     dep = fdic_data.get("DEP")
@@ -709,17 +719,23 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "volume": price_data.get("volume"),
         # Current shares (cover count when newer than the balance sheet);
         # per-share book values keep the quarter-end count.
-        "market_cap": compute_market_cap(
-            price, sec_data.get("shares_for_market_cap") or shares),
+        "market_cap": compute_market_cap(price, mc_shares),
+        # "company_release" when the count is a non-SEC filer's own release
+        # figure (BV/share × shares tied to its equity); None for SEC counts.
+        "market_cap_source": mc_source,
+        # The count market_cap was priced on, whatever its source — the
+        # card's Market Data block shows it beside the cap.
+        "shares_outstanding": mc_shares,
         # pe_ratio prices off the RESOLVED eps — the same figure the eps key
         # displays (never two different EPS values on one row).
         "pe_ratio": compute_pe_ratio(price, eps),
         # The RESOLVED TTM diluted EPS — release-anchored composite in the
         # release→10-Q window, XBRL TTM otherwise.
-        # eps_source: "release_ttm" | "reconstructed" | None — NOTE:
-        # "reconstructed" here means the XBRL TTM from data/sec_client (the
-        # pipeline-derived figure; vocabulary kept consistent with
-        # tbvps_source/bvps_source).
+        # eps_source: "release_ttm" | "release_ttm_otc" | "reconstructed" |
+        # None — NOTE: "reconstructed" here means the XBRL TTM from
+        # data/sec_client (the pipeline-derived figure; vocabulary kept
+        # consistent with tbvps_source/bvps_source). "release_ttm_otc" is
+        # the non-SEC filer's four-quarter sum from its own releases.
         "eps": eps,
         "eps_source": eps_source,
         # SEC's XBRL API lagging the bank's OWN latest 10-Q/10-K (see
@@ -1024,6 +1040,9 @@ def _resolve_eps(
     in that window.
 
     Source vocabulary mirrors _resolve_tbvps: "release_ttm" (composite) |
+    "release_ttm_otc" (non-SEC filer: four discrete quarters from the
+    bank's own releases — analysis/release_eps.otc_composite_ttm_eps; the
+    only earnings source such a bank has, and still never a lone quarter) |
     "reconstructed" | None. NOTE: "reconstructed" here means the XBRL TTM
     from data/sec_client (sec_data["eps"], TTM-or-None invariant) — the
     pipeline-derived figure, named consistently with tbvps/bvps.
@@ -1075,6 +1094,19 @@ def _resolve_eps(
                 composite, _, components = composite_ttm_eps(cik)
         except Exception as e:
             print(f"[valuation] composite eps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    elif ticker:
+        # Non-SEC filer: no XBRL TTM exists, so the bank's own releases are
+        # the ONLY earnings source. Four discrete quarters or nothing (the
+        # WAL trap / audit A21). Serve-only reads — the snapshot job's warm
+        # pass fetches the envelope and fills the quarter history.
+        try:
+            from analysis.release_eps import otc_composite_ttm_eps
+            otc_eps, _, _ = otc_composite_ttm_eps(ticker)
+            if otc_eps is not None:
+                return otc_eps, "release_ttm_otc", False
+        except Exception as e:
+            print(f"[valuation] otc composite eps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
     if composite is not None:
         if reconstructed is None:
@@ -1352,24 +1384,23 @@ def _otc_tbvps(ticker: str, not_before: str | None = None) -> float | None:
     return _otc_release_ps(ticker, "tbv_ps", not_before=not_before)
 
 
-def _otc_release_ps(ticker: str, key: str,
-                    not_before: str | None = None) -> float | None:
-    """A non-SEC bank's per-share figure from its latest wire earnings release
-    (guarded extraction, band-checked at the source in data/otc_release +
-    release_metrics/release_ai specs). STALENESS GATE: a release quarter-end
-    older than ~200 days means the bank stopped publishing — pricing today's
-    quote against that figure drifts, so None (n/a) instead.
+def _otc_release_fresh(ticker: str,
+                       not_before: str | None = None) -> dict | None:
+    """The bank's latest wire/IR earnings-release envelope (data/otc_release)
+    when its quarter-end is CURRENT, else None. STALENESS GATE: a release
+    quarter-end older than ~200 days means the bank stopped publishing —
+    pricing today's quote against those figures drifts, so None (n/a).
 
-    SERVE-ONLY (2026-08-31): this resolver runs inside the 592-bank snapshot
-    build AND on single-bank Company-page renders, so it must never trigger
-    the wire fetch or the 30-100s IR-site crawl — jobs/refresh_home_snapshot
-    warms the envelope after the snapshot write; this reads it at any age."""
+    SERVE-ONLY (2026-08-31): the resolvers run inside the 592-bank snapshot
+    build AND on single-bank Company-page renders, so this must never
+    trigger the wire fetch or the 30-100s IR-site crawl —
+    jobs/refresh_home_snapshot warms the envelope after the snapshot write;
+    this reads it at any age."""
     from datetime import date
     from data.otc_release import otc_release_metrics
     val = otc_release_metrics(ticker, allow_fetch=False) or {}
-    v = (val.get("metrics") or {}).get(key)
     qend = val.get("qend")
-    if v is None or not qend:
+    if not qend:
         return None
     try:
         age_days = (date.today() - date.fromisoformat(qend)).days
@@ -1381,7 +1412,33 @@ def _otc_release_ps(ticker: str, key: str,
     # the Q2 release says $65.45, the reconstruction $65.44).
     if not_before and qend < not_before:
         return None
-    return v if age_days <= 200 else None
+    return val if age_days <= 200 else None
+
+
+def _otc_release_ps(ticker: str, key: str,
+                    not_before: str | None = None) -> float | None:
+    """A non-SEC bank's per-share figure from its latest wire earnings release
+    (guarded extraction, band-checked at the source in data/otc_release +
+    release_metrics/release_ai specs), staleness-gated — see
+    _otc_release_fresh."""
+    val = _otc_release_fresh(ticker, not_before)
+    return (val.get("metrics") or {}).get(key) if val else None
+
+
+def _otc_release_shares(ticker: str) -> float | None:
+    """A NON-SEC filer's common shares outstanding from its latest earnings
+    release (data/release_shares: served only when BV/share × shares
+    reproduces the release's own equity within ±1%), staleness-gated as
+    every other release figure. None for any bank with a CIK — its
+    cover-page count is the market-cap basis, never a release row."""
+    try:
+        from data.bank_mapping import get_cik
+        if get_cik(ticker):
+            return None
+    except Exception:
+        return None
+    val = _otc_release_fresh(ticker)
+    return val.get("shares_outstanding") if val else None
 
 
 def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec_data: dict) -> dict:

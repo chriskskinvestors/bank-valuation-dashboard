@@ -628,6 +628,115 @@ _ADJ_TABLE_SPECS = {
 }
 
 
+def _period_header(rows: list[list[str]]) -> tuple | None:
+    """The table's PERIOD HEADER: (qends, hdr_i, span_i, n_change) — the ISO
+    quarter-end per period column, the header row index, the row where a
+    "Three Months Ended | Six Months Ended" span banner would sit, and the
+    count of trailing %-change columns value rows must also carry — or None
+    when no row proves the layout (bare years, lone dates). Shared by the
+    single-column reader (extract_table_metrics) and the period-series
+    reader (extract_table_series): one header proof, two consumers.
+    """
+    # span_i: the row where a "Three Months Ended | Six Months Ended"
+    # SPAN banner would sit for this table's header shape — directly
+    # above the period row for a single-row header, but above the MONTH
+    # row for a split month/year header (ONB 2Q26: span, then "June 30,"
+    # cells, then years — three rows; found 2026-08-20 wiring the EPS
+    # tie-out, whose NI/share rows live in exactly those tables).
+    for i, cells in enumerate(rows[:8]):
+        found = [q for c in cells if (q := _period_qend(c))]
+        if len(found) >= 2:
+            # A caption/banner row ("2Q26 Change vs. | 1Q26 | 2Q25") can
+            # sit ABOVE the real period header (JPM, caught live
+            # 2026-07-14) — advance while the NEXT row carries strictly
+            # MORE period tokens (value rows carry none, so this can
+            # never walk past the header).
+            while i + 1 < len(rows):
+                nxt = [q for c in rows[i + 1] if (q := _period_qend(c))]
+                if len(nxt) <= len(found):
+                    break
+                found, i = nxt, i + 1
+            n_change = 0
+            # Trailing change columns on the header row itself ("$ O/(U)"
+            # / "O/(U) %", "QoQ%", "% Change") — counted so value rows
+            # that carry the change cells still align. Any trailing
+            # non-change token → count nothing (rows with extras skip).
+            last_p = max(j for j, c in enumerate(rows[i])
+                         if _period_qend(c))
+            trail = [c for c in rows[i][last_p + 1:] if c]
+            if trail and all(_CHANGE_COL.search(c) for c in trail):
+                n_change = len(trail)
+            return found, i, i - 1, n_change
+        # FITB-style SPLIT header: month names on one row, years on the
+        # next ("March | December | March" over "2026 | 2025 | 2025 |
+        # Seq | Yr/Yr"). Pair them in order; extra non-year cells on the
+        # year row are trailing change columns (counted for alignment).
+        if i + 1 < len(rows):
+            months = [_MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
+                      for c in cells if c.strip()]
+            months = [m for m in months if m in _QE_MONTH]
+            if len(months) >= 2 and months == [
+                    _MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
+                    for c in cells if c.strip()]:
+                nxt = [c.strip() for c in rows[i + 1] if c.strip()]
+                years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
+                extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
+                if (len(years) >= len(months)
+                        and all(_CHANGE_COL.search(c) for c in extras)):
+                    from datetime import date as _date
+                    qends = [_date(y, m, _QE_MONTH[m]).isoformat()
+                             for m, y in zip(months, years)]
+                    # span banner sits above the months row
+                    return qends, i + 1, i - 1, len(extras)
+        # TCBI-style split: ordinal-quarter row ("1st Quarter | 4th
+        # Quarter | …") over a years row — pair 1:1 like months. A
+        # leading non-year cell on the year row is the units/label slot
+        # and is ignored; trailing extras must all be change tokens.
+        if i + 1 < len(rows):
+            ords = [_QORD.match(c) for c in cells if c.strip()]
+            if len(ords) >= 2 and all(ords):
+                nxt = [c.strip() for c in rows[i + 1] if c.strip()]
+                if nxt and not re.fullmatch(r"20\d{2}", nxt[0]) \
+                        and not _CHANGE_COL.search(nxt[0]):
+                    nxt = nxt[1:]
+                years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
+                extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
+                if (len(years) >= len(ords)
+                        and all(_CHANGE_COL.search(c) for c in extras)):
+                    from datetime import date as _date
+                    qends = []
+                    for om, y in zip(ords, years):
+                        mo, dy = _Q_END[_QNUM[om.group(1).lower()]]
+                        qends.append(_date(y, mo, dy).isoformat())
+                    return qends, i + 1, i - 1, len(extras)
+        # CFR-style INVERTED split: a years row ("2026 | 2025") ABOVE the
+        # ordinal-quarter row ("1st Qtr | 4th | 3rd | 2nd | 1st Qtr").
+        # Colspans are lost in cell extraction, so year assignment is
+        # provable only when the ordinals form exactly one strictly-
+        # descending run per year (the standard descending-recency
+        # layout) — any other arrangement is refused, never guessed.
+        nz = [c.strip() for c in cells if c.strip()]
+        if nz and all(re.fullmatch(r"20\d{2}", c) for c in nz) \
+                and i + 1 < len(rows):
+            years = [int(c) for c in nz]
+            qs = [_QORD.match(c) for c in rows[i + 1] if c.strip()]
+            if len(qs) >= 2 and all(qs):
+                ordinals = [_QNUM[m.group(1).lower()] for m in qs]
+                run_idx, ridx = [], 0
+                for j, q in enumerate(ordinals):
+                    if j and q >= ordinals[j - 1]:
+                        ridx += 1
+                    run_idx.append(ridx)
+                if ridx + 1 == len(years):
+                    from datetime import date as _date
+                    qends = []
+                    for q, ri in zip(ordinals, run_idx):
+                        mo, dy = _Q_END[q]
+                        qends.append(_date(years[ri], mo, dy).isoformat())
+                    return qends, i + 1, i - 1, 0
+    return None
+
+
 def extract_table_metrics(html: str, expected_qend: str) -> dict:
     """Metric values read from the release's structured tables at the column
     whose PERIOD HEADER equals `expected_qend` (ISO quarter-end). All the
@@ -636,112 +745,10 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
     cands: dict = {k: [] for k in {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}}
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
-        # span_i: the row where a "Three Months Ended | Six Months Ended"
-        # SPAN banner would sit for this table's header shape — directly
-        # above the period row for a single-row header, but above the MONTH
-        # row for a split month/year header (ONB 2Q26: span, then "June 30,"
-        # cells, then years — three rows; found 2026-08-20 wiring the EPS
-        # tie-out, whose NI/share rows live in exactly those tables).
-        qends, hdr_i, span_i, n_change = None, None, None, 0
-        for i, cells in enumerate(rows[:8]):
-            found = [q for c in cells if (q := _period_qend(c))]
-            if len(found) >= 2:
-                # A caption/banner row ("2Q26 Change vs. | 1Q26 | 2Q25") can
-                # sit ABOVE the real period header (JPM, caught live
-                # 2026-07-14) — advance while the NEXT row carries strictly
-                # MORE period tokens (value rows carry none, so this can
-                # never walk past the header).
-                while i + 1 < len(rows):
-                    nxt = [q for c in rows[i + 1] if (q := _period_qend(c))]
-                    if len(nxt) <= len(found):
-                        break
-                    found, i = nxt, i + 1
-                qends, hdr_i = found, i
-                span_i = hdr_i - 1
-                # Trailing change columns on the header row itself ("$ O/(U)"
-                # / "O/(U) %", "QoQ%", "% Change") — counted so value rows
-                # that carry the change cells still align. Any trailing
-                # non-change token → count nothing (rows with extras skip).
-                last_p = max(j for j, c in enumerate(rows[i])
-                             if _period_qend(c))
-                trail = [c for c in rows[i][last_p + 1:] if c]
-                if trail and all(_CHANGE_COL.search(c) for c in trail):
-                    n_change = len(trail)
-                break
-            # FITB-style SPLIT header: month names on one row, years on the
-            # next ("March | December | March" over "2026 | 2025 | 2025 |
-            # Seq | Yr/Yr"). Pair them in order; extra non-year cells on the
-            # year row are trailing change columns (counted for alignment).
-            if i + 1 < len(rows):
-                months = [_MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
-                          for c in cells if c.strip()]
-                months = [m for m in months if m in _QE_MONTH]
-                if len(months) >= 2 and months == [
-                        _MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
-                        for c in cells if c.strip()]:
-                    nxt = [c.strip() for c in rows[i + 1] if c.strip()]
-                    years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
-                    extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
-                    if (len(years) >= len(months)
-                            and all(_CHANGE_COL.search(c) for c in extras)):
-                        from datetime import date as _date
-                        qends = [_date(y, m, _QE_MONTH[m]).isoformat()
-                                 for m, y in zip(months, years)]
-                        hdr_i, n_change = i + 1, len(extras)
-                        span_i = i - 1        # span banner above the months
-                        break
-            # TCBI-style split: ordinal-quarter row ("1st Quarter | 4th
-            # Quarter | …") over a years row — pair 1:1 like months. A
-            # leading non-year cell on the year row is the units/label slot
-            # and is ignored; trailing extras must all be change tokens.
-            if i + 1 < len(rows):
-                ords = [_QORD.match(c) for c in cells if c.strip()]
-                if len(ords) >= 2 and all(ords):
-                    nxt = [c.strip() for c in rows[i + 1] if c.strip()]
-                    if nxt and not re.fullmatch(r"20\d{2}", nxt[0]) \
-                            and not _CHANGE_COL.search(nxt[0]):
-                        nxt = nxt[1:]
-                    years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
-                    extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
-                    if (len(years) >= len(ords)
-                            and all(_CHANGE_COL.search(c) for c in extras)):
-                        from datetime import date as _date
-                        qends = []
-                        for om, y in zip(ords, years):
-                            mo, dy = _Q_END[_QNUM[om.group(1).lower()]]
-                            qends.append(_date(y, mo, dy).isoformat())
-                        hdr_i, n_change = i + 1, len(extras)
-                        span_i = i - 1
-                        break
-            # CFR-style INVERTED split: a years row ("2026 | 2025") ABOVE the
-            # ordinal-quarter row ("1st Qtr | 4th | 3rd | 2nd | 1st Qtr").
-            # Colspans are lost in cell extraction, so year assignment is
-            # provable only when the ordinals form exactly one strictly-
-            # descending run per year (the standard descending-recency
-            # layout) — any other arrangement is refused, never guessed.
-            nz = [c.strip() for c in cells if c.strip()]
-            if nz and all(re.fullmatch(r"20\d{2}", c) for c in nz) \
-                    and i + 1 < len(rows):
-                years = [int(c) for c in nz]
-                qs = [_QORD.match(c) for c in rows[i + 1] if c.strip()]
-                if len(qs) >= 2 and all(qs):
-                    ordinals = [_QNUM[m.group(1).lower()] for m in qs]
-                    run_idx, ridx = [], 0
-                    for j, q in enumerate(ordinals):
-                        if j and q >= ordinals[j - 1]:
-                            ridx += 1
-                        run_idx.append(ridx)
-                    if ridx + 1 == len(years):
-                        from datetime import date as _date
-                        qends = []
-                        for q, ri in zip(ordinals, run_idx):
-                            mo, dy = _Q_END[q]
-                            qends.append(_date(years[ri], mo, dy).isoformat())
-                        hdr_i = i + 1
-                        span_i = i - 1
-                        break
-        if not qends:
+        hdr = _period_header(rows)
+        if not hdr:
             continue                      # no period row → skip table
+        qends, hdr_i, span_i, n_change = hdr
         if qends.count(expected_qend) == 1:
             col = qends.index(expected_qend)
         elif qends.count(expected_qend) > 1 and span_i is not None \
@@ -856,6 +863,92 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
             out[key] = max(vs, key=_dec)      # the most precise candidate
         else:
             out[key] = None
+    return out
+
+
+# Header-row words that mark a YEAR-TO-DATE or annual column block ("Six
+# Months Ended", "Nine months ended", "Year Ended", "Full Year", "YTD").
+# A table whose header rows carry one is not a discrete-quarter series —
+# the period-series reader skips it outright (a lone YTD table has UNIQUE
+# period columns, so the twin-column refusal alone would not catch it).
+_YTD_HDR = re.compile(
+    r"(?i)\b(?:six|nine|twelve|6|9|12)[- ]months?\b"
+    r"|\byears?[- ](?:ended|ending|to[- ]date)\b|\bytd\b|\bfull[- ]year\b"
+    r"|\bannual\b")
+# …and the words that PROVE a quarterly block ("Three Months Ended" — split
+# across cells in many small-bank statements, so the bare word counts —
+# "Quarter Ended", "Quarterly", "1st Qtr"). No proof → no series.
+_QTR_HDR = re.compile(r"(?i)\bthree\b|\bquarter|\bqtr\b|\b3[- ]months?\b")
+
+
+def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float]:
+    """{ISO quarter-end: value} for `key` across EVERY period column of the
+    release's structured tables — the discrete-quarter SERIES a five-quarter
+    table prints (FDVA/BKSC/PTBS 2026: "Earnings per Share - Diluted | 0.42 |
+    0.36 | 0.36 | 0.38 | 0.35" under "June 30, 2026 | March 31, 2026 | …").
+    Built for the OTC composite TTM (analysis/release_eps): the sum of four
+    discrete quarters, never a single quarter served as twelve months (audit
+    A21), so every column must be a PROVEN discrete quarter:
+
+      - the same period-header proof as extract_table_metrics
+        (_period_header: period tokens, split month/year rows — never
+        positional luck); no header → table skipped
+      - a quarter-end appearing TWICE (quarter + YTD twin columns) → skipped
+      - a YTD/annual marker anywhere in the header rows (_YTD_HDR) →
+        skipped; no quarter marker (_QTR_HDR) → skipped
+      - a row whose value count ≠ period count (colspan drift) → skipped
+      - an adjusted/core label (the connector exclusion) → skipped
+      - candidates for one quarter-end across tables must agree
+        (rounding-aware, as extract_table_metrics) or that quarter is absent
+
+    Values keep their sign — a loss quarter ("$ (0.50)", FDVA 4Q25) is a real
+    component of a TTM, and dropping it would turn −0.14 into +0.36. The
+    magnitude band is the spec's upper bound (|v| ≤ 60). Only per-share ("$")
+    specs are supported. A quarter that fails any guard is simply ABSENT from
+    the result — the caller (A21 discipline) refuses a TTM with a gap."""
+    lab_re, kind, band = _TABLE_SPECS[key]
+    if kind != "$":
+        raise ValueError(f"extract_table_series supports per-share specs only ({key})")
+    cands: dict[str, list[float]] = {}
+    for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+        rows = _table_rows(thtml)
+        hdr = _period_header(rows)
+        if not hdr:
+            continue
+        qends, hdr_i, _span_i, n_change = hdr
+        if len(set(qends)) != len(qends):
+            continue                      # quarter/YTD twin columns
+        head_text = " ".join(c for r in rows[:hdr_i + 1] for c in r if c)
+        if _YTD_HDR.search(head_text) or not _QTR_HDR.search(head_text):
+            continue
+        table_text = " ".join(" ".join(c for c in cells if c)
+                              for cells in rows).lower()
+        table_per_share = "per share" in table_text
+        for cells in rows[hdr_i + 1:]:
+            label_idx = next((i for i, c in enumerate(cells) if c), None)
+            if label_idx is None:
+                continue
+            label = cells[label_idx]
+            row_text = " ".join(cells)
+            vals = _row_values(cells[label_idx:])
+            if len(vals) == len(qends) + n_change and n_change:
+                vals = vals[:len(qends)]
+            if len(vals) != len(qends):
+                continue
+            if _CONNECTOR_EXCLUDE.search(label):
+                continue                  # adjusted/core variant row
+            if not re.match(r"\s*" + lab_re, label, re.I):
+                continue
+            if ("$" not in row_text and not table_per_share) or "%" in row_text:
+                continue
+            for q, v in zip(qends, vals):
+                if abs(v) <= band[1]:
+                    cands.setdefault(q, []).append(v)
+    out: dict[str, float] = {}
+    for q, vs in cands.items():
+        tol = max(_AGREE_USD, 0.5 * 10.0 ** -min(_dec(v) for v in vs))
+        if (max(vs) - min(vs)) <= tol:
+            out[q] = max(vs, key=_dec)
     return out
 
 
