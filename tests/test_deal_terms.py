@@ -1351,5 +1351,57 @@ class TestInternalConsolidation(unittest.TestCase):
         self.assertEqual(k, ("acc", "https://www.globenewswire.com/news-release/2026/10/06/x.html"))
 
 
+class TestWalkThrottle(unittest.TestCase):
+
+    def test_429_is_retried_then_read(self):
+        from unittest.mock import MagicMock
+        from data import ma_announcements as ma
+        limited = MagicMock(); limited.status_code = 429
+        ok = MagicMock(); ok.status_code = 200; ok.text = "<p>hello</p>"
+        ok.raise_for_status = MagicMock()
+        with patch("data.ma_announcements.requests.get", side_effect=[limited, ok]) as g, \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.cache.get", return_value=None):
+            text, fine = ma._fetch_doc_text("0000000001", "0001-26-1", "x.htm")
+        self.assertEqual((text.strip(), fine), ("hello", True))
+        self.assertEqual(g.call_count, 2)
+
+    def test_regate_only_when_the_document_names_the_target(self):
+        # A party filing that does not name the target never triggers the
+        # whole-accession read (no index fetch), the one that names it does.
+        from tests.test_ma_announcements import _hit, _wire
+        from data.ma_announcements import resolve_announcement
+        hits = [_hit("0001-24-1", "2024-10-01", "tm2410001d1_ex99-1.htm", cik="0000707179",
+                     items=["2.02", "7.01"],
+                     display_names=["OLD NATIONAL BANCORP /IN/  (ONB)  (CIK 0000707179)"]),
+                _hit("0001-24-2", "2024-11-25", "tm2429075d4_ex99-5.htm", cik="0000707179",
+                     items=["1.01", "8.01"],
+                     display_names=["OLD NATIONAL BANCORP /IN/  (ONB)  (CIK 0000707179)"])]
+        docs = {"tm2410001d1_ex99-1.htm": "<p>Old National reports third quarter results.</p>",
+                "tm2429075d4_ex99-5.htm": "<p>Bremer Bank financial statements, audited.</p>",
+                "tm2429075d4_8k.htm": "<p>Old National Bancorp (NASDAQ: ONB) entered into a "
+                              "definitive merger agreement to acquire Bremer Financial, "
+                              "parent of Bremer Bank, valued at approximately $1.4 "
+                              "billion.</p>"}
+        fetched = []
+        wire = _wire(hits, docs, indexes={"0001242": ["tm2429075d4_8k.htm", "tm2429075d4_ex99-5.htm"]})
+        def spy(url, params=None, headers=None, timeout=30):
+            fetched.append(url.rsplit("/", 1)[-1] or "index")
+            return wire(url, params=params, headers=headers, timeout=timeout)
+        with patch("data.ma_announcements.requests.get", side_effect=spy), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.cache.get", return_value=None), \
+             patch("data.cache.put"), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(None, None, True)):
+            r, ok = resolve_announcement("Bremer Bank, National Association",
+                                         "Old National Bank", "2025-05-01")
+        self.assertTrue(ok)
+        self.assertEqual(r["announce_date"], "2024-11-25")
+        # The Q3 filing was read once and never earned an index fetch.
+        self.assertEqual(fetched.count("tm2410001d1_ex99-1.htm"), 1)
+        self.assertEqual(fetched.count("index"), 2)   # re-gate + terms read
+
+
 if __name__ == "__main__":
     unittest.main()
