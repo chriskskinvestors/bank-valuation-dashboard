@@ -255,6 +255,14 @@ def _overlay(cik: int, slim: dict) -> dict:
     except Exception as e:
         print(f"[SEC] preferred-total overlay skipped for CIK {cik}: "
               f"{type(e).__name__}: {e}")
+    # MSRs inside the intangibles rollup, tagged only where companyfacts
+    # can't see them (Citi) — proven by the filing's own ex-MSR remainder.
+    try:
+        from data.sec_facts_overlay import overlay_msr
+        slim = overlay_msr(cik, slim)
+    except Exception as e:
+        print(f"[SEC] MSR overlay skipped for CIK {cik}: "
+              f"{type(e).__name__}: {e}")
     return slim
 
 
@@ -1298,6 +1306,11 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     # `IntangibleAssetsNet…Goodwill` rollups ever include MSRs; the finite-lived
     # tag does not (MSRs are servicing assets, not finite-lived intangibles).
     msr, msr_end = _val_end(facts, "ServicingAssetAtFairValueAmount")
+    if msr is None:
+        # MSR tagged only in the filing's instance (Citi) — see
+        # data/sec_facts_overlay.overlay_msr; it carries its own date.
+        rec = facts.get("_msr_in_rollup") or {}
+        msr, msr_end = rec.get("value"), rec.get("end")
     result["mortgage_srv_rights"] = msr
 
     def _strip_msr(val: float | None, end: str | None, is_rollup: bool) -> float | None:
@@ -1414,6 +1427,10 @@ def _intangible_adjustment_at(facts: dict, as_of: str) -> tuple[float | None, st
             "FiniteLivedIntangibleAssetsNet")
     incl = _usd_at(facts, "IntangibleAssetsNetIncludingGoodwill", as_of)
     msr = _usd_at(facts, "ServicingAssetAtFairValueAmount", other_end or as_of)
+    if msr is None:
+        rec = facts.get("_msr_in_rollup") or {}
+        if rec.get("end") == (other_end or as_of):
+            msr = rec.get("value")
 
     def _strip(val, is_rollup):
         if val is None or not is_rollup or not msr:
