@@ -564,12 +564,14 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # (anchored by the resolved TBVPS: book ≥ tangible).
     reconstructed_bvps = sec_data.get("book_value_per_share")
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
+    liq_gap = _liquidation_gap_per_share(sec_data)
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
         ticker, reconstructed_tbvps, reconstructed_bvps,
         sec_as_of=sec_data.get("sec_as_of"),
-        shares=sec_data.get("shares_outstanding"))
+        shares=sec_data.get("shares_outstanding"), liq_gap_ps=liq_gap)
     bvps, bvps_source, bvps_conflict = _resolve_bvps(
-        ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"))
+        ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"),
+        liq_gap_ps=liq_gap)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
     facts_lag = _sec_facts_lag(ticker, sec_data.get("sec_as_of"))
@@ -816,12 +818,30 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     }
 
 
+def _liquidation_gap_per_share(sec_data: dict) -> float | None:
+    """Per-share gap between the preferred LIQUIDATION preference and its
+    carrying value (data/sec_client preferred_liquidation − preferred_stock,
+    over shares), or None. A bank that deducts the liquidation preference in
+    its own per-common-share figures (BAFN, 2026-10-06: $96,051K vs $90,238K
+    carrying on a $19,850K common base — $4.82 printed vs $6.25 at carrying)
+    prints a figure exactly this much below our reconstruction; the
+    resolvers retry the release against that convention before calling a
+    ≥15% gap a conflict."""
+    liq, car, sh = (sec_data.get("preferred_liquidation"),
+                    sec_data.get("preferred_stock"),
+                    sec_data.get("shares_outstanding"))
+    if liq and car is not None and sh and sh > 0 and liq > car:
+        return (liq - car) / sh
+    return None
+
+
 def _resolve_tbvps(
     ticker: str | None,
     reconstructed: float | None,
     bvps: float | None,
     sec_as_of: str | None = None,
     shares: float | None = None,
+    liq_gap_ps: float | None = None,
 ) -> tuple[float | None, str | None]:
     """(Tangible book value per common share, source), preferring the bank's
     OWN reported figure (earnings-release non-GAAP line) over our
@@ -867,6 +887,16 @@ def _resolve_tbvps(
                 cik, reconstructed=reconstructed, bvps=bvps)
             if reported is not None:
                 return reported, "reported_8k", False
+            if (status == "gate_rejected" and liq_gap_ps
+                    and reconstructed is not None):
+                # The company's convention: preferred deducted at liquidation
+                # preference (_liquidation_gap_per_share) — re-gate the
+                # release against the reconstruction restated that way.
+                reported, status = reported_tbvps_status(
+                    cik, reconstructed=reconstructed - liq_gap_ps,
+                    bvps=bvps - liq_gap_ps if bvps is not None else None)
+                if reported is not None:
+                    return reported, "reported_8k", False
             if status == "gate_rejected":
                 conflict = True
                 print(f"[valuation] TBVPS CONFLICT {ticker}: the release's own "
@@ -920,6 +950,7 @@ def _resolve_bvps(
     reconstructed: float | None,
     tbvps: float | None,
     sec_as_of: str | None = None,
+    liq_gap_ps: float | None = None,
 ) -> tuple[float | None, str | None, bool]:
     """(Book value per common share, source, conflict) — the BVPS sibling of
     _resolve_tbvps (release-first increment 1, owner directive 2026-08-19).
@@ -942,6 +973,13 @@ def _resolve_bvps(
                 cik, reconstructed=reconstructed, tbvps=tbvps)
             if reported is not None:
                 return reported, "reported_8k", False
+            if (status == "gate_rejected" and liq_gap_ps
+                    and reconstructed is not None):
+                # Same convention retry as _resolve_tbvps (BAFN's $4.83).
+                reported, status = reported_bvps_status(
+                    cik, reconstructed=reconstructed - liq_gap_ps, tbvps=tbvps)
+                if reported is not None:
+                    return reported, "reported_8k", False
             if status == "gate_rejected":
                 conflict = True
                 print(f"[valuation] BVPS CONFLICT {ticker}: the release's own "
