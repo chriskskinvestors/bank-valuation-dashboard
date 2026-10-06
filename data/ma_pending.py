@@ -63,6 +63,7 @@ from data.ma_announcements import (
     build_terms,
     extract_exchange_ratio,
     extract_stated_value,
+    fill_implied_price,
     find_open_announcements,
     token_in,
 )
@@ -89,6 +90,69 @@ _FILED_BY_RE = re.compile(
 # Ratio extraction lives upstream in ma_announcements.extract_exchange_ratio
 # (comma-tolerant + the bare "2.095 First Hawaiian shares for each TriCo
 # share" form — upstreamed 2026-07-14, closing the merge-later note).
+
+
+_FDIC_NAME_CACHE: dict[str, tuple] = {}
+_CORP_SUFFIX_RE = re.compile(
+    r",?\s+(?:inc\.?|incorporated|corp\.?|corporation|co\.?|company|ltd\.?|llc)\s*$",
+    re.IGNORECASE)
+# FDIC abbreviates holding-company names ("CENTURY FINL SERVICES CORP" for
+# Century Financial Services Corporation, live 2026-10-06; BCORP per the
+# OTC-discovery notes). The NAMEHCR retry uses these forms.
+_FDIC_ABBREV = {"financial": "finl", "bancorp": "bcorp", "bancorporation": "bcorp",
+                "national": "natl", "savings": "svgs", "trust": "tr",
+                "bankshares": "bkshs", "holdings": "hldgs"}
+
+
+def _fdic_abbreviated(phrase: str) -> str | None:
+    words = phrase.split()
+    out = [_FDIC_ABBREV.get(w.lower(), w) for w in words]
+    return " ".join(out) if out != words else None
+
+
+def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
+    """(cert, FDIC name, ok) for the ONE active FDIC-insured institution —
+    or the one charter under a holding company — carrying this name
+    (corporate suffix stripped, phrase match on NAME then NAMEHCR, brand
+    token must appear). A target outside the universe (private or OTC:
+    Century Financial Services, First Illinois, First Carolina Bank on the
+    2026-10-06 board) otherwise has no cert, and every valuation cell —
+    target assets, P/TBV, P/Assets, core-deposit premium — is n/a. Several
+    hits (a multi-charter holdco, a generic name) -> None: one charter's
+    TBV would be a plausible-wrong denominator. ok=False = FDIC unreachable
+    (never cache that)."""
+    phrase = _CORP_SUFFIX_RE.sub("", (name or "").strip()).strip(" ,.")
+    tok = brand_token(phrase)
+    if not tok or len(phrase) < 4:
+        return None, None, True
+    key = phrase.lower()
+    if key in _FDIC_NAME_CACHE:
+        return _FDIC_NAME_CACHE[key]
+    from data.fdic_client import FDIC_INSTITUTIONS_URL
+    from data.http import get_with_retry
+    hits: list[dict] = []
+    tries = [("NAME", phrase), ("NAMEHCR", phrase)]
+    abbr = _fdic_abbreviated(phrase)
+    if abbr:
+        tries.append(("NAMEHCR", abbr))
+    for field, needle in tries:
+        resp = get_with_retry(FDIC_INSTITUTIONS_URL, params={
+            "filters": f'{field}:"{needle}" AND ACTIVE:1',
+            "fields": "CERT,NAME,NAMEHCR,ASSET", "limit": 5}, timeout=30)
+        if resp is None:
+            return None, None, False
+        try:
+            rows = [d["data"] for d in resp.json().get("data", [])]
+        except Exception:
+            return None, None, False
+        hits = [r for r in rows
+                if token_in(tok, f"{r.get('NAME') or ''} {r.get('NAMEHCR') or ''}".lower())]
+        if hits:
+            break
+    out = ((int(hits[0]["CERT"]), hits[0].get("NAME"), True) if len(hits) == 1
+           else (None, None, True))
+    _FDIC_NAME_CACHE[key] = out
+    return out
 
 
 def _universe_match(name: str):
@@ -612,6 +676,24 @@ def find_pending_deals(cik, subject_name: str,
     ok = ok1 and ok2 and ok3 and sf_ok
     out = []
     for r in merged:
+        # Complete the row: a counterparty outside the universe still has
+        # an FDIC cert (valuation cells), and terms built without the
+        # filer's ticker still get their implied price.
+        if r["direction"] == "acquisition" and not r.get("counterparty_cert"):
+            c_cert, _c_name, c_ok = fdic_cert_for_name(r["counterparty_name"])
+            ok = ok and c_ok
+            if c_cert:
+                r["counterparty_cert"] = c_cert
+        terms = r.get("terms")
+        if (isinstance(terms, dict) and terms.get("implied_price") is None
+                and (terms.get("exchange_ratio") or terms.get("cash_per_share"))):
+            own = ticker
+            cp_t = r.get("counterparty_ticker")
+            acq_t = own if r["direction"] == "acquisition" else cp_t
+            tgt_t = cp_t if r["direction"] == "acquisition" else own
+            if not fill_implied_price(terms, r["announce_date"], acq_tick=acq_t,
+                                      tgt_tick=tgt_t, close_lookup=_close_before):
+                ok = False
         if r.get("source") == "wire" and not cik:
             # No EDGAR to consult: the wire completion check above and the
             # FDIC completion dedupe in ma_history are this row's gates.

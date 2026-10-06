@@ -154,7 +154,7 @@ class TestForm4RenderCache(unittest.TestCase):
             test.calls["submissions"] += 1
             return _Resp()
 
-        def _xml(accession, cik):
+        def _xml(accession, cik, primary_doc=None):
             test.calls["xml"] += 1
             return "<ownershipDocument/>"
 

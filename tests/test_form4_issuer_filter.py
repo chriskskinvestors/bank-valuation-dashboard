@@ -273,7 +273,8 @@ class TestNightlySweepExcludesForeignIssuer(unittest.TestCase):
 
         for target, name, fn in (
                 (f4.requests, "get", lambda url, *a, **k: _Resp(submissions)),
-                (f4, "_fetch_form4_xml", lambda acc, cik: _XML_BY_ACC[acc]),
+                (f4, "_fetch_form4_xml",
+                 lambda acc, cik, primary_doc=None: _XML_BY_ACC[acc]),
                 (f4, "load_json", lambda prefix, name: None),
                 (f4, "save_json", _save)):
             p = patch.object(target, name, fn)

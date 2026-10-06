@@ -321,7 +321,7 @@ class _BacWalk(unittest.TestCase):
             "accessionNumber": [a for a, _, _ in BAC_FEED],
             "filingDate": [d for _, d, _ in BAC_FEED]}}}
 
-        def _fetch(acc, cik):
+        def _fetch(acc, cik, primary_doc=None):
             self.fetched.append(acc)
             return self.xml_for[acc]
 
@@ -571,6 +571,116 @@ class TestXmlFetchThrottle(unittest.TestCase):
         xml, urls, _ = self._run(lambda url: None)
         self.assertIsNone(xml)
         self.assertEqual(urls, [f"{self.BASE}/index.json"])
+
+
+class TestPrimaryDocumentDirectFetch(unittest.TestCase):
+    """The submissions feed's primaryDocument names the filing's XML: strip
+    the xslF345X0N/ rendered-view prefix and fetch it directly — 1 SEC request
+    per filing instead of index.json + XML. A missing/non-.xml name or a
+    failed direct fetch falls back to index.json; the firehose (no
+    primaryDocument) stays on the index path.
+
+    Real values: BAC's two newest Form 4 feed rows (2026-10-06); both direct
+    URLs were fetched live and served the filing's ownership XML (469 is
+    BAC's own, 473 a foreign-issuer filing — served FOREIGN_XML by class)."""
+
+    BASE = "https://www.sec.gov/Archives/edgar/data/70858"
+    OWN_ACC, FGN_ACC = "0000070858-26-000469", "0000070858-26-000473"
+    FEED = [(FGN_ACC, "2026-10-05", "xslF345X06/primary_doc.xml"),
+            (OWN_ACC, "2026-09-17", "xslF345X06/form4.xml")]
+    DIRECT = {FGN_ACC: "primary_doc.xml", OWN_ACC: "form4.xml"}
+
+    def setUp(self):
+        self.urls = []
+        self.fail_once = set()   # URLs whose first GET raises
+        self.serve_once = {}     # URL -> body for its first GET
+        self.saved = {}
+        for target, name, fn in (
+                (f4, "_SEC_MIN_INTERVAL", 0.0),
+                (f4, "datetime", _FrozenNow),
+                (f4, "load_json", lambda prefix, name: None),
+                (f4, "save_json",
+                 lambda prefix, name, obj: self.saved.__setitem__(name, obj)),
+                ("data.http.get_with_retry", None, self._get_with_retry)):
+            p = (patch(target, fn) if name is None
+                 else patch.object(target, name, fn))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _url(self, acc, name):
+        return f"{self.BASE}/{acc.replace('-', '')}/{name}"
+
+    def _get_with_retry(self, url, headers=None, timeout=15, **kw):
+        import requests
+        self.urls.append(url)
+        if url in self.fail_once:
+            self.fail_once.discard(url)
+            raise requests.HTTPError(f"503 Server Error: {url}")
+        if url in self.serve_once:
+            return _HttpResp(text=self.serve_once.pop(url))
+        for acc, name in self.DIRECT.items():
+            if url == self._url(acc, "index.json"):
+                return _HttpResp(payload={"directory": {"item": [
+                    {"name": f"{acc}-index.htm"}, {"name": name}]}})
+            if url == self._url(acc, name):
+                return _HttpResp(
+                    text=OWN_XML if acc == self.OWN_ACC else FOREIGN_XML)
+        raise requests.HTTPError(f"404 Client Error: {url}")
+
+    def test_sweep_fetches_each_filing_directly(self):
+        submissions = {"filings": {"recent": {
+            "form": ["4", "4"],
+            "accessionNumber": [a for a, _, _ in self.FEED],
+            "filingDate": [d for _, d, _ in self.FEED],
+            "primaryDocument": [p for _, _, p in self.FEED]}}}
+        with patch.object(f4.requests, "get",
+                          lambda url, *a, **k: _Resp(submissions)):
+            out = f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertEqual(self.urls, [self._url(self.FGN_ACC, "primary_doc.xml"),
+                                     self._url(self.OWN_ACC, "form4.xml")])
+        self.assertEqual({t["accession"] for t in out}, {self.OWN_ACC})
+        self.assertEqual({t["insider"] for t in out}, {"MOYNIHAN BRIAN T"})
+
+    def test_failed_direct_fetch_falls_back_to_index(self):
+        direct = self._url(self.OWN_ACC, "form4.xml")
+        self.fail_once.add(direct)
+        xml = f4._fetch_form4_xml(self.OWN_ACC, BAC_CIK, "xslF345X06/form4.xml")
+        self.assertEqual(xml, OWN_XML)
+        self.assertEqual(self.urls, [direct, self._url(self.OWN_ACC, "index.json"),
+                                     direct])
+
+    def test_wrong_file_falls_back_to_index(self):
+        # A 404 on the named file, and a 200 that is not an ownership document.
+        direct = self._url(self.OWN_ACC, "form4.xml")
+        for label, doc in (("404", "xslF345X06/form4_missing.xml"),
+                           ("html", "xslF345X06/form4.xml")):
+            with self.subTest(label):
+                self.urls.clear()
+                if label == "html":
+                    self.serve_once[direct] = "<html><body>not XML</body></html>"
+                xml = f4._fetch_form4_xml(self.OWN_ACC, BAC_CIK, doc)
+                self.assertEqual(xml, OWN_XML)
+                self.assertEqual(self.urls[1:], [
+                    self._url(self.OWN_ACC, "index.json"), direct])
+
+    def test_missing_or_non_xml_name_uses_index(self):
+        for doc in (None, "", "0000070858-26-000469.txt"):
+            with self.subTest(doc=doc):
+                self.urls.clear()
+                xml = f4._fetch_form4_xml(self.OWN_ACC, BAC_CIK, doc)
+                self.assertEqual(xml, OWN_XML)
+                self.assertEqual(self.urls, [
+                    self._url(self.OWN_ACC, "index.json"),
+                    self._url(self.OWN_ACC, "form4.xml")])
+
+    def test_firehose_stays_on_index_path(self):
+        feed = [{"cik": BAC_CIK, "accession": self.OWN_ACC,
+                 "filed": "2026-09-17", "filed_at": None}]
+        with patch.object(f4, "_recent_form4_filings", lambda pages: feed):
+            result = f4.poll_form4_firehose({"BAC": BAC_CIK})
+        self.assertEqual(result[0], 1)
+        self.assertEqual(self.urls, [self._url(self.OWN_ACC, "index.json"),
+                                     self._url(self.OWN_ACC, "form4.xml")])
 
 
 if __name__ == "__main__":

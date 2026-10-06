@@ -1287,6 +1287,7 @@ class TestWirePendingLeg(unittest.TestCase):
                "target_cik": None, "announce_url": "u", "terms": {}, "source": "wire"}
         with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
              patch("data.ma_pending.find_open_announcements", return_value=([], True)), \
+             patch("data.ma_pending.fdic_cert_for_name", return_value=(None, None, True)), \
              patch("data.ma_pending.find_pending_wire", return_value=([row], True)):
             rows, ok = ma_pending.find_pending_deals(None, "TowneBank", ticker="TOWN")
         self.assertTrue(ok)
@@ -1549,6 +1550,142 @@ class TestAcquirerSideRows(unittest.TestCase):
                           rows[0]["counterparty_cik"]), ("CBNK", 35278, 1419536))
         self.assertEqual(rows[0]["counterparty_name"], "Capital Bancorp")
         self.assertEqual(rows[0]["terms"]["tgt_ticker"], "CBNK")
+
+
+# ── Board fill (owner 2026-10-06: the empty Terms / Valuation cells) ──────
+PEBO_VALUE = ("Based on Peoples' 20-day volume-weighted average closing price of "
+              "$39.41 per share as of September 29, 2026, the aggregate transaction "
+              "value is approximately $728.1 million, or $43.75 per share.")
+
+
+class TestBoardFill(unittest.TestCase):
+
+    def test_or_per_share_is_a_stated_implied_price(self):
+        from data.ma_announcements import extract_implied_price
+        self.assertEqual(extract_implied_price(PEBO_VALUE), 43.75)
+
+    def test_fill_implied_price_completes_a_ratio_only_row(self):
+        from data.ma_announcements import fill_implied_price
+        t = {"exchange_ratio": 1.11, "consideration": "stock", "cash_per_share": None,
+             "implied_price_stated": None, "implied_price": None,
+             "acq_ticker": None, "tgt_ticker": None}
+        ok = fill_implied_price(t, "2026-09-30", acq_tick="PEBO", tgt_tick="CBNK",
+                                close_lookup=lambda tk, d: (39.41, "2026-09-29", True))
+        self.assertTrue(ok)
+        self.assertEqual((t["acq_ticker"], t["tgt_ticker"]), ("PEBO", "CBNK"))
+        self.assertEqual(t["implied_price"], round(1.11 * 39.41, 4))   # 43.7451
+        self.assertEqual(t["implied_price_basis"], "computed")
+        self.assertEqual(t["acq_close_date"], "2026-09-29")
+
+    def _pending(self, cash, ticker, universe_match=(None, None, None),
+                 fdic=(None, None, True), close=(39.41, "2026-09-29", True)):
+        from data import ma_pending
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.ma_pending._universe_match", return_value=universe_match), \
+             patch("data.ma_pending.fdic_cert_for_name", return_value=fdic), \
+             patch("data.ma_pending.find_pending_wire", return_value=([], True)), \
+             patch("data.ma_pending._close_before", return_value=close), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            return ma_pending.find_pending_deals(318300, "Peoples Bank", ticker=ticker)
+
+    def test_pending_row_gets_implied_price_from_the_filers_ticker(self):
+        cash = [{"announce_date": "2026-09-30", "direction": "acquisition",
+                 "counterparty_name": "Capital Bancorp", "counterparty_ticker": None,
+                 "counterparty_cik": None, "value_usd": 728_100_000,
+                 "value_basis": "stated", "value_note": None, "target_cik": None,
+                 "announce_url": "u",
+                 "terms": {"exchange_ratio": 1.11, "consideration": "stock",
+                           "cash_per_share": None, "implied_price_stated": None,
+                           "implied_price": None, "acq_ticker": None, "tgt_ticker": None}}]
+        rows, ok = self._pending(cash, "PEBO", universe_match=("CBNK", 35278, 1419536))
+        self.assertTrue(ok)
+        t = rows[0]["terms"]
+        self.assertEqual((t["acq_ticker"], t["tgt_ticker"]), ("PEBO", "CBNK"))
+        self.assertEqual(t["implied_price"], 43.7451)
+
+    def test_private_target_gets_its_fdic_cert(self):
+        cash = [{"announce_date": "2026-09-17", "direction": "acquisition",
+                 "counterparty_name": "Century Financial Services Corporation",
+                 "counterparty_ticker": None, "counterparty_cik": None,
+                 "value_usd": 136_900_000, "value_basis": "stated", "value_note": None,
+                 "target_cik": None, "announce_url": "u", "terms": None}]
+        rows, ok = self._pending(cash, "BSVN", fdic=(12345, "Century Bank", True))
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["counterparty_cert"], 12345)
+        self.assertIsNone(rows[0]["counterparty_ticker"])
+
+    def test_fdic_unreachable_is_not_ok(self):
+        cash = [{"announce_date": "2026-09-17", "direction": "acquisition",
+                 "counterparty_name": "Century Financial Services Corporation",
+                 "counterparty_ticker": None, "counterparty_cik": None,
+                 "value_usd": None, "value_basis": None, "value_note": None,
+                 "target_cik": None, "announce_url": "u", "terms": None}]
+        _rows, ok = self._pending(cash, "BSVN", fdic=(None, None, False))
+        self.assertFalse(ok)
+
+
+class TestFdicCertForName(unittest.TestCase):
+
+    def _resp(self, rows):
+        from unittest.mock import MagicMock
+        r = MagicMock()
+        r.json.return_value = {"data": [{"data": d} for d in rows]}
+        return r
+
+    def setUp(self):
+        from data import ma_pending
+        ma_pending._FDIC_NAME_CACHE.clear()
+
+    def test_unique_name_hit(self):
+        from data.ma_pending import fdic_cert_for_name
+        with patch("data.http.get_with_retry", return_value=self._resp(
+                [{"CERT": 58691, "NAME": "BlueHarbor Bank", "NAMEHCR": "", "ASSET": 628408}])) as g:
+            self.assertEqual(fdic_cert_for_name("blueharbor bank"),
+                             (58691, "BlueHarbor Bank", True))
+        self.assertEqual(g.call_args.kwargs["params"]["filters"],
+                         'NAME:"blueharbor bank" AND ACTIVE:1')
+
+    def test_holdco_phrase_with_two_charters_is_none(self):
+        from data.ma_pending import fdic_cert_for_name
+        two = [{"CERT": 15752, "NAME": "First State Bank", "NAMEHCR": "TRI-COUNTY FINANCIAL GROUP INC"},
+               {"CERT": 4796, "NAME": "Bank of Commerce and Trust Company", "NAMEHCR": "TRI-COUNTY FINANCIAL CORP"}]
+        with patch("data.http.get_with_retry", side_effect=[self._resp([]), self._resp(two)]):
+            self.assertEqual(fdic_cert_for_name("Tri-County Financial Group, Inc."),
+                             (None, None, True))
+
+    def test_suffix_stripped_and_brand_required(self):
+        from data.ma_pending import fdic_cert_for_name
+        with patch("data.http.get_with_retry", side_effect=[
+                self._resp([]),
+                self._resp([{"CERT": 777, "NAME": "Century Bank", "NAMEHCR": "CENTURY FINANCIAL SERVICES CORP"}])]) as g:
+            self.assertEqual(fdic_cert_for_name("Century Financial Services Corporation"),
+                             (777, "Century Bank", True))
+        self.assertEqual(g.call_args.kwargs["params"]["filters"],
+                         'NAMEHCR:"Century Financial Services" AND ACTIVE:1')
+
+    def test_fdic_abbreviated_holdco_name(self):
+        # Live: Century Financial Services Corporation (Bank7, 2026-09-17) is
+        # "CENTURY FINL SERVICES CORP" at the FDIC.
+        from data.ma_pending import fdic_cert_for_name
+        with patch("data.http.get_with_retry", side_effect=[
+                self._resp([]), self._resp([]),
+                self._resp([{"CERT": 28362, "NAME": "Century Bank",
+                             "NAMEHCR": "CENTURY FINL SERVICES CORP"}])]) as g:
+            self.assertEqual(fdic_cert_for_name("Century Financial Services Corporation"),
+                             (28362, "Century Bank", True))
+        self.assertEqual(g.call_args.kwargs["params"]["filters"],
+                         'NAMEHCR:"Century finl Services" AND ACTIVE:1')
+
+    def test_unreachable_is_not_ok_and_not_cached(self):
+        from data import ma_pending
+        with patch("data.http.get_with_retry", return_value=None):
+            self.assertEqual(ma_pending.fdic_cert_for_name("First Carolina Bank"),
+                             (None, None, False))
+        self.assertEqual(ma_pending._FDIC_NAME_CACHE, {})
 
 
 if __name__ == "__main__":
