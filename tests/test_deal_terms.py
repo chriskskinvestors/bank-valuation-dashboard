@@ -1400,7 +1400,8 @@ class TestWalkThrottle(unittest.TestCase):
         self.assertEqual(r["announce_date"], "2024-11-25")
         # The Q3 filing was read once and never earned an index fetch.
         self.assertEqual(fetched.count("tm2410001d1_ex99-1.htm"), 1)
-        self.assertEqual(fetched.count("index"), 2)   # re-gate + terms read
+        # One index fetch: the terms read reuses the re-gate accession text.
+        self.assertEqual(fetched.count("index"), 1)
 
 
 if __name__ == "__main__":
