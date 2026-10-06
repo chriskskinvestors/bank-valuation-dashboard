@@ -256,7 +256,9 @@ def get_ma_history(cert: int, cik: int | None = None,
     # aggregate cash as per-share.
     # v12: cash-leg counterparty sanity + acquire-object direction (the v11
     # board still carried a dateline self-deal and a flipped cash deal).
-    key = f"ma_history:v12:{cert}:{int(cik) if cik else 0}"
+    # v13: announcement resolver party/context gates + whole-accession
+    # re-gating (third-party lender filings anchored several large deals).
+    key = f"ma_history:v13:{cert}:{int(cik) if cik else 0}"
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached) and isinstance(cached.get("deals"), list):

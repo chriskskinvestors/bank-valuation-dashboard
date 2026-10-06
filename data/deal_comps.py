@@ -43,6 +43,8 @@ from datetime import datetime
 SNAPSHOT_KEY = "deal_comps_snapshot:v1"
 _PTBV_SANE = (0.2, 8.0)         # outside → basis-mismatch guard, n/a + flag
 _MAX_TBV_AGE_DAYS = 200
+_EMPTY_HISTORY_RETRY_WAITS = (15, 45)   # seconds before re-fetching a bank
+                                        # whose history came back empty
 
 
 def _ttm_eps_at(cik: int, asof_iso: str) -> tuple[float | None, str | None]:
@@ -281,7 +283,8 @@ def build_comps_snapshot(banks: list[dict],
     from data import cache
     from data.ma_history import get_ma_history
 
-    rows, seen = [], set()
+    import time as _time
+    by_key: dict[tuple, dict] = {}
     lookups_ok = True
     covered = 0
     for b in banks:
@@ -293,6 +296,18 @@ def build_comps_snapshot(banks: list[dict],
         # snapshot (an un-guarded call here crashed refresh-deal-comps).
         try:
             deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+            if not deals:
+                # get_ma_history returns [] BOTH for "no deals" and for a
+                # failed FDIC history fetch (never cached), so a 429 during
+                # the walk silently erased a bank's deals from the board
+                # (Busey/CrossFirst, Old National/Bremer, UMB/HTLF ... all
+                # absent on the first universe run). A genuine [] is cached
+                # and the retry is instant; a failure refetches.
+                for wait in _EMPTY_HISTORY_RETRY_WAITS:
+                    _time.sleep(wait)
+                    deals = get_ma_history(cert, cik=cik, name=b.get("name"))
+                    if deals:
+                        break
         except Exception as e:
             print(f"[deal_comps] {b.get('ticker')}: "
                   f"{type(e).__name__}: {e} — skipped")
@@ -310,12 +325,20 @@ def build_comps_snapshot(banks: list[dict],
                 # otherwise appears under BOTH filers' 425 episodes.
                 continue
             k = _dedupe_key(d, cert)
-            if k in seen:
-                continue
-            seen.add(k)
+            prev = by_key.get(k)
+            if prev is not None:
+                # Same announcement seen twice. Across banks (a terminated
+                # deal swept from both parties) either row serves; within
+                # one acquirer it is SIBLING CHARTERS of one target closing
+                # together (Comerica Bank $80B and Comerica Bank & Trust
+                # $126M into Fifth Third on 2026-02-01): the deal is the
+                # largest charter — the first universe board kept the trust
+                # affiliate and priced the $10.9B deal off its TBV.
+                if (d.get("target_assets") or 0) <= (prev.get("target_assets") or 0):
+                    continue
             mult, m_ok = compute_multiples(d)
             lookups_ok = lookups_ok and m_ok
-            rows.append({
+            by_key[k] = ({
                 "buyer_ticker": b.get("ticker"),
                 "buyer_name": b.get("name") or b.get("ticker"),
                 "buyer_cert": cert,
@@ -336,6 +359,7 @@ def build_comps_snapshot(banks: list[dict],
                 "milestones": d.get("milestones"),
                 **mult,
             })
+    rows = list(by_key.values())
     if not lookups_ok:
         print("[deal_comps] lookups failed during build — snapshot NOT cached")
         return None

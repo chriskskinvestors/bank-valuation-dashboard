@@ -194,6 +194,17 @@ _RATIO_MIXED_RE = re.compile(
     r"[\d,]+(?:\.\d+)?\s+in\s+cash\s+for\s+each\s+(?:outstanding\s+)?"
     r"(?:share\s+of\s+)?([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+"
     r"(?:common\s+stock|shares?|stock)")
+# Merger-agreement summary with par values: "each share of common stock, par
+# value $0.01 per share, of CrossFirst ("CrossFirst Common Stock") ... will be
+# converted into the right to receive 0.6675 of a share (the "Exchange
+# Ratio") of common stock, par value $0.001 per share, of Busey" (live-
+# verified Busey 8-K 2024-08-27).
+_RATIO_PARVALUE_RE = re.compile(
+    r"each\s+share\s+of\s+common\s+stock,\s+par\s+value\s+\$[\d.]+\s+per\s+share,"
+    r"\s+of\s+([A-Z][\w.&'\-]{1,30})\b.{0,320}?converted\s+into\s+the\s+right\s+"
+    r"to\s+receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s*"
+    r"(?:\(the\s+[\"“”']?Exchange\s+Ratio[\"“”']?\)\s*)?of\s+common\s+stock"
+    r"(?:,\s+par\s+value\s+\$[\d.]+\s+per\s+share,?)?\s+of\s+([A-Z][\w.&'\-]{1,30})\b")
 # Cash-first mixed form with a comma share count: "converted into the right
 # to receive $69,850 in cash and approximately 2,869 Civista common shares"
 # (live-verified CIVB 8-K 2025-07-11; the target is a 500-share bank). The
@@ -251,6 +262,8 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(1)), m.group(2).strip(), ""))
     for m in _RATIO_CASH_FIRST_RE.finditer(text):
         found.append((float(m.group(1).replace(",", "")), m.group(2).strip(), ""))
+    for m in _RATIO_PARVALUE_RE.finditer(text):
+        found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
     return found[0]
@@ -936,8 +949,73 @@ def _candidates(hits: list[dict]) -> list[dict]:
             by_adsh[adsh] = {"adsh": adsh, "doc": doc,
                              "file_date": src.get("file_date"),
                              "cik": (src.get("ciks") or [None])[0],
-                             "is_ex99": is_ex99}
+                             "is_ex99": is_ex99,
+                             "filers": " ".join(src.get("display_names") or []).lower()}
     return sorted(by_adsh.values(), key=lambda c: c["file_date"])
+
+
+def _filed_by_a_party(cand: dict, acq_tok: str | None, tgt_tok: str | None) -> bool:
+    """Is this EFTS candidate filed by the acquirer or the target? The quoted
+    bank-name query also returns every unrelated registrant naming the bank
+    as a LENDER in a credit agreement (live 2026-10-06: "Bremer Bank" ->
+    Core Scientific x7, "Synovus Bank" -> Tupperware/AdaptHealth/..., "Comerica
+    Bank" -> Credit Acceptance), which spent the candidate budget and, since
+    tokens like "old" and "fifth" occur in any document, even passed the text
+    gates — Old National/Bremer, Pinnacle/Synovus and Fifth Third/Comerica
+    all anchored on a third party's filing. With no usable token on either
+    side the gate stays open (never drop a deal on an all-generic name)."""
+    toks = [t for t in (acq_tok, tgt_tok) if t]
+    if not toks or not cand.get("filers"):
+        return True
+    return any(token_in(t, cand["filers"]) for t in toks)
+
+
+# The target must be named in DEAL context, not as a peer in a deck or a
+# lender in a covenant: within a sentence of acquire / merge / agreement /
+# combination wording.
+_DEAL_CTX = r"(?:acqui\w+|merg\w+|combin\w+|agreement)"
+
+
+# Completed-tense, split by strength. The explicit forms always mark a
+# completion filing; the generic "has/successfully completed" form only
+# counts when the TARGET is named in that sentence — an investor deck's
+# "management has successfully completed and integrated 9 bank M&A
+# transactions" (Old National/Bremer, live) is history, not this deal.
+_COMPLETED_STRONG_RE = re.compile(
+    r"\bannounce[ds]?\s+the\s+completion\b|"
+    r"\bcompleted\s+(?:its|the)\s+(?:previously\s+announced|acquisition|"
+    r"merger|purchase|combination)", re.IGNORECASE)
+_COMPLETED_WEAK_RE = re.compile(
+    r"\b(?:has|have|had|today|successfully)\s+completed\b", re.IGNORECASE)
+
+
+def _completed_for(text: str, tgt_tok: str | None) -> bool:
+    """Does ``text`` announce THIS deal's completion? (see the split above;
+    with no usable target token the generic form counts everywhere)."""
+    if _COMPLETED_STRONG_RE.search(text):
+        return True
+    for m in _COMPLETED_WEAK_RE.finditer(text):
+        if not tgt_tok:
+            return True
+        # A tight window (flattened deck slides carry no sentence breaks, so
+        # a deck page about the target would otherwise put its name "in the
+        # sentence" of the boilerplate). Real completion releases hit the
+        # STRONG forms above regardless of this window.
+        win = text[max(0, m.start() - 120):m.end() + 120]
+        if token_in(tgt_tok, win.lower()):
+            return True
+    return False
+
+
+def _named_in_deal_context(text: str, target_query: str) -> bool:
+    tq = re.escape(target_query)
+    # A 250-char window that does not cross a sentence boundary (". " + a
+    # capital), so a peer list in one sentence cannot borrow the "definitive
+    # agreement" of the next — while "Inc." mid-name does not end the window
+    # unless a new sentence actually starts.
+    win = r"(?:(?!\.\s+[A-Z]).){0,250}?"
+    return re.search(rf"{_DEAL_CTX}{win}{tq}|{tq}{win}{_DEAL_CTX}",
+                     text, re.IGNORECASE) is not None
 
 
 def _doc_404_key(cik, adsh: str, doc: str) -> str:
@@ -997,6 +1075,7 @@ def resolve_announcement(target_name: str, acquirer_name: str,
     """
     tq = query_name(target_name)
     acq_tok = brand_token(acquirer_name)
+    tgt_tok = brand_token(target_name)
     if not tq or not completion_date or completion_date < _EFTS_FLOOR:
         return None, True
 
@@ -1013,31 +1092,36 @@ def resolve_announcement(target_name: str, acquirer_name: str,
         return None, False
 
     fetch_failed = False
-    for cand in _candidates(hits)[:_MAX_CANDIDATES]:
+    party = [c for c in _candidates(hits) if _filed_by_a_party(c, acq_tok, tgt_tok)]
+    for cand in party[:_MAX_CANDIDATES]:
         time.sleep(_PAUSE_S)
         text, t_ok = _fetch_doc_text(cand["cik"], cand["adsh"], cand["doc"])
         if text is None:
             fetch_failed = fetch_failed or not t_ok
             continue
-        low = text.lower()
-        if tq.lower() not in low:
+        if _completed_for(text, tgt_tok):     # completion PR — not the announce
             continue
-        if acq_tok and not token_in(acq_tok, low):
-            continue
-        if _COMPLETED_RE.search(text):        # completion PR — not the announce
-            continue
+
+        def _gates(txt: str) -> bool:
+            low = txt.lower()
+            return (tq.lower() in low
+                    and (not acq_tok or token_in(acq_tok, low))
+                    and not _completed_for(txt, tgt_tok)
+                    and _ANNOUNCE_RE.search(txt) is not None
+                    and _named_in_deal_context(txt, tq))
+
         full = None
-        if not _ANNOUNCE_RE.search(text):
-            # Both parties named but no announcement wording: the chosen
-            # document is often the investor DECK (EX-99.1 preferred over
-            # the 8-K body) while the body/PR carries the agreement language
-            # — live: Seacoast/Villages 2025-05-29 anchored four months late
-            # on a regulatory-approval release. Re-gate on the whole
-            # accession before giving up on this candidate.
+        if not _gates(text):
+            # The single EFTS-matched document is often the wrong one to
+            # judge: the press release says "Bremer Financial" while the
+            # exact charter phrase "Bremer Bank" sits in the 8-K body (Old
+            # National anchored four months late on an approval filing), or
+            # the match is the investor DECK with no agreement wording
+            # (Seacoast/Villages anchored on a later release). Re-gate every
+            # text test on the whole accession before skipping a candidate.
             full, f_ok = _accession_text(cand["cik"], cand["adsh"], cand["doc"])
             fetch_failed = fetch_failed or not f_ok
-            if (not full or _COMPLETED_RE.search(full)
-                    or not _ANNOUNCE_RE.search(full)):
+            if not full or not _gates(full):
                 continue
             text = full
         result = {

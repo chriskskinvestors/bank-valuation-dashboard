@@ -473,7 +473,10 @@ class TestRecentRowsFilter(unittest.TestCase):
         from ui.transactions import _recent_rows
         deals = [
             {"status": "completed", "announce_date": "2024-09-01",
-             "completion_date": "2025-01-15"},               # 25 months: out
+             "completion_date": "2025-01-15"},               # announced 25 months
+                                                             # ago, CLOSED inside: in
+            {"status": "completed", "announce_date": "2024-06-01",
+             "completion_date": "2024-09-30"},               # both outside: out
             {"status": "completed", "announce_date": "2024-11-01",
              "completion_date": "2025-03-01"},               # in window
             {"status": "pending", "announce_date": "2026-07-13"},
@@ -483,7 +486,8 @@ class TestRecentRowsFilter(unittest.TestCase):
         ]
         rows = _recent_rows(deals, date(2026, 10, 5))
         self.assertEqual([r["announce_date"] for r in rows],
-                         ["2026-07-13", "2025-02-01", "2024-11-01", "2024-01-01"])
+                         ["2026-07-13", "2025-02-01", "2024-11-01", "2024-09-01",
+                          "2024-01-01"])
 
 
 # ── Second pass (owner: "there is missing data??", 2026-10-05) ────────────
@@ -875,6 +879,170 @@ class TestPendingLegendGuardsPass2(unittest.TestCase):
             rows, ok = ma.find_open_announcements(708955, "First Financial Bank")
         self.assertTrue(ok)
         self.assertEqual(rows, [])
+
+
+class TestSnapshotMissingDeals(unittest.TestCase):
+    """build_comps_snapshot: sibling charters collapse to the largest target,
+    and an empty history is retried once (a failed FDIC fetch returns [])."""
+
+    def _bank_rows(self, hist_side_effect):
+        from data.deal_comps import build_comps_snapshot
+        with patch("data.ma_history.get_ma_history", side_effect=hist_side_effect), \
+             patch("data.deal_comps.compute_multiples", return_value=({}, True)), \
+             patch("data.cache.put"), \
+             patch("data.deal_comps._EMPTY_HISTORY_RETRY_WAITS", (0,)):
+            return build_comps_snapshot([{"ticker": "FITB", "cert": 6672, "cik": 35527}])
+
+    def test_sibling_charters_keep_largest_target(self):
+        url = "https://www.sec.gov/Archives/edgar/data/35527/000119312525230873/d91245dex991.htm"
+        trust = {"deal_kind": "whole_company", "direction": "acquisition",
+                 "status": "completed", "completion_date": "2026-02-01",
+                 "counterparty": {"name": "Comerica Bank & Trust, National Association",
+                                  "cert": 2},
+                 "announce_date": "2025-10-06", "announce_url": url,
+                 "target_assets": 126_300_000, "value_usd": 10_900_000_000}
+        bank = dict(trust, counterparty={"name": "Comerica Bank", "cert": 1},
+                    target_assets=80_000_000_000)
+        snap = self._bank_rows([[trust, bank]])
+        self.assertEqual(snap["deals_total"], 1)
+        self.assertEqual(snap["deals"][0]["target_name"], "Comerica Bank")
+        # Order-independent: the bank first, the trust second.
+        snap = self._bank_rows([[bank, trust]])
+        self.assertEqual([r["target_name"] for r in snap["deals"]], ["Comerica Bank"])
+
+    def test_empty_history_retried_once(self):
+        deal = {"deal_kind": "whole_company", "direction": "acquisition",
+                "status": "completed", "completion_date": "2025-06-21",
+                "counterparty": {"name": "CrossFirst Bank", "cert": 3},
+                "announce_date": None, "announce_url": None,
+                "target_assets": 7_600_000_000, "value_usd": None}
+        snap = self._bank_rows([[], [deal]])        # first call: failed fetch
+        self.assertEqual(snap["deals_total"], 1)
+        self.assertEqual(snap["deals"][0]["target_name"], "CrossFirst Bank")
+
+
+class TestResolverPartyGate(unittest.TestCase):
+    """resolve_announcement: third-party filers naming the target as a
+    lender never consume the budget or anchor the deal (live candidate
+    lists 2026-10-06: Core Scientific for "Bremer Bank", Credit Acceptance
+    for "Comerica Bank"); the target must be named in deal context."""
+
+    BREMER_PR = ("<p>Old National Bancorp (NASDAQ: ONB) and Bremer Financial "
+                 "Corporation today announced that they have entered into a "
+                 "definitive merger agreement under which Old National will "
+                 "acquire Bremer Financial, the parent of Bremer Bank, in a "
+                 "transaction valued at approximately $1.4 billion.</p>")
+    LENDER_8K = ("<p>Core Scientific entered into a credit agreement with "
+                 "Bremer Bank, National Association, as lender, and Old "
+                 "Republic as agent, a definitive agreement providing for a "
+                 "term loan.</p>")
+
+    def _run(self, hits, docs):
+        from tests.test_ma_announcements import _wire
+        from data.ma_announcements import resolve_announcement
+        fetched = []
+        wire = _wire(hits, docs, indexes={})
+        def spy(url, params=None, headers=None, timeout=30):
+            if "efts" not in url and not url.endswith("/"):
+                fetched.append(url.rsplit("/", 1)[-1])
+            return wire(url, params=params, headers=headers, timeout=timeout)
+        with patch("data.ma_announcements.requests.get", side_effect=spy), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None), \
+             patch("data.cache.get", return_value=None), \
+             patch("data.cache.put"), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(None, None, True)):
+            r, ok = resolve_announcement("Bremer Bank, National Association",
+                                         "Old National Bank", "2025-05-01")
+        return r, ok, fetched
+
+    def _hit(self, adsh, date, doc, cik, names):
+        from tests.test_ma_announcements import _hit
+        return _hit(adsh, date, doc, cik=cik, items=["1.01", "8.01"],
+                    display_names=names)
+
+    def test_third_party_lender_filings_skipped_without_fetch(self):
+        hits = [self._hit(f"0001-23-{i}", f"2023-11-{10+i:02d}", f"corz{i}.htm",
+                          "0001839341", ["Core Scientific, Inc./tx  (CORZ)  (CIK 0001839341)"])
+                for i in range(1, 20)]
+        hits.append(self._hit("0001-24-9", "2024-11-25", "onb.htm", "0000707179",
+                              ["OLD NATIONAL BANCORP /IN/  (ONB)  (CIK 0000707179)"]))
+        docs = {f"corz{i}.htm": self.LENDER_8K for i in range(1, 20)}
+        docs["onb.htm"] = self.BREMER_PR
+        r, ok, fetched = self._run(hits, docs)
+        self.assertTrue(ok)
+        self.assertIsNotNone(r)
+        self.assertEqual(r["announce_date"], "2024-11-25")
+        self.assertEqual(r["value_usd"], 1_400_000_000)
+        # 19 lender filings never fetched (the accepted doc is read twice:
+        # gate, then the whole-accession terms read).
+        self.assertEqual(set(fetched), {"onb.htm"})
+
+    def test_party_filing_naming_target_as_peer_only_is_skipped(self):
+        deck = ("<p>Old National Bancorp investor presentation. Peer group: "
+                "Bremer Bank, Associated Bank, Commerce Bank. Our definitive "
+                "agreement with CapStar remains on track.</p>")
+        hits = [self._hit("0001-24-1", "2024-01-17", "deck.htm", "0000707179",
+                          ["OLD NATIONAL BANCORP /IN/  (ONB)  (CIK 0000707179)"]),
+                self._hit("0001-24-9", "2024-11-25", "onb.htm", "0000707179",
+                          ["OLD NATIONAL BANCORP /IN/  (ONB)  (CIK 0000707179)"])]
+        r, ok, fetched = self._run(hits, {"deck.htm": deck, "onb.htm": self.BREMER_PR})
+        self.assertTrue(ok)
+        self.assertEqual(r["announce_date"], "2024-11-25")
+
+    def test_all_generic_names_keep_gate_open(self):
+        from data.ma_announcements import _filed_by_a_party
+        self.assertTrue(_filed_by_a_party({"filers": "some corp (cik 1)"}, None, None))
+        self.assertFalse(_filed_by_a_party({"filers": "core scientific (cik 1)"},
+                                           "old", "bremer"))
+        self.assertTrue(_filed_by_a_party({"filers": "old national bancorp /in/"},
+                                          "old", "bremer"))
+
+
+class TestParValueRatioForm(unittest.TestCase):
+
+    BUSEY_101 = (
+        "At the effective time of the Merger (the \"Effective Time\"), each "
+        "share of common stock, par value $0.01 per share, of CrossFirst "
+        "(\"CrossFirst Common Stock\") outstanding immediately prior to the "
+        "Effective Time, other than certain shares held by CrossFirst or Busey, "
+        "will be converted into the right to receive 0.6675 of a share (the "
+        "\"Exchange Ratio\") of common stock, par value $0.001 per share, of "
+        "Busey (\"Busey Common Stock\"). Holders of CrossFirst Common Stock "
+        "will receive cash in lieu of fractional shares.")
+
+    def test_crossfirst_busey(self):
+        r = extract_exchange_ratio(self.BUSEY_101)
+        self.assertEqual(r, (0.6675, "Busey", "CrossFirst"))
+        t = extract_terms(self.BUSEY_101)
+        self.assertEqual(t["consideration"], "stock")
+        self.assertIsNone(t["cash_per_share"])     # cash in lieu is not cash
+
+
+class TestCompletedTenseSplit(unittest.TestCase):
+
+    def test_deck_boilerplate_is_not_this_deals_completion(self):
+        from data.ma_announcements import _completed_for
+        deck = ("Comprehensive Due Diligence Old National Diligence Summary "
+                "Old National management team has successfully completed and "
+                "integrated 9 bank M&A transactions over the last 10 years "
+                "Experienced integration playbook Conservative credit marks "
+                "Cultural alignment Strong pro forma capital Bremer Bank "
+                "franchise overview Minnesota deposit share")
+        # "Bremer" sits well beyond the 120-char window of the marker.
+        self.assertFalse(_completed_for(deck, "bremer"))
+        # Real completion wording is caught by the strong forms, named or not.
+        self.assertTrue(_completed_for(
+            "Old National today announced that it has completed its "
+            "acquisition of Bremer Financial Corporation.", "bremer"))
+        self.assertTrue(_completed_for(
+            "The Company today announced the completion of the merger.", "bremer"))
+        # The generic form counts when the target is named right there.
+        self.assertTrue(_completed_for(
+            "Old National has successfully completed the Bremer transaction.",
+            "bremer"))
+        # No usable token: the generic form counts everywhere (old behavior).
+        self.assertTrue(_completed_for("The bank has completed the deal.", None))
 
 
 if __name__ == "__main__":

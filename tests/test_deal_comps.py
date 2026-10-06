@@ -125,6 +125,12 @@ class TestComputeMultiples(unittest.TestCase):
 
 class TestSnapshot(unittest.TestCase):
 
+    def setUp(self):
+        # The empty-history retry sleeps 15s+45s in production; these
+        # suites hand build_comps_snapshot empty histories on purpose.
+        p = patch("data.deal_comps._EMPTY_HISTORY_RETRY_WAITS", ())
+        p.start(); self.addCleanup(p.stop)
+
     @patch("data.cache.put")
     @patch("data.deal_comps.compute_multiples",
            return_value=({"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
