@@ -913,6 +913,17 @@ _ENDING_SHARES_LABELS: frozenset = frozenset({
     "common shares outstanding",
     "period end common shares outstanding",
     "common shares outstanding at period end",
+    "outstanding common shares",                       # PCB
+})
+
+# TOTAL shareholders' equity (preferred included) — the numerator a release
+# divides by common shares when its "book value per common share" is really
+# per-total-equity (_ties_total_equity).
+_TOTAL_EQUITY_LABELS: frozenset = frozenset({
+    "total shareholders' equity",
+    "total stockholders' equity",
+    "total shareholders' equity (gaap)",
+    "total stockholders' equity (gaap)",
 })
 
 # Trailing qualifier / footnote groups that ride on the SAME line as the figure
@@ -1819,6 +1830,32 @@ def _shows_preferred_equity(rows: list[tuple]) -> bool:
                for cl, nums in rows)
 
 
+def _ties_total_equity(rows: list[tuple], v: float) -> bool:
+    """True when the release's OWN total shareholders' equity ÷ its ending
+    common share count reproduces `v` within 1% (×1 / ×1e3 / ×1e6 scales, as
+    _internal_tie_out) — the per-share figure is TOTAL equity, preferred
+    included, over common shares. PCB 2Q26 (8-K 0001423869-26-000022):
+    "Book value per common share" $28.40 = $400,463K total equity ÷
+    14,102,189, beside "TCE per common share" $23.49 = (400,463 − 69,141
+    preferred) ÷ the same shares. The label says common; the arithmetic
+    says it isn't. First non-blank latest-quarter row of each kind."""
+    te = sh = None
+    for cl, nums in rows:
+        core = _strip_trailing_qualifiers(cl)
+        if te is None and core in _TOTAL_EQUITY_LABELS \
+                and nums[0] is not None and nums[0] > 0:
+            te = nums[0]
+        if sh is None and core in _ENDING_SHARES_LABELS \
+                and nums[0] is not None and nums[0] > 0:
+            sh = nums[0]
+        if te is not None and sh is not None:
+            break
+    if te is None or sh is None:
+        return False
+    ratio = te / sh
+    return any(abs(ratio * s - v) / v < 0.01 for s in (1.0, 1e3, 1e6))
+
+
 def extract_reported_bvps_status(
     ex991_html: bytes,
     reconstructed: float | None = None,
@@ -1836,6 +1873,11 @@ def extract_reported_bvps_status(
         no-intangibles bank like SFST legitimately prints equal values;
         rejecting only v < tbvps catches a tangible row mismatched into the
         book slot);
+      • a figure the release's own total shareholders' equity ÷ common
+        shares reproduces, beside a preferred-equity row, is per-TOTAL-
+        equity whatever its label says (PCB's "Book value per common share"
+        $28.40 vs per-common $23.49, 2026-10-06) → "not_disclosed", never a
+        conflict and never served;
       • ±15% vs the reconstruction when it resolved → "ok"/"gate_rejected";
       • no reconstruction: the in-release TBVPS (caller-passed, else matched
         from the same document) anchors it — when the release shows
@@ -1860,6 +1902,10 @@ def extract_reported_bvps_status(
         if not (0 < v < 10_000):
             return None, "not_disclosed"
         if tbvps is not None and tbvps > 0 and v < tbvps:
+            return None, "not_disclosed"
+        # Total equity ÷ common shares under a per-common label (PCB): a
+        # different definition, not the bank's per-common book value.
+        if _shows_preferred_equity(rows) and _ties_total_equity(rows, v):
             return None, "not_disclosed"
         if reconstructed is not None and reconstructed > 0:
             if abs(v - reconstructed) / reconstructed >= 0.15:
@@ -1915,8 +1961,10 @@ def reported_bvps_status(
     # v7: the finder also selects mis-itemized releases (FBP/NPB Q2-2026).
     # v8: header-year phantom column dropped in _table_rows (BHB).
     # v9: supplement rows read from the release-quarter column (STT).
+    # v10: a per-common label that ties TOTAL equity ÷ shares beside preferred
+    #      is per-total-equity → not_disclosed (PCB), never a conflict.
     return _window_status(
-        cik, "reported_bvps:v9", f"{rk}:{tk}",
+        cik, "reported_bvps:v10", f"{rk}:{tk}",
         lambda html, pe: extract_reported_bvps_status(
             html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
 
