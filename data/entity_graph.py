@@ -66,7 +66,7 @@ def cert_lifespan(cert: int) -> tuple[date | None, date | None]:
     from data.freshness import is_fresh
 
     key = f"entity_lifespan:{cert}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)   # the 30-day stamp governs
     if is_fresh(cached, _LIFESPAN_TTL_S) and "est" in (cached or {}):
         return (_parse_fdic_date(cached.get("est")), _parse_fdic_date(cached.get("end")))
 

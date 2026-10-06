@@ -89,7 +89,9 @@ def _fetch_acs(year: int, geo: str, geo_params: dict) -> dict | None:
     from data import cache
 
     key = f"census:acs5_{year}:{geo}"
-    cached = cache.get(key)
+    # The 30-day stamp governs; the backend's default 24h max age would
+    # expire the entry first (UX-P1-05 class, cf. data/nic_client).
+    cached = cache.get(key, max_age_s=None)
     if _is_fresh(cached):
         return cached
 
