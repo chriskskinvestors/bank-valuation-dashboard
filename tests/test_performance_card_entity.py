@@ -46,3 +46,27 @@ class TestPerformanceCardEntity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestFlaggedNaShowsReason(unittest.TestCase):
+    """An engine-flagged n/a (merger in the TTM window, share-basis mismatch)
+    renders 'n/a †' with the reason — the row never silently disappears."""
+
+    def test_merger_flag_on_roatce_and_basis_flag_on_ptbv(self):
+        reason = "merger in TTM window — TCE rose 119%"
+        row = {"roatce_holdco": None, "roatce_blended": None, "ptbv_ratio": None,
+               "_notes": {"roatce_holdco": reason, "roatce_blended": reason,
+                          "ptbv_ratio": "share-basis mismatch — cover count +554%"}}
+        val, perf = _render_valuation_performance_tables(row, FDIC, None)
+        lab = _labels(perf)
+        self.assertIn("n/a †", lab.get("ROATCE (HoldCo, TTM)", ""))
+        self.assertIn("TCE rose 119%", perf)
+        self.assertIn("n/a †", _labels(val).get("P/TBV", ""))
+        self.assertIn("share-basis mismatch", val)
+
+    def test_noted_value_keeps_value_with_dagger(self):
+        row = {"roatce_holdco": None, "roatce_blended": 18.5,
+               "_notes": {"roatce_blended": "bank-subsidiary (FDIC) basis — holdco ROATCE n/a"}}
+        _, perf = _render_valuation_performance_tables(row, FDIC, None)
+        v = _labels(perf).get("ROATCE (Bank, FDIC)", "")
+        self.assertTrue(v.startswith("18.50%") and "†" in v, v)
