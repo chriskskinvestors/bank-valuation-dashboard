@@ -142,7 +142,11 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
                    "period": "2026-03-31", "doc": "ex991.htm"}
         cache.put(f"earnings_8k:v5:{_F8K['accession']}", payload)
         self._age(f"earnings_8k:v5:{_F8K['accession']}", 72 * 3600)
+        # Supersession (a filed 10-Q / release age) is a read-time display
+        # rule pinned in test_preliminary_banner_staleness — held off here so
+        # this pin never depends on today's date.
         with patch.object(se8k, "_latest_earnings_8k", return_value=_F8K), \
+                patch.object(se8k, "_release_superseded", return_value=False), \
                 patch.object(se8k, "_ex991_document", _boom), \
                 patch.object(se8k, "_get", _boom):
             out = se8k.latest_earnings_8k_figures(77)
