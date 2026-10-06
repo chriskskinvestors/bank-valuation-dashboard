@@ -217,6 +217,65 @@ class TestRateSensitivityExports(_ExportSite):
         self.assertIn("generic industry average", src["Securities repricing source"])
         self.assertIn("whole US dollars", src["Units"])
 
+    def _render_phased_with_ladder(self, ladder):
+        """Render the phased page against a stored ladder; returns (export
+        Source sheet, captured markdown+caption text)."""
+        result = {
+            "inputs": {"current_nim_pct": 3.2, "earning_assets_usd": 1e10},
+            "beta_used": 0.35, "beta_mode": "textbook", "tax_rate_used": 0.21,
+            "shares_outstanding": 50_000_000, "ladder_source": "ffiec",
+            "repricing_pace": {1: 0.40},
+            "scenarios": [{"rate_change_bps": -100, "years": [
+                {"year": 1, "nim_delta_bps": -12.5, "nii_delta_usd": -1e6,
+                 "eps_delta": -0.01}]}],
+        }
+        self._patch("ui.rate_sensitivity.run_rate_sensitivity_phased", return_value=result)
+        self._patch("ui.rate_sensitivity._render_phased_inputs")
+        self._patch("ui.rate_sensitivity._render_assumptions_panel",
+                    return_value=(None, None))
+        self._patch("data.call_report_store.get_latest_ladder", return_value=ladder)
+        self._patch("data.bank_mapping.get_cik", return_value=None)
+        self._patch("data.nim_assumptions_store.get_assumptions", return_value=None)
+        text = []
+        self.rs.st.markdown = lambda s, *a, **k: text.append(s)
+        self.rs.st.caption = lambda s, *a, **k: text.append(s)
+        self.rs.st.plotly_chart = _noop
+        self.rs._render_phased_scenarios("TST", _LATEST, [_LATEST], "textbook", None)
+        _wb, _ws, src, _kw = self._book()
+        return src, "\n".join(text)
+
+    def test_legacy_ladder_labeled_memo_2a_only(self):
+        """A ladder stored before the MBS sub-items were read (no composition)
+        must not pose as the whole book (review P1-14)."""
+        old = {"reporting_period": "03/31/2026",
+               "buckets": {"le_3mo": 0.5, "3mo_1y": 0.5},
+               "amounts_usd": {"le_3mo": 5e8, "3mo_1y": 5e8},
+               "total_usd": 1_000_000_000,
+               "weighted_avg_duration_years": 0.38, "source": "ffiec"}
+        src, text = self._render_phased_with_ladder(old)
+        self.assertIn("RC-B Memo 2.a only", src["Securities repricing source"])
+        self.assertIn("excludes 1-4 family residential mortgage pass-throughs",
+                      src["Securities repricing source"])
+        self.assertIn("Ladder covers: RC-B Memo 2.a only", text)
+        self.assertIn("weighted-average maturity (bucket midpoints)", text)
+        self.assertNotIn("weighted-avg duration", text)
+
+    def test_full_ladder_states_assumed_other_mbs(self):
+        lad = {"reporting_period": "06/30/2026",
+               "buckets": {"1y_3y": 0.5, "3y_5y": 0.5},
+               "amounts_usd": {"1y_3y": 1.5e9, "3y_5y": 1.5e9},
+               "total_usd": 3_000_000_000, "weighted_avg_duration_years": 3.0,
+               "source": "ffiec",
+               "component_usd": {"m2a": 1e9, "m2b": 1e9, "m2c": 1e9},
+               "assumed_usd": 1e9,
+               "assumption": "avg life ≤3y → 1–3y; >3y → 3–15y, split evenly 3–5y / 5–15y"}
+        src, text = self._render_phased_with_ladder(lad)
+        s = src["Securities repricing source"]
+        self.assertIn("2.a + 2.b + 2.c", s)
+        self.assertIn("includes $1.00B of other MBS placed by assumption", s)
+        # Markdown/caption: $ escaped so Streamlit doesn't render LaTeX.
+        self.assertIn("includes \\$1.00B of other MBS", text)
+
     def test_named_scenarios_export(self):
         """ΔNII = $10B earning assets × ΔNIM(pp)/100: +25 bp → +25,000,000;
         −15 bp → −15,000,000."""
