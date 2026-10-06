@@ -109,10 +109,10 @@ HIST = [{"REPDTE": "20260630", "EQTOT": 1_000_000, "INTAN": 200_000,
          "NIMY": 3.40, "EEFFR": 58.0, "ROA": 1.10, "NCLNLSR": 0.40}]
 SEC = {"eps": 4.00, "shares_outstanding": 40_000_000}
 DEFAULTS = {"base_eps": 4.00, "roatce_pct": 14.0, "tbvps": 40.0,
-            "loan_growth_trailing_pct": 4.0, "payout_ratio": 0.40,
+            "loan_growth_trailing_pct": 4.0,
             "loans_per_share": 300.0, "shares": 40_000_000}
 BASE_PARAMS = {
-    "base_eps": 4.00, "eps_growth_rates": [0.05] * 5, "payout_ratio": 0.40,
+    "base_eps": 4.00, "eps_growth_rates": [0.05] * 5,
     "loan_growth_rates": [0.04] * 5, "starting_loans_per_share": 300.0,
     "target_cet1_pct": 10.0, "cost_of_equity_pct": 10.0,
     "terminal_growth_pct": 2.5, "roatce_pct": 14.0,
@@ -198,7 +198,8 @@ class _ExportSite(unittest.TestCase):
         self.assertEqual(src["Base EPS ($, annual)"], 4.0)
         self.assertAlmostEqual(src["EPS growth (avg %, 5-yr)"], 5.0, places=9)
         self.assertAlmostEqual(src["Loan growth (avg %, 5-yr)"], 4.0, places=9)
-        self.assertAlmostEqual(src["Payout ratio (%)"], 40.0, places=9)
+        # The payout slider was removed: the model never read it.
+        self.assertNotIn("Payout ratio (%)", src)
         self.assertEqual(src["Starting loans / share ($)"], 300.0)
         self.assertEqual(src["Target CET1 (%)"], 10.0)
         self.assertEqual(src["Terminal growth (%)"], 2.5)
