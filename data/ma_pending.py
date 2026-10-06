@@ -73,6 +73,14 @@ _ANNOUNCE_8K_ITEMS = {"1.01", "7.01", "8.01"}
 _SUBJECT_RE = re.compile(
     r"Subject\s+Compan(?:y|ies)\s*:?\s*(.{3,80}?)\s*(?:Commission\s+File|"
     r"\(Commission|Registration\s+No)", re.IGNORECASE)
+# "Filed by: Tri-County Financial Group Pursuant to Rule 425" — the filer's
+# OWN name in its own words. The FDIC charter name ("First State Bank") can
+# be all-generic and the universe match by brand token ambiguous ("Tri"
+# hits two names), so neither identified self for Tri-County and its 425s
+# rendered as TYFG acquiring HBT.
+_FILED_BY_RE = re.compile(
+    r"Filed\s+by\s*:?\s*(.{3,80}?)\s*(?:Pursuant\s+to|Subject\s+Compan|"
+    r"Commission\s+File)", re.IGNORECASE)
 # Ratio extraction lives upstream in ma_announcements.extract_exchange_ratio
 # (comma-tolerant + the bare "2.095 First Hawaiian shares for each TriCo
 # share" form — upstreamed 2026-07-14, closing the merge-later note).
@@ -176,9 +184,13 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     # "TriCo Bancshares") — resolve the subject through the universe and
     # compare CIKs; token equality is only the fallback for unmatched names.
     self_tok = brand_token(subject_name or "")
+    fb = _FILED_BY_RE.search(corpus)
+    filed_by_tok = brand_token(" ".join(fb.group(1).split())) if fb else None
+    self_toks = {t for t in (self_tok, filed_by_tok) if t}
     subj_tok = brand_token(subject_co)
     _st, _sc, subj_cik = _universe_match(subject_co)
-    subject_is_self = (subj_cik == int(cik)) if subj_cik else         bool(subj_tok and self_tok and subj_tok == self_tok)
+    subject_is_self = ((subj_cik == int(cik)) if subj_cik
+                       else bool(subj_tok and subj_tok in self_toks))
     if subject_is_self:
         # We are the 425 subject — this bank is the one being ACQUIRED. The
         # counterparty is the other party of the legend's "transaction
@@ -191,7 +203,7 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
         if bm:
             for cand in (bm.group(1), bm.group(2)):
                 ct = brand_token(cand)
-                if ct and ct != self_tok:
+                if ct and ct not in self_toks:
                     other = " ".join(cand.split())
                     break
         if not other:
@@ -212,8 +224,7 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
             obj = _clean_company_name(m.group(1))
             o_cik = _universe_match(obj)[2]
             o_tok = brand_token(obj)
-            if (o_cik and int(o_cik) == int(cik)) or (
-                    o_tok and self_tok and o_tok == self_tok):
+            if (o_cik and int(o_cik) == int(cik)) or (o_tok and o_tok in self_toks):
                 direction = "sale"
                 break
 

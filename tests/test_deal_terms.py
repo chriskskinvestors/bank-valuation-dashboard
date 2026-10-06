@@ -1045,5 +1045,33 @@ class TestCompletedTenseSplit(unittest.TestCase):
         self.assertTrue(_completed_for("The bank has completed the deal.", None))
 
 
+class TestFiledBySelfIdentity(unittest.TestCase):
+
+    def test_ambiguous_universe_name_resolved_by_filed_by_line(self):
+        # "Tri-County" matches two universe names (ambiguous -> no CIK) and
+        # the FDIC charter name "First State Bank" is all-generic: only the
+        # legend's "Filed by: Tri-County Financial Group" identifies self.
+        from tests.test_ma_pending import _Harness, _filings
+        universe = {"HBT": {"name": "HBT Financial", "fdic_cert": 111, "cik": 1000},
+                    "TYFG": {"name": "Tri-County Financial Group", "fdic_cert": 222,
+                             "cik": 2000},
+                    "TRIX": {"name": "Tri City Bankshares", "fdic_cert": 333,
+                             "cik": 3000}}
+        legend = ("Filed by: Tri-County Financial Group Pursuant to Rule 425 "
+                  "Subject Company: HBT Financial, Inc. Commission File No.: "
+                  "001-38870 HBT Financial, Inc. Announces Agreement to Acquire "
+                  "Tri-County Financial Group, Inc. in a definitive agreement. "
+                  "Tri-County shareholders will receive $71.01 in cash for each "
+                  "share of Tri-County common stock.")
+        rows, ok = _Harness()._run(_filings([
+            ("425", "2026-08-10", "0001-26-1", "d4_425.htm", ""),
+        ]), texts=(legend, True), universe=universe, cik=2000,
+            subject="First State Bank", today="2026-08-12")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["direction"], "sale")
+        self.assertEqual(rows[0]["counterparty_name"], "HBT Financial, Inc")
+
+
 if __name__ == "__main__":
     unittest.main()
