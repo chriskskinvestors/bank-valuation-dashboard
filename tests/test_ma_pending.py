@@ -344,5 +344,21 @@ class TestResolvingNeedle(unittest.TestCase):
         self.assertIsNone(_resolving_needle(None))
 
 
+class TestUniverseMatchByNameOnly(unittest.TestCase):
+    """SPFI 2025-12-01 8-K: "the acquisition by SPFI of BOH" — the defined
+    term for BOH Holdings, Inc. (Bank of Houston). Never a ticker match."""
+
+    def test_defined_term_never_matches_a_ticker(self):
+        from data.ma_pending import _universe_match
+        uni = _universe({"BOH": ("Bank of Hawaii", 18053, 46195),
+                         "SPFI": ("South Plains Financial", 25103, 1163668)})
+        with patch("data.bank_universe.get_universe", return_value=uni):
+            self.assertEqual(_universe_match("BOH"), (None, None, None))
+            self.assertEqual(_universe_match("BOH Holdings, Inc."), (None, None, None))
+            # The name route still links the real bank.
+            self.assertEqual(_universe_match("Bank of Hawaii Corporation"),
+                             ("BOH", 18053, 46195))
+
+
 if __name__ == "__main__":
     unittest.main()

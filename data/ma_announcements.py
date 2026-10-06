@@ -173,10 +173,14 @@ def _strip_html(raw: str) -> str:
 # and the bare form "2.095 First Hawaiian shares for each TriCo share" is
 # covered (both live-verified on FHB/TriCo 2026-07-14; upstreamed from
 # data/ma_pending).
+# "receive either (1) 2.4589 shares of HBT Financial’s common stock for each
+# share of Tri-County stock" (HBT/Tri-County 2026-08-10): an election list
+# marker and a possessive on the acquirer side.
 _RATIO_RECEIVE_RE = re.compile(
-    r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s+of\s+"
-    r"([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+for\s+each(?:\s+share\s+"
-    r"of)?\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+stock|shares?|stock)")
+    r"receive\s+(?:either\s+)?(?:\(\d\)\s+)?(\d{1,2}(?:\.\d{1,4})?)\s+"
+    r"(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)(?:[’']s)?\s+(?:common\s+)?stock\s+for\s+each"
+    r"(?:\s+share\s+of)?\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+stock|shares?|stock)")
 _RATIO_BARE_RE = re.compile(
     r"receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+([A-Z][\w.,&'\- ]{1,60}?)\s+"
     r"shares?\s+for\s+each\s+([A-Z][\w.,&'\- ]{1,60}?)\s+shares?")
@@ -257,9 +261,14 @@ _RATIO_PAREN_RE = re.compile(
     r"[\"“”']?\)\s+shares?\s+of\s+common\s+stock,?\s+(?:\$[\d.]+\s+par\s+"
     r"value(?:\s+per\s+share)?,?\s+)?of\s+([A-Z][\w.,&'\- ]{1,40}?)\s*\(")
 # "Columbia Banking System, Inc. (NASDAQ: COLB)" -> name/ticker pairs
+# A defined-term parenthetical may sit between the name and the ticker
+# ('Capital Bancorp, Inc. ("Capital") (NASDAQ: CBNK)', Peoples 2026-09-30);
+# OTC sellers list as "(OTC: TYFG)" (HBT/Tri-County 2026-08-10).
 _PR_TICKER_RE = re.compile(
-    r"([A-Z][\w.,&'\- ]{2,60}?)\s*\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
-    r"(?:NYSE(?:\s+American)?|NASDAQ|Nasdaq)\s*:\s*([A-Z]{1,6})\s*\)")
+    r"([A-Z][\w.,&'\- ]{2,60}?)\s*(?:\(\s*[“\"][^”\"]{1,40}[”\"]\s*\)\s*)?"
+    r"\(\s*(?:[A-Z]{2,8}\s+and\s+)?"
+    r"(?:NYSE(?:\s+American)?|NASDAQ|Nasdaq|OTCQX|OTCQB|OTC\s+Pink|OTC)\s*:\s*"
+    r"([A-Z]{1,6})\s*\)")
 # EFTS display_names: "UMPQUA HOLDINGS CORP  (UMPQ)  (CIK 0001077771)".
 # DELISTED registrants lose the "(UMPQ)" part (live-verified), so the CIK
 # fallback below also matches on the display NAME's brand token.
@@ -1461,6 +1470,17 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
     # always identify self (live bug: Catalyst picked ITSELF as counterparty
     # when subject_name came through empty).
     self_toks = {subj_tok} if subj_tok else set()
+    # An all-generic name ("First Financial Bancorp") has NO brand token:
+    # self is then its own ticker(s) and its normalized display name (the
+    # dateline-prefixed "Cincinnati, Ohio - July 21, 2026. First Financial
+    # Bancorp. (NASDAQ: FFBC)" pair was not self, and FFBC's Finward deal
+    # died on the dateline rejection, live 2026-10-06).
+    self_tickers: set[str] = set()
+    self_names: set[str] = set()
+
+    def _norm(s: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9&]+", (s or "").lower()))
+
     for h in hits:
         for dn in (h.get("_source", {}).get("display_names") or []):
             m = _DISPLAY_CIK_RE.match((dn or "").strip())
@@ -1468,10 +1488,19 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 t = brand_token(m.group(1))
                 if t:
                     self_toks.add(t)
+                self_names.add(_norm(re.sub(r"/[A-Z]{2}/", " ", m.group(1))))
+            m2 = _DISPLAY_NAME_RE.search(dn or "")
+            if m2 and int(m2.group(2)) == int(cik):
+                self_tickers.add(m2.group(1))
+    if subject_name:
+        self_names.add(_norm(subject_name))
 
     def _is_self(name: str) -> bool:
         low = (name or "").lower()
-        return any(token_in(t, low) for t in self_toks)
+        if any(token_in(t, low) for t in self_toks):
+            return True
+        n = _norm(_clean_company_name(name))
+        return bool(n) and any(n == s or s.startswith(n + " ") for s in self_names)
 
     rows, fetch_failed, seen_toks = [], False, set()
     for ann in sorted(recent, key=lambda g: g["file_date"], reverse=True)[:3]:
@@ -1487,10 +1516,12 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         # target — cleaned, self-excluded, recurring, prefer a fuller name.
         direction = "acquisition"
         counterparty = None
-        pair_names = [_clean_company_name(n) for n, _t in _pr_ticker_pairs(text)]
-        pair_names = [n for n in pair_names if n and not _is_self(n)]
-        if pair_names:
-            counterparty = pair_names[0]
+        cp_ticker = None
+        pairs = [(_clean_company_name(n), t) for n, t in _pr_ticker_pairs(text)
+                 if t not in self_tickers]
+        pairs = [(n, t) for n, t in pairs if n and not _is_self(n)]
+        if pairs:
+            counterparty, cp_ticker = pairs[0]
         else:
             best = {}
             for m in _ACQUIRE_OBJ_RE.finditer(text):
@@ -1530,6 +1561,17 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
             if _is_self(_clean_company_name(m.group(1))):
                 direction = "sale"
                 break
+        # The ratio sentence's per-share side is the target: a seller's own
+        # 8-K carrying the joint release lists the buyer's ticker pair first
+        # (Tri-County's 8-K, 2026-08-10) and would otherwise read as an
+        # acquisition.
+        ratio_hit = extract_exchange_ratio(text)
+        if ratio_hit:
+            _r, acq_side, tgt_side = ratio_hit
+            if _is_self(tgt_side) and not _is_self(acq_side):
+                direction = "sale"
+            elif _is_self(acq_side) and not _is_self(tgt_side):
+                direction = "acquisition"
         seen_toks.add(ct)
         value = extract_stated_value(text)
         basis = "stated" if value else None
@@ -1546,6 +1588,7 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
             "announce_date": ann["file_date"],
             "direction": direction,
             "counterparty_name": counterparty,
+            "counterparty_ticker": cp_ticker,
             "terms": terms,
             "counterparty_cik": None,
             "value_usd": value, "value_basis": basis, "value_note": note,

@@ -92,16 +92,20 @@ _FILED_BY_RE = re.compile(
 
 
 def _universe_match(name: str):
-    """(ticker, cert, cik) for a live universe bank whose name shares the
-    brand token — unique hit only, else Nones (n/a over a wrong link)."""
+    """(ticker, cert, cik) for a live universe bank whose NAME shares the
+    brand token — unique hit only, else Nones (n/a over a wrong link).
+    Never by ticker: a filing's defined term is not a ticker ("BOH" in
+    South Plains' 2025-12-01 8-K is BOH Holdings, parent of Bank of Houston;
+    the ticker-equality match linked it to Bank of Hawaii, and the
+    open-status needle then missed the 2026-04-01 2.01, so a closed deal
+    sat on the board as pending)."""
     tok = brand_token(name or "")
     if not tok:
         return None, None, None
     try:
         from data.bank_universe import get_universe
         hits = [(t, info) for t, info in get_universe().items()
-                if token_in(tok, (info.get("name") or "").lower())
-                or tok == t.lower()]
+                if token_in(tok, (info.get("name") or "").lower())]
     except Exception:
         return None, None, None
     if len(hits) != 1:
@@ -254,7 +258,11 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
         # "Subject Company" (live: Tri-County's 425s named HBT, so the board
         # showed TYFG "acquiring" HBT at 0.28x). If the per-share side is
         # self, we are being acquired.
-        if t_cik and int(t_cik) == int(cik) and direction == "acquisition":
+        # Universe-ambiguous per-share side ("Tri-County" vs other Tri-
+        # banks) still arbitrates by our own brand tokens.
+        tgt_is_self = ((t_cik and int(t_cik) == int(cik))
+                       or (not t_cik and brand_token(tgt_side) in self_toks))
+        if tgt_is_self and direction == "acquisition":
             direction = "sale"
             counterparty = " ".join(acq_side.split())
             cp_tick, cp_cert, cp_cik = _universe_match(counterparty)
@@ -486,7 +494,12 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         for m in obj_re.finditer(title + ". " + text):
             cand = _clean_company_name(m.group(1))
             t = brand_token(cand)
-            if not t or t == self_tok or re.search(r"\d", cand) or len(cand.split()) > 8:
+            # A candidate that CONTAINS our own brand is us, whatever its
+            # first token: the acquirer's release is indexed under the
+            # target too, and "acquisition of Munster-based Finward" put
+            # FNWD on the board acquiring itself (live 2026-07-21).
+            if (not t or t == self_tok or token_in(self_tok, cand.lower())
+                    or re.search(r"\d", cand) or len(cand.split()) > 8):
                 continue
             if len(cand) > len(best.get(t, "")):
                 best[t] = cand
@@ -540,7 +553,23 @@ def find_pending_deals(cik, subject_name: str,
         if tok and tok in seen:
             continue
         seen.add(tok)
-        cp_tick, cp_cert, cp_cik = _universe_match(c["counterparty_name"])
+        # The release's own ticker pair ("Capital Bancorp, Inc. ... (NASDAQ:
+        # CBNK)") beats a brand-token name match, which is ambiguous for a
+        # generic brand like "Capital".
+        cp_tick = cp_cert = cp_cik = None
+        pair_tick = c.get("counterparty_ticker")
+        if pair_tick:
+            try:
+                from data.bank_universe import get_universe
+                info = get_universe().get(pair_tick) or {}
+            except Exception:
+                info = {}
+            if info:
+                cp_tick = pair_tick
+                cp_cert = int(info.get("fdic_cert") or 0) or None
+                cp_cik = int(info.get("cik") or 0) or None
+        if not cp_tick:
+            cp_tick, cp_cert, cp_cik = _universe_match(c["counterparty_name"])
         # A universe-matched counterparty shows under its universe name and
         # ticker (the acquire-verb capture was "Capital" for Capital
         # Bancorp, live 2026-09-30).
