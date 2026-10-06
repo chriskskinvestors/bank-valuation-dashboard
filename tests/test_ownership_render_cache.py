@@ -131,7 +131,7 @@ class TestForm4RenderCache(unittest.TestCase):
     def setUp(self):
         # Real st.cache_data (when streamlit was imported first) is a memo —
         # clear it so each test reaches the file-TTL logic.
-        clear = getattr(f4.fetch_insider_trades, "clear", None)
+        clear = getattr(f4.fetch_insider_history, "clear", None)
         if clear:
             clear()
             self.addCleanup(clear)

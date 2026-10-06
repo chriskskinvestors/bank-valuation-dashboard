@@ -304,11 +304,12 @@ class _Resp:
         return self._payload
 
 
-class TestOwnFilingCap(unittest.TestCase):
-    """fetch_insider_trades(force=True) — the refresh-insider job's path."""
+class _BacWalk(unittest.TestCase):
+    """fetch_insider_trades(force=True) — the refresh-insider job's path —
+    over BAC_FEED, each row served the XML of its real class."""
 
     def setUp(self):
-        clear = getattr(f4.fetch_insider_trades, "clear", None)
+        clear = getattr(f4.fetch_insider_history, "clear", None)
         if clear:
             clear()
         self.saved = {}
@@ -340,6 +341,9 @@ class TestOwnFilingCap(unittest.TestCase):
     def _kept(self):
         return {t["accession"]
                 for t in self.saved[f"{BAC_CIK}.json"]["transactions"]}
+
+
+class TestOwnFilingCap(_BacWalk):
 
     def test_foreign_filings_do_not_spend_the_cap(self):
         # Fixture shape: the 30 newest hold >=19 foreign-issuer filings, so
@@ -386,6 +390,127 @@ class TestOwnFilingCap(unittest.TestCase):
                          {a for a, d, c in BAC_FEED
                           if c is OWN and d >= "2026-07-08"})
         self.assertEqual(len(self._kept()), 4)
+        self.assertIsNone(self.saved[f"{BAC_CIK}.json"]["complete_since"])
+
+
+class TestCompleteSince(_BacWalk):
+    """A walk that stops at the cap or the fetch bound with in-window filings
+    unread persists complete_since — the first filing date from which every
+    Form 4 was read — so the UI can n/a windows that start earlier. Expected
+    dates are read off BAC_FEED by hand (row numbers are 1-based)."""
+
+    def _since(self):
+        return self.saved[f"{BAC_CIK}.json"]["complete_since"]
+
+    def test_cap_hit_mid_day_starts_coverage_the_next_day(self):
+        # The 30th own filing is row 57 (2026-03-03); rows 58-66 are nine more
+        # OWN filings of 2026-03-03, unread. "Since the oldest read filing's
+        # date" would claim 03-03 complete; coverage starts 2026-03-04.
+        self.assertEqual(BAC_FEED[56][1], "2026-03-03")
+        self.assertEqual(BAC_FEED[57][1:], ("2026-03-03", OWN))
+
+        hist = f4.fetch_insider_history(BAC_CIK, force=True)
+
+        self.assertEqual(self._since(), "2026-03-04")
+        self.assertEqual(hist["complete_since"], "2026-03-04")
+        self.assertEqual({t["accession"] for t in hist["transactions"]},
+                         set(_OWN_ACCS[:30]))
+
+    def test_fetch_bound(self):
+        # 75 fetched, none own: row 76 (2026-02-18) is the newest unread.
+        self.xml_for = dict.fromkeys(self.xml_for, FOREIGN_XML)
+        f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertEqual(BAC_FEED[75][1], "2026-02-18")
+        self.assertEqual(self._since(), "2026-02-19")
+
+    def test_every_filing_own(self):
+        # Cap at row 30 (2026-05-06); row 31 is 2026-05-06 too → 2026-05-07.
+        self.xml_for = dict.fromkeys(self.xml_for, OWN_XML)
+        f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertEqual([d for _, d, _ in BAC_FEED[29:31]],
+                         ["2026-05-06", "2026-05-06"])
+        self.assertEqual(self._since(), "2026-05-07")
+
+    def test_cap_reached_on_the_last_in_window_filing_is_complete(self):
+        # Feed ends at row 57, the 30th own filing: nothing unread.
+        self.xml_for = {a: self.xml_for[a] for a, _, _ in BAC_FEED[:57]}
+        feed = BAC_FEED[:57]
+        submissions = {"filings": {"recent": {
+            "form": ["4"] * len(feed),
+            "accessionNumber": [a for a, _, _ in feed],
+            "filingDate": [d for _, d, _ in feed]}}}
+        with patch.object(f4.requests, "get",
+                          lambda url, *a, **k: _Resp(submissions)):
+            f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertEqual(len(self._kept()), 30)
+        self.assertIsNone(self._since())
+
+    def test_trades_wrapper_still_returns_the_rows(self):
+        out = f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertIsInstance(out, list)
+        self.assertEqual({t["accession"] for t in out}, set(_OWN_ACCS[:30]))
+
+
+class TestCompleteSinceCacheObjects(unittest.TestCase):
+    """Reading back, and the firehose merge, of the per-CIK cache object."""
+
+    ROW = {"date": "2026-09-15", "insider": "MOYNIHAN BRIAN T",
+           "code": "D", "form_type": "non-derivative",
+           "accession": "0000070858-26-000469"}
+
+    def setUp(self):
+        clear = getattr(f4.fetch_insider_history, "clear", None)
+        if clear:
+            clear()
+
+    def _read(self, obj):
+        with patch.object(f4, "load_json", lambda prefix, name: obj), \
+             patch.object(f4.requests, "get",
+                          side_effect=AssertionError("fresh cache: no fetch")):
+            return f4.fetch_insider_history(BAC_CIK)
+
+    def test_fresh_cache_carries_the_field(self):
+        hist = self._read({"cached_at": datetime.now().isoformat(),
+                           "transactions": [dict(self.ROW)],
+                           "complete_since": "2026-03-04"})
+        self.assertEqual(hist["complete_since"], "2026-03-04")
+        self.assertEqual(len(hist["transactions"]), 1)
+
+    def test_legacy_object_without_the_field(self):
+        hist = self._read({"cached_at": datetime.now().isoformat(),
+                           "transactions": [dict(self.ROW)]})
+        self.assertIsNone(hist["complete_since"])
+        self.assertEqual(len(hist["transactions"]), 1)
+
+    def _poll(self, cached):
+        saved = {}
+        new = "0000070858-26-000480"
+        with patch.object(f4, "_recent_form4_filings", lambda pages: [
+                {"cik": BAC_CIK, "accession": new, "filed": "2026-10-06",
+                 "filed_at": None}]), \
+             patch.object(f4, "load_json", lambda prefix, name: cached), \
+             patch.object(f4, "_fetch_form4_xml", lambda acc, cik: OWN_XML), \
+             patch.object(f4, "save_json",
+                          lambda prefix, name, obj: saved.update({name: obj})):
+            n, _ = f4.poll_form4_firehose({"BAC": BAC_CIK})
+        self.assertEqual(n, 1)
+        return saved[f"{BAC_CIK}.json"]
+
+    def test_firehose_merge_preserves_the_field(self):
+        obj = self._poll({"cached_at": "2026-10-06T04:30:00",
+                          "transactions": [dict(self.ROW)],
+                          "complete_since": "2026-03-04"})
+        self.assertEqual(obj["complete_since"], "2026-03-04")
+        self.assertEqual(obj["cached_at"], "2026-10-06T04:30:00")
+        self.assertEqual(len(obj["transactions"]), 3)  # 2 new rows + 1
+
+    def test_firehose_merge_into_legacy_or_new_object(self):
+        legacy = self._poll({"cached_at": "2026-10-06T04:30:00",
+                             "transactions": [dict(self.ROW)]})
+        self.assertIsNone(legacy["complete_since"])
+        created = self._poll(None)
+        self.assertIsNone(created["complete_since"])
+        self.assertEqual(created["cached_at"], f4._EPOCH_STAMP)
 
 
 class _HttpResp:

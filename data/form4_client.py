@@ -358,22 +358,37 @@ def dedupe_joint_filings(transactions: list[dict]) -> list[dict]:
     return out
 
 
-@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
 def fetch_insider_trades(cik: int, months_back: int = 12, *,
                          force: bool = False) -> list[dict]:
+    """Form 4 transactions for a CIK (deduped) — fetch_insider_history's rows."""
+    return fetch_insider_history(cik, months_back, force=force)["transactions"]
+
+
+@st.cache_data(ttl=CACHE_TTL_SECONDS, show_spinner=False)
+def fetch_insider_history(cik: int, months_back: int = 12, *,
+                          force: bool = False) -> dict:
     """
     Fetch all Form 4 filings for a CIK and parse into transactions.
+
+    Returns {"transactions": [...deduped], "complete_since": "YYYY-MM-DD"|None}.
+    complete_since is set when the walk stopped at _MAX_OWN_FILINGS or
+    _MAX_XML_FETCHES with in-window filings unread: every Form 4 filed on or
+    after it was read, so an aggregate whose window starts earlier is
+    incomplete. None = the whole window was read (a cache object written
+    before the field existed also reads None).
 
     force=True skips the cached-file read and refetches + persists — the
     warming job's path (a fresh file would otherwise be handed back unrefreshed).
     """
+    empty = {"transactions": [], "complete_since": None}
     if not cik:
-        return []
+        return empty
 
     # Check cache (skipped when forced)
     cached = None if force else load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
     if _is_fresh(cached) and "transactions" in cached:
-        return dedupe_joint_filings(cached["transactions"])
+        return {"transactions": dedupe_joint_filings(cached["transactions"]),
+                "complete_since": cached.get("complete_since")}
 
     try:
         url = SEC_SUBMISSIONS_URL.format(cik=_pad_cik(cik))
@@ -382,11 +397,11 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
         data = resp.json()
     except Exception as e:
         print(f"[Form4] Submissions error for CIK {cik}: {e}")
-        return []
+        return empty
 
     recent = data.get("filings", {}).get("recent", {})
     if not recent:
-        return []
+        return empty
 
     forms = recent.get("form", [])
     accessions = recent.get("accessionNumber", [])
@@ -421,10 +436,11 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
     # cutoff, or the per-bank fetch bound. The cap counts only filings that
     # pass the issuer check: capping first left BAC 11 of its own (2026-10-05).
     all_transactions = []
-    n_own = 0
+    n_own = n_walked = 0
     for entry in form4_accessions[:_MAX_XML_FETCHES]:
         if n_own >= _MAX_OWN_FILINGS:
             break
+        n_walked += 1
         xml = _fetch_form4_xml(entry["accession"], cik, entry["primary_doc"])
         if not xml or not _issuer_matches(xml, cik):
             continue  # missing, or the bank is the reporting owner elsewhere
@@ -442,6 +458,13 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
     # Sort by transaction date desc
     all_transactions.sort(key=lambda x: x.get("date") or "", reverse=True)
 
+    # Stopped at the cap/bound with in-window filings unread: coverage starts
+    # the day after the newest unread one — not at the oldest READ filing's
+    # date, since BAC's 30th own filing (2026-03-03) has unread same-day ones.
+    unread = [e["filing_date"] for e in form4_accessions[n_walked:]]
+    complete_since = ((datetime.strptime(max(unread), "%Y-%m-%d").date()
+                       + timedelta(days=1)).isoformat() if unread else None)
+
     # Cache RAW (one row per filing) — dedupe is a read-time policy, so the
     # firehose's per-accession incremental merge stays exact.
     try:
@@ -449,11 +472,13 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
             "cik": cik,
             "cached_at": datetime.now().isoformat(),
             "transactions": all_transactions,
+            "complete_since": complete_since,
         })
     except Exception:
         pass
 
-    return dedupe_joint_filings(all_transactions)
+    return {"transactions": dedupe_joint_filings(all_transactions),
+            "complete_since": complete_since}
 
 
 def recent_open_market_transactions(ticker_ciks: dict, days: int = 30,
@@ -643,6 +668,8 @@ def poll_form4_firehose(ticker_ciks: dict, pages: int = 2) -> tuple[int, int]:
                 "cik": cik,
                 "cached_at": (cached or {}).get("cached_at") or _EPOCH_STAMP,
                 "transactions": merged,
+                # The sweep's coverage still holds — delta rows are newer.
+                "complete_since": (cached or {}).get("complete_since"),
             })
         except Exception:
             continue

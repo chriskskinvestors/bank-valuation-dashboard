@@ -116,7 +116,7 @@ class TestPeopleAbsentDash(unittest.TestCase):
     """Owner rule 2026-09-30: an absent value renders "—" on screen; the
     Excel export keeps its own n/a (the raw None goes to table_export)."""
 
-    def _render(self):
+    def _render(self, complete_since=None):
         st = MagicMock()
         export = MagicMock()
         person = {"name": "Jane Roe", "age": None, "position": None,
@@ -131,7 +131,10 @@ class TestPeopleAbsentDash(unittest.TestCase):
                                  "source_url": None}), \
              patch("data.people.get_insider_roster",
                    return_value=[{"name": "DOE JOHN", "role": "Director",
-                                  "latest_date": None}]):
+                                  "latest_date": None}]), \
+             patch("data.form4_client.fetch_insider_history",
+                   return_value={"transactions": [],
+                                 "complete_since": complete_since}):
             ps.render_people_summary("TEST")
         html = " ".join(str(c.args[0]) for c in st.markdown.call_args_list
                         if c.args)
@@ -164,6 +167,14 @@ class TestPeopleAbsentDash(unittest.TestCase):
         self.assertIsNone(df["Independent"].iloc[0])
         self.assertIsNone(df["Position"].iloc[0])
         self.assertNotIn("—", df.astype(str).to_numpy().ravel().tolist())
+
+    def test_roster_caption_states_truncated_coverage(self):
+        # A truncated Form 4 walk must not claim a trailing-12-month roster.
+        _, cap, _ = self._render()
+        self.assertIn("in the trailing 12 months", cap)
+        _, cap, _ = self._render("2026-03-04")
+        self.assertNotIn("trailing 12 months", cap)
+        self.assertIn("since 2026-03-04 (history truncated", cap)
 
 
 if __name__ == "__main__":

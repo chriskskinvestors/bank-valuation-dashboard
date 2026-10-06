@@ -8,7 +8,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 from data.bank_mapping import get_cik, get_name
-from data.form4_client import fetch_insider_trades, summarize_insider_activity
+from data.form4_client import fetch_insider_history, summarize_insider_activity
 from utils.formatting import fmt_dollars
 from utils.chart_style import (apply_standard_layout, CHART_HEIGHT_COMPACT,
                                COLOR_SUCCESS, COLOR_DANGER, COLOR_PRIMARY)
@@ -40,6 +40,16 @@ def _window_aggregates(txs: list[dict], days: int, today=None) -> dict:
             "buyers": len(buyers), "sellers": len(sellers)}
 
 
+def _window_truncated(days: int, complete_since: str | None, today=None) -> bool:
+    """True when a trailing `days` window starts before the fetched Form 4
+    coverage (fetch_insider_history's complete_since) — its aggregate would
+    silently omit the unread older filings, so it renders n/a."""
+    if not complete_since:
+        return False
+    today = today or datetime.now().date()
+    return (today - timedelta(days=days)).isoformat() < complete_since
+
+
 def _filing_url(cik, accession: str | None) -> str | None:
     """EDGAR filing-index URL for a Form 4 accession."""
     if not accession or not cik:
@@ -65,8 +75,12 @@ def render_insider_activity(ticker: str, show_title: bool = True):
     st.subheader("Insider Trading (Form 4)")
 
     with st.spinner("Fetching insider trades from SEC EDGAR..."):
-        txs = fetch_insider_trades(cik, months_back=12)
+        hist = fetch_insider_history(cik, months_back=12)
+        txs = hist["transactions"]
         summary = summarize_insider_activity(txs)
+    complete_since = hist["complete_since"]
+    trunc_flag = f"history truncated: covers since {complete_since}"
+    _coverage = {"Coverage": trunc_flag} if complete_since else {}
 
     if not txs:
         from ui.states import empty_state
@@ -75,6 +89,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
 
     # ── Headline metrics (boxless ledger) ───────────────────────────────
     _m = "color:var(--text-muted);font-size:var(--fs-xs)"
+    _na = f'n/a <span style="{_m}">{trunc_flag}</span>'
     net = summary["net_flow_6m_usd"]
     if net > 0:
         _net_val = f'{fmt_dollars(net, 2)} <span style="color:var(--success);font-size:var(--fs-xs)">Bullish</span>'
@@ -86,8 +101,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         _ratio_val = f'{summary["buys_6m_usd"] / summary["sells_6m_usd"]:.2f}x'
     else:
         _ratio_val = "∞" if summary["buys_6m_usd"] > 0 else "—"
-    ledger("Summary", [
-        ("Total Txns (12M)", str(summary["total_transactions"])),
+    _6m_items = [
         ("6M Buys", fmt_dollars(summary["buys_6m_usd"], 2)
          + (f' <span style="{_m}">{summary["buyer_count_6m"]} insiders</span>'
             if summary["buyer_count_6m"] else "")),
@@ -96,11 +110,23 @@ def render_insider_activity(ticker: str, show_title: bool = True):
             if summary["seller_count_6m"] else "")),
         ("Net Flow (6M)", _net_val),
         ("Buy/Sell Ratio", _ratio_val),
+    ]
+    # 180 days = summarize_insider_activity's 6M cutoff.
+    if _window_truncated(180, complete_since):
+        _6m_items = [(label, _na) for label, _ in _6m_items]
+    ledger("Summary", [
+        ("Total Txns (12M)",
+         _na if complete_since else str(summary["total_transactions"])),
+        *_6m_items,
     ])
 
     # ── Windowed aggregates (SNL spec: value bought/sold, buyers:sellers) ──
     win_rows = []
     for label, days in [("3M", 91), ("6M", 182), ("1Y", 365)]:
+        if _window_truncated(days, complete_since):
+            win_rows.append({"Window": label, "Bought": "n/a", "Sold": "n/a",
+                             "Net": "n/a", "Buyers : Sellers": "n/a"})
+            continue
         w = _window_aggregates(txs, days)
         win_rows.append({
             "Window": label,
@@ -113,10 +139,11 @@ def render_insider_activity(ticker: str, show_title: bool = True):
     from ui.tables import ksk_table
     ksk_table(pd.DataFrame(win_rows), signed_cols=("Net",))
     st.caption(
-        "Open-market P/S trades only. The 12-month fetch reads the 30 most "
-        "recent Form 4s on the company's own stock, so very active filers may "
-        "truncate the older "
-        "window; the 5Y aggregate needs the deeper EDGAR backfill (phase 2)."
+        (f"**{trunc_flag[0].upper()}{trunc_flag[1:]}** — windows starting "
+         "earlier show n/a. " if complete_since else "")
+        + "Open-market P/S trades only. The 12-month fetch reads the 30 most "
+        "recent Form 4s on the company's own stock; the 5Y aggregate needs "
+        "the deeper EDGAR backfill (phase 2)."
     )
 
     # ── Price graph with buy/sell markers (SNL spec) ────────────────────
@@ -149,6 +176,13 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                 marker=dict(symbol="triangle-down", size=9, color=COLOR_DANGER),
                 text=[f"{t['insider']}: −{t['shares']:,.0f} sh" for t in sells_m],
                 hovertemplate="%{text}<br>%{x} @ $%{y:.2f}<extra>Sell</extra>"))
+        if complete_since:
+            # No markers before coverage is "not fetched", not "no trades".
+            fig.add_vrect(x0=hist_px["date"].min(),
+                          x1=pd.Timestamp(complete_since),
+                          fillcolor="gray", opacity=0.12, line_width=0,
+                          annotation_text=trunc_flag,
+                          annotation_position="top left")
         apply_standard_layout(fig, title="Price with insider buys / sells (1Y)",
                               height=CHART_HEIGHT_COMPACT, show_legend=True)
         fig.update_yaxes(tickprefix="$")
@@ -257,6 +291,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                                  "Ticker": ticker, "CIK": cik,
                                  "Source": "SEC EDGAR Form 4 filings (trailing 12 "
                                            "months; each CIK's 30 most recent Form 4s)",
+                                 **_coverage,
                                  "Filter": f"{txn_filter} · {role_filter} · "
                                            f"limit {show_limit}",
                                  "Price": "for option exercises (code M) the price is "
@@ -265,7 +300,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
 
     # ── Insider summary table ──────────────────────────────────────────
     if summary["insiders"]:
-        with st.expander(f"Activity by insider ({len(summary['insiders'])} people)"):
+        _since = f" · {trunc_flag}" if complete_since else ""
+        with st.expander(f"Activity by insider ({len(summary['insiders'])} people{_since})"):
             insider_rows = []
             for ins in summary["insiders"]:
                 net_ins = ins["buy_usd"] - ins["sell_usd"]
@@ -298,6 +334,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                                      "Ticker": ticker, "CIK": cik,
                                      "Source": "SEC EDGAR Form 4 filings (trailing 12 "
                                                "months; each CIK's 30 most recent Form 4s)",
+                                     **_coverage,
                                      "Scope": "open-market P/S non-derivative trades "
                                               "only — grants, withholdings and "
                                               "exercises excluded"},

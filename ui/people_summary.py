@@ -162,6 +162,12 @@ def render_people_summary(ticker: str):
             '<th style="text-align:left;">Latest Filing</th>'
             f"</tr></thead><tbody>{body}</tbody></table></div>",
             unsafe_allow_html=True)
-        st.caption("Insiders with Form 4 activity in the trailing 12 months — "
-                   "an activity roster, not the complete officer/director "
+        # A truncated Form 4 walk (very active filers) misses older filers.
+        from data.form4_client import fetch_insider_history
+        since = fetch_insider_history(int(cik))["complete_since"]
+        st.caption("Insiders with Form 4 activity "
+                   + (f"since {since} (history truncated: the fetch keeps the "
+                      "30 most recent Form 4s)" if since
+                      else "in the trailing 12 months")
+                   + " — an activity roster, not the complete officer/director "
                    "list (that's the proxy table above).")
