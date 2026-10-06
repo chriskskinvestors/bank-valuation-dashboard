@@ -2118,7 +2118,8 @@ _ASSET_QUALITY = [
         ("Nonaccrual Loans", "dollar", "NALNLS"),
         ("Restructured Loans (accruing)", "dollar", "RSLNLTOT"),
         ("» Nonperforming Loans", "sum", "NALNLS", "RSLNLTOT"),
-        ("Real Estate Owned & Repossessed, Net", "dollar", "ORE"),
+        # FDIC ORE = "OTHER REAL ESTATE OWNED" only (no repossessed assets).
+        ("Other Real Estate Owned", "dollar", "ORE"),
         ("» Nonperforming Assets", "sum", "NALNLS", "RSLNLTOT", "ORE"),
         ("90+ Days Past Due, Still Accruing", "dollar", "P9LNLS"),
         ("» NPAs & 90+ Day Delinquent", "sum", "NALNLS", "RSLNLTOT", "ORE", "P9LNLS"),
@@ -2134,7 +2135,9 @@ _ASSET_QUALITY = [
     ]),
     ("Asset Quality Ratios (%)", [
         ("NPAs / Assets", "fratio", "NALNLS+RSLNLTOT+ORE", "ASSET"),
-        ("Reported: Nonperforming Assets / Assets", "pct", "NPERFV"),
+        # FDIC NPERF = noncurrent loans + OREO — not the NPA definition above
+        # (nonaccrual + restructured + OREO); ONB FY25 $527.5M vs $612.3M.
+        ("Reported: Noncurrent Loans + OREO / Assets", "pct", "NPERFV"),
         ("Nonaccrual Loans / Assets", "fratio", "NALNLS", "ASSET"),
         ("NPAs & 90+ PD / Assets", "fratio", "NALNLS+RSLNLTOT+ORE+P9LNLS", "ASSET"),
         ("Nonaccrual Loans / Loans", "fratio", "NALNLS", "LNLSGR"),
@@ -2153,8 +2156,12 @@ _ASSET_QUALITY = [
         ("Reserves / NPAs & 90+ PD", "fratio",
          "LNATRES", "NALNLS+RSLNLTOT+ORE+P9LNLS"),
         ("Reserves / Loans", "pct", "LNATRESR"),
+        # ELNLOS = provision for LOAN & LEASE losses (FDIC ELNANTR's own
+        # numerator); ELNATR is total credit-loss provision incl. securities
+        # and unfunded commitments — JPM Q4'25 179.14% vs 95.01% (REVIEW
+        # 2026-10-06 AQ P0-1).
         ("Loan Loss Provision / NCO", "flowratio",
-         ("ELNATR", None), ("NTLNLS", "NTLNLSQ")),
+         ("ELNLOS", None), ("NTLNLS", "NTLNLSQ")),
         ("NCOs / Avg Loans (reported, annualized)", "pct", "NTLNLSR"),
     ]),
 ]
@@ -2227,8 +2234,8 @@ _CAPITAL_ADEQUACY = [
 # leaf-category sums reconcile to the filed totals TO THE DOLLAR for
 # TCBK + BANR in all three stages. "of which" rows (HELOC ⊂ 1-4 fam;
 # OO/NOO ⊂ CRE) are excluded from the leaf set. Agricultural P3AG/P9AG/NAAG
-# exist in the FDIC dictionary but the financials endpoint drops them —
-# the residual row (filed total − leaves) carries ag + anything unrequested,
+# are not requested here — the residual row (filed total − leaves) carries
+# ag + anything unrequested (it equals AG exactly for ONB/HBAN, 2026-10-06)
 # and renders n/a if ever negative (residual kind).
 _BYLT_LEAVES = ["RECONS", "RERES", "REMULT", "RENRES", "REAG",
                 "CI", "CRCD", "AUTO", "CONOTH", "LS", "OTHLN"]

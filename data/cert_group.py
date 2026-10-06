@@ -110,15 +110,22 @@ def _lead_ratio(records: list[dict], field: str) -> float | None:
     base = _LEAD_RATIO_BASE.get(field)
     if base is None:
         return None
-    vals = [_num(r.get(field)) for r in records]
     bases = [_num(r.get(base)) for r in records]
-    if None in vals or None in bases or any(b < 0 for b in bases):
+    if None in bases or any(b < 0 for b in bases):
         return None
+    # A sibling with a zero base carries zero weight (Dearborn: no loans), so
+    # its own ratio — often unreported — can't move the group value.
+    keep = [i for i, b in enumerate(bases) if i == 0 or b > 0]
+    vals = [_num(records[i].get(field)) for i in keep]
+    if None in vals:
+        return None
+    if len(vals) == 1:
+        return vals[0] if bases[0] > 0 else None
     total = sum(bases)
     if total <= 0:
         return None
     sibling_share = 1 - bases[0] / total
-    gap = max(abs(v - vals[0]) for v in vals[1:])
+    gap = max(abs(v - vals[0]) for v in vals[1:])   # vals[1:] non-empty here
     return vals[0] if 2 * sibling_share * gap < _LEAD_RATIO_TOL else None
 
 
