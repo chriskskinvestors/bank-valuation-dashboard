@@ -94,6 +94,12 @@ _EXCLUDE_BEFORE = re.compile(
 _EXCLUDE_AFTER = re.compile(
     r"^[\s,(]*(?:excluding|adjusted|as adjusted|non-?gaap|core|operating|"
     r"on an? adjusted)", re.I)
+# A sentence-leading "Excluding …," clause qualifies the whole sentence:
+# "Excluding AOCI losses/gains, the tangible book value of the Company's
+# common stock … was $14.29 per share" is the non-GAAP variant of the GAAP
+# $12.20 stated one sentence earlier (FDVA 2Q26). Same sentence only — no
+# period, semicolon or dollar figure between the clause and the label.
+_EXCLUDE_SENTENCE = re.compile(r"\bexcluding\b[^.;$]{0,60}$", re.I)
 
 _AGREE_PCT = 0.011      # two-decimal percent agreement
 _AGREE_USD = 0.011      # cent agreement for per-share values
@@ -131,6 +137,8 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
     vals = []
     for start, vs, end in matches:
         if _EXCLUDE_BEFORE.search(text[max(0, start - 34):start]):
+            continue
+        if _EXCLUDE_SENTENCE.search(text[max(0, start - 70):start]):
             continue
         if _CONNECTOR_EXCLUDE.search(text[start:end]):
             continue
@@ -239,11 +247,23 @@ _TBV_PATS = [
     # capture is the level, never the change. Anything looser would risk
     # grabbing a change or a year-ago figure, which is the failure mode the
     # first-$ discipline elsewhere in this file exists to prevent.
+    # The verb may carry a short period phrase before "by $": "Tangible Book
+    # Value per share improved during the quarter by $0.12 to $12.20" (FDVA
+    # 2Q26, 2026-10-06 — an OTC bank whose release is its only disclosure;
+    # this form yielded nothing and the card showed no TBV at all).
     re.compile(_TBV_LABEL + r"[^$%]{0,40}?"
-               r"\b(?:increased|decreased|rose|fell|grew|declined|improved)\s*"
+               r"\b(?:increased|decreased|rose|fell|grew|declined|improved)"
+               r"(?:\s+(?:during|in|for|over)\s+the\s+(?:quarter|period|year|"
+               r"first|second|third|fourth)[^$%]{0,12}?)?\s*"
                r"(?:by\s*)?\$\s?\d{1,3}\.\d{2}\s*,?\s*"
                r"(?:or\s*\d{1,2}(?:\.\d{1,2})?\s*%\s*,?\s*)?"
                r"to\s*\$\s?(\d{1,3}\.\d{2})", re.I),
+    # "The tangible book value of the Company's common stock on June 30,
+    # 2026, was $12.20 per share" — the level pinned to "was/of/at $X per
+    # share" so the comparison figure after it is never the capture (FDVA).
+    re.compile(r"tangible book value of (?:the )?(?:company'?s |bank'?s )?"
+               r"common (?:stock|shares)[^$%]{0,50}?\b(?:was|were|of|at)\s*"
+               r"\$\s?(\d{1,3}\.\d{2})\s*per (?:common )?share", re.I),
 ]
 _TBV_BAND = (1.0, 500.0)
 
@@ -262,7 +282,13 @@ _BV_LABEL = r"(?<!tangible )(?<!tangible common )book value per (?:common )?shar
 _VERB_TO = (r"[^$%]{0,40}?\b(?:increased|decreased|rose|fell|grew|declined|"
             r"improved)\s+to\s*\$\s?(\d{1,3}\.\d{2})")
 _BV_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_LABEL, 1), re.I)
-            for p in _TBV_PATS] + [re.compile(_BV_LABEL + _VERB_TO, re.I)]
+            for p in _TBV_PATS if p.pattern.startswith(_TBV_LABEL)] + [
+    re.compile(_BV_LABEL + _VERB_TO, re.I),
+    # "the book value of the Company's common stock … was $X per share" —
+    # the TBV sentence of the same shape is kept out by the lookbehind.
+    re.compile(r"(?<!tangible )book value of (?:the )?(?:company'?s |bank'?s )?"
+               r"common (?:stock|shares)[^$%]{0,50}?\b(?:was|were|of|at)\s*"
+               r"\$\s?(\d{1,3}\.\d{2})\s*per (?:common )?share", re.I)]
 _BV_BAND = (1.0, 900.0)
 # Explicitly per-COMMON label — the only BV that may serve when the release
 # carries preferred EQUITY: there a bare "book value per share" can be total
@@ -271,8 +297,12 @@ _BV_BAND = (1.0, 900.0)
 # sec_earnings_8k.extract_reported_bvps_status).
 _BV_COMMON_LABEL = r"(?<!tangible )book value per common share"
 _BV_COMMON_PATS = [re.compile(p.pattern.replace(_TBV_LABEL, _BV_COMMON_LABEL, 1),
-                              re.I) for p in _TBV_PATS] + [
-    re.compile(_BV_COMMON_LABEL + _VERB_TO, re.I)]
+                              re.I) for p in _TBV_PATS if p.pattern.startswith(_TBV_LABEL)] + [
+    re.compile(_BV_COMMON_LABEL + _VERB_TO, re.I),
+    # "book value of the Company's COMMON stock … was $X per share" is per
+    # common share by construction, so it serves even when the release is
+    # prose-only (preferred can't be ruled out) or carries preferred equity.
+    _BV_PATS[-1]]
 
 
 def _bv_ties_to_common(html: str, bv: float | None) -> bool:
