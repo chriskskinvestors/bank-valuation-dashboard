@@ -1690,9 +1690,37 @@ def _prior_periodic(cik, release_date: str) -> dict | None:
 
 
 # ── Public, cached entry point ───────────────────────────────────────────────
+def _release_superseded(cik, f8k: dict, today=None) -> bool:
+    """True when the earnings release is no longer the newest view of the
+    quarter — the banner says "not yet in the 10-Q" and its caption
+    "superseded by the audited 10-Q when filed":
+      • a 10-Q/10-K already filed covers the release's quarter (every Q2
+        banner once the Q2 10-Qs land in August), or
+      • the release quarter ended more than _SUPPLEMENT_STALE_DAYS ago (the
+        repo's release-staleness convention) — CIZN's latest earnings 8-K is
+        from 2023-11, BCTF's from 2024-03.
+    The periodic report comes from the same cached submissions record the 8-K
+    finder read (no added fetch); a failed lookup leaves only the age test,
+    never hiding a current banner on an error."""
+    from calendar import monthrange
+    from datetime import date
+    rq = _release_quarter_end(f8k.get("date") or "")
+    if rq is None:
+        return False
+    try:
+        rd = (latest_periodic_filing(cik) or {}).get("report_date") or ""
+        if rd and (int(rd[:4]), int(rd[5:7])) >= rq:
+            return True
+    except Exception:
+        pass
+    qend = date(rq[0], rq[1], monthrange(*rq)[1])
+    return ((today or date.today()) - qend).days > _SUPPLEMENT_STALE_DAYS
+
+
 def latest_earnings_8k_figures(cik) -> dict | None:
     """Latest-quarter headline figures from a bank's most-recent earnings 8-K
-    (EX-99.1), or None when no earnings 8-K / no EX-99.1 / nothing extractable.
+    (EX-99.1), or None when no earnings 8-K / no EX-99.1 / nothing extractable
+    — or when a filed 10-Q/10-K (or age) has superseded it (_release_superseded).
 
     {"period", "filed", "accession", "doc", "figures": {...}, "_preliminary": True}
 
@@ -1713,7 +1741,7 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     from data import cache
 
     f8k = _latest_earnings_8k(cik)
-    if not f8k:
+    if not f8k or _release_superseded(cik, f8k):
         return None
 
     # v2: per-row '$'/'%' decoration-cell skip in _table_rows (FRME miss).
