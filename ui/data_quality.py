@@ -407,7 +407,7 @@ def _render_ffiec_status(cert, ticker=None):
     dur_raw = ladder.get("weighted_avg_duration_years")
     rows = [
         {"Field": "Reporting period", "Value": ladder.get("reporting_period", "—")},
-        {"Field": "Securities duration (wtd-avg)",
+        {"Field": "Securities maturity (wtd-avg, bucket midpoints)",
          "Value": f"{dur_raw:.2f} yrs" if dur_raw is not None else "— (not reported)"},
         {"Field": "Floating-loan share (RC-C Memo 2)",
          "Value": f"{fls * 100:.1f}%" if fls is not None else "— (not reported)"},
@@ -420,14 +420,14 @@ def _render_ffiec_status(cert, ticker=None):
     table_export(
         pd.DataFrame([
             {"Field": "Reporting period", "Value": period},
-            {"Field": "Securities duration (wtd-avg, years)", "Value": dur_raw},
+            {"Field": "Securities maturity (wtd-avg, bucket midpoints, years)", "Value": dur_raw},
             {"Field": "Floating-loan share (RC-C Memo 2, %)",
              "Value": fls * 100 if fls is not None else None},
             {"Field": "Source", "Value": ladder.get("source", "ffiec")},
         ]),
         f"ffiec_ladder_{ticker or cert}_{period or 'latest'}",
         key=f"exp_dq_ffiec_{ticker or cert}", sheet="FFIEC Ladder",
-        row_formats={"Securities duration (wtd-avg, years)": "num",
+        row_formats={"Securities maturity (wtd-avg, bucket midpoints, years)": "num",
                      "Floating-loan share (RC-C Memo 2, %)": "pct"},
         provenance={
             "Page": "Company Analysis · Data Quality — FFIEC Call Report Ladder",

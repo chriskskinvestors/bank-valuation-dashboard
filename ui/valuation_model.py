@@ -49,8 +49,6 @@ def _model_provenance(ticker: str, name: str, price, asof, params: dict,
         "Base EPS ($, annual)": params.get("base_eps"),
         "EPS growth (avg %, 5-yr)": _avg_pct(params.get("eps_growth_rates")),
         "Loan growth (avg %, 5-yr)": _avg_pct(params.get("loan_growth_rates")),
-        "Payout ratio (%)": (params["payout_ratio"] * 100
-                             if params.get("payout_ratio") is not None else None),
         "Starting loans / share ($)": params.get("starting_loans_per_share"),
         "Target CET1 (%)": params.get("target_cet1_pct"),
         "Cost of equity (%)": params.get("cost_of_equity_pct"),
@@ -192,12 +190,6 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     if len(loans) >= 5 and loans[-1] > 0:
         loan_growth_trailing = (loans[0] / loans[-1] - 1) * 100
 
-    # Dividend payout
-    dps = sec.get("dividends_per_share")
-    payout_ratio = 0.30  # default 30%
-    if dps and base_eps and base_eps > 0:
-        payout_ratio = max(0.0, min(0.95, dps / base_eps))
-
     # Starting loans per share
     # None (not 0, and never the old 200.0 input fallback) when FDIC loans or
     # the share count are missing: loans/share drives the DCF's capital need.
@@ -216,7 +208,6 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         "tbvps": tbvps,
         "tbvps_source": tbvps_source,
         "loan_growth_trailing_pct": loan_growth_trailing,
-        "payout_ratio": payout_ratio,
         "loans_per_share": loans_per_share,
         "shares": shares,
     }
@@ -479,7 +470,7 @@ def _render_long_run_context(ticker: str) -> None:
 def render_valuation_model(ticker: str):
     """Render the full valuation model panel.
 
-    @st.fragment: the model is driven by EPS/growth/payout sliders and a
+    @st.fragment: the model is driven by EPS/growth sliders and a
     consensus toggle — each previously reran the whole Company page to redo the
     DCF. As a fragment those knobs rerun only this panel. Renders fully on a
     full rerun (bank switch), so no regression."""
@@ -521,7 +512,7 @@ def render_valuation_model(ticker: str):
                 key=f"dcf_consensus_period_{ticker}",
             )
             use_consensus = st.checkbox(
-                "Pre-fill EPS / payout from this consensus period",
+                "Pre-fill EPS from this consensus period",
                 key=f"dcf_use_consensus_{ticker}",
             )
             if use_consensus:
@@ -541,8 +532,6 @@ def render_valuation_model(ticker: str):
                         for m in consensus.get("metrics", []):
                             if m.get("key") == "eps" and m.get("value"):
                                 defaults["base_eps"] = float(m["value"]) * annualize
-                            if m.get("key") == "dps" and m.get("value") and defaults.get("base_eps"):
-                                defaults["payout_ratio"] = min(0.95, float(m["value"]) * annualize / defaults["base_eps"])
 
     # ── Input controls ────────────────────────────────────────────────
     with st.expander("Model inputs (click to edit)", expanded=False):
@@ -600,13 +589,6 @@ def render_valuation_model(ticker: str):
                       if _lg is not None else
                       "No 5-quarter FDIC loan history — 4% is an assumption."),
                 key=f"dcf_loan_g_{ticker}",
-            )
-            payout_ratio = st.slider(
-                "Payout ratio",
-                min_value=0.0, max_value=0.95,
-                value=float(defaults.get("payout_ratio") or 0.30),
-                step=0.05,
-                key=f"dcf_payout_{ticker}",
             )
 
         with col3:
@@ -667,7 +649,6 @@ def render_valuation_model(ticker: str):
     base_params = {
         "base_eps": base_eps,
         "eps_growth_rates": eps_growth_rates,
-        "payout_ratio": payout_ratio,
         "loan_growth_rates": loan_growth_rates,
         "starting_loans_per_share": loans_ps,
         "target_cet1_pct": target_cet1,
@@ -719,7 +700,7 @@ def render_valuation_model(ticker: str):
         ticker, name, hist, sec, price, dcf_fv, w_ptbv, w_fair_price, blended,
         pv_explicit, pv_terminal,
         seed={"base_eps": base_eps, "roatce_pct": roatce_pct, "tbvps": tbvps,
-              "eps_growth_avg": eps_growth_avg, "payout_ratio": payout_ratio,
+              "eps_growth_avg": eps_growth_avg,
               "cost_of_equity": cost_of_equity, "terminal_growth": terminal_growth,
               "eps_source": defaults.get("eps_source"),
               "roatce_basis": defaults.get("roatce_basis"),

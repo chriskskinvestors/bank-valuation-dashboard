@@ -609,7 +609,7 @@ class TestDataQualityFfiecLadder(_DataQualitySite):
         g = self._grid(ws)
         self.assertEqual(g[0], ["Field", "Value"])
         self.assertEqual(g[1], ["Reporting period", "12/31/2025"])
-        self.assertEqual(g[2], ["Securities duration (wtd-avg, years)", 4.37])
+        self.assertEqual(g[2], ["Securities maturity (wtd-avg, bucket midpoints, years)", 4.37])
         self.assertAlmostEqual(g[3][1], 42.0, places=9)
         self.assertEqual(g[3][0], "Floating-loan share (RC-C Memo 2, %)")
         self.assertEqual(g[4], ["Source", "ffiec"])

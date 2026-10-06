@@ -112,7 +112,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
         if rc is not None:
             gap = rc - peer_median
             if rc < 100:
-                benchmark_msg = f"**Under-reserved** — below 100% minimum (peer median {peer_median:.0f}%)"
+                benchmark_msg = f"Below 100% of noncurrent loans (peer median {peer_median:.0f}%)"
             elif gap < 0:
                 benchmark_msg = f"Below peer median by {abs(gap):.0f}pp"
             else:
@@ -177,7 +177,7 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     fig4 = go.Figure()
     fig4.add_trace(go.Scatter(
         x=ctl["date"], y=ctl["reserve_coverage"],
-        name="Reserve / NPL", mode="lines+markers",
+        name="Reserves / Noncurrent Loans", mode="lines+markers",
         line=dict(color=COLOR_SUCCESS, width=2.5),
         marker=dict(size=6),
     ))
@@ -186,8 +186,8 @@ def render_credit_dynamics(ticker: str, watchlist: list[str] | None = None,
     if peer_median:
         fig4.add_hline(y=peer_median, line_color=COLOR_PRIMARY, line_width=1, line_dash="dot",
                         annotation_text=f"Peer median {peer_median:.0f}%", annotation_position="top right")
-    apply_standard_layout(fig4, title="Reserve Coverage vs NPL", height=CHART_HEIGHT_COMPACT,
-                          yaxis_title="Reserve / NPL", show_legend=False, hovermode="x")
+    apply_standard_layout(fig4, title="Reserves / Noncurrent Loans", height=CHART_HEIGHT_COMPACT,
+                          yaxis_title="Reserves / Noncurrent (%)", show_legend=False, hovermode="x")
     _rc_vals = [v for v in ctl["reserve_coverage"].tolist() if v is not None] + [100]
     if peer_median:
         _rc_vals.append(peer_median)

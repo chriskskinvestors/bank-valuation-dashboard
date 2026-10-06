@@ -146,7 +146,6 @@ def terminal_value(
 def run_fcfe_dcf(
     base_eps: float,
     eps_growth_rates: list[float],
-    payout_ratio: float,
     loan_growth_rates: list[float],
     starting_loans_per_share: float,
     target_cet1_pct: float,
