@@ -55,7 +55,6 @@ class TestFcfeDcf(unittest.TestCase):
     PARAMS = dict(
         base_eps=2.0,
         eps_growth_rates=[0.0] * 5,
-        payout_ratio=0.30,            # explicit-period payout (unused: no growth need)
         loan_growth_rates=[0.0] * 5,
         starting_loans_per_share=50.0,
         target_cet1_pct=10.0,
@@ -250,7 +249,7 @@ class TestRoatceBelowGrowthIsNa(unittest.TestCase):
     value" (terminal payout clamped to 0) on the live Valuation Model."""
 
     BSBK = dict(
-        base_eps=0.22, eps_growth_rates=[0.05] * 5, payout_ratio=0.30,
+        base_eps=0.22, eps_growth_rates=[0.05] * 5,
         loan_growth_rates=[0.04] * 5, starting_loans_per_share=50.0,
         target_cet1_pct=10.0, cost_of_equity_pct=10.0,
         terminal_growth_pct=2.5, roatce_pct=1.82,
