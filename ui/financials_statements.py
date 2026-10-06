@@ -806,6 +806,18 @@ def render_statement(ticker: str, key_prefix: str, title: str, spec: list,
             fl = q_fl or fl
             ref = f"FDIC field {fl}" + (" (single quarter, as filed)" if q_fl else "")
             if fl in _AVG_BASED_FDIC_RATIOS and _is_group_record(rec):
+                if fl in (rec.get("_lead_ratio_fields") or ()):
+                    # data/cert_group._lead_ratio: the other charters can move
+                    # the group value by < 0.005pp — the lead's figure stands.
+                    raw = _num(rec.get(fl)); share = rec.get("_lead_asset_share")
+                    note = ("lead charter's reported ratio — the group's other "
+                            "charters" + (f" ({(1 - share) * 100:.4f}% of assets)"
+                                          if share is not None else "")
+                            + " can move it by less than 0.005pp")
+                    return _pct(raw), calc(label, _pct(raw), asof,
+                                           f"{ref} — {note}",
+                                           [{"label": label + " (lead charter)",
+                                             "val": _pct(raw)}], note, False)
                 why = ("n/a — FDIC computes this on average balances, which "
                        "can't be combined across the group's charters")
                 return "n/a", calc(label, "n/a", asof, ref,
