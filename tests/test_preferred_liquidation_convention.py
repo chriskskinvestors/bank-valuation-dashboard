@@ -154,6 +154,8 @@ class TestResolverRetriesAtLiquidation(unittest.TestCase):
         with patch("data.bank_mapping.get_cik", return_value=1649739), \
                 patch.object(va, "_earnings_8k_predates", return_value=False), \
                 patch("data.sec_earnings_8k.reported_tbvps_status", fake), \
+                patch("data.sec_earnings_8k.reported_share_basis",
+                      return_value=None), \
                 patch.object(va, "_otc_tbvps", return_value=None):
             out = va._resolve_tbvps("BAFN", 6.2487, bvps, sec_as_of=END,
                                     shares=4_106_905, liq_gap_ps=gap)
