@@ -260,6 +260,77 @@ def _provenance(facts):
         return sec_client.get_fundamentals_with_provenance(1)
 
 
+class TestUndimensionedClassArbitratedByCover(unittest.TestCase):
+    """OPHC 10-Q 0001493152-26-036825 (2026-10-06): the voting class is tagged
+    UNDIMENSIONED (12,340,785) and the nonvoting class per member
+    (11,458,351); the Aug-10 cover counts both classes (12,622,470 /
+    11,458,351). Total 23,799,136 = the release's "fully diluted shares
+    outstanding"; $134,380K ÷ it = $5.65, the printed TBVPS. Before, the
+    voting-only count served ($10.89)."""
+    _NV = "us-gaap:NonvotingCommonStockMember"
+    _V = "us-gaap:CommonStockMember"
+
+    def _ophc(self, undim=12_340_785, cover_v=12_622_470):
+        return [
+            _e("CommonStockSharesOutstanding", None, undim),
+            _e("CommonStockSharesIssued", None, undim),
+            _e("CommonStockSharesOutstanding", self._NV, 11_458_351),
+            _e("CommonStockSharesIssued", self._NV, 11_458_351),
+            _e("EntityCommonStockSharesOutstanding", self._V, cover_v, COVER),
+            _e("EntityCommonStockSharesOutstanding", self._NV, 11_458_351, COVER),
+        ]
+
+    def test_hand_verified(self):
+        self.assertEqual(12_340_785 + 11_458_351, 23_799_136)
+        self.assertAlmostEqual(134_380e3 / 23_799_136, 5.65, places=2)
+
+    def test_undimensioned_count_is_the_uncounted_cover_class(self):
+        rec = ov.resolve_class_shares(self._ophc(), EQ_END)
+        self.assertEqual(rec["status"], "resolved")
+        self.assertEqual(rec["value"], 23_799_136)
+        self.assertEqual(rec["classes"],
+                         {self._V: 12_340_785, self._NV: 11_458_351})
+
+    def test_undimensioned_total_is_left_alone(self):
+        # A filer tagging the all-class TOTAL undimensioned beside a per-class
+        # cover: nothing to do (None) — the chain's own count is right.
+        self.assertIsNone(ov.resolve_class_shares(
+            self._ophc(undim=24_080_821), EQ_END))
+
+    def test_count_matching_neither_is_unresolved(self):
+        rec = ov.resolve_class_shares(self._ophc(undim=18_000_000), EQ_END)
+        self.assertEqual(rec["status"], "unresolved")
+        self.assertIsNone(rec["value"])
+
+    def test_single_class_cover_is_not_multiclass(self):
+        ents = [_e("CommonStockSharesOutstanding", None, 12_340_785),
+                _e("EntityCommonStockSharesOutstanding", self._V, 12_622_470, COVER)]
+        self.assertIsNone(ov.resolve_class_shares(ents, EQ_END))
+
+    def test_cover_lag_opens_the_gate(self):
+        blob = _ocfc_blob(class_shares=False)
+        blob["facts"]["us-gaap"]["CommonStockSharesOutstanding"]["units"][
+            "shares"].append(_pt(EQ_END, 12_340_785))
+        blob["facts"]["dei"] = {"EntityCommonStockSharesOutstanding": {"units": {
+            "shares": [{"end": PRIOR, "val": 12_166_437, "filed": PRIOR}]}}}
+        meta = {"accession": "000149315226036825", "doc": "form10-q.htm",
+                "form": "10-Q", "date": FILED}
+        with patch("data.sec_earnings_8k.latest_periodic_filing",
+                   return_value={"form": "10-Q", "date": FILED,
+                                 "report_date": EQ_END}),                 patch("data.sec_filing_scraper.latest_filing", return_value=meta),                 patch.object(ov, "class_share_entries",
+                             return_value=self._ophc()):
+            out = ov.overlay_class_shares(1288855, blob)
+        self.assertEqual(out["_class_shares"]["value"], 23_799_136)
+        # Cover filed WITH the latest filing: single-class, gate stays shut.
+        blob["facts"]["dei"]["EntityCommonStockSharesOutstanding"]["units"][
+            "shares"][0]["filed"] = FILED
+        with patch("data.sec_earnings_8k.latest_periodic_filing",
+                   return_value={"form": "10-Q", "date": FILED,
+                                 "report_date": EQ_END}),                 patch.object(ov, "class_share_entries",
+                             side_effect=AssertionError("no fetch")):
+            self.assertIs(ov.overlay_class_shares(1288855, blob), blob)
+
+
 class TestShareChainUsesClassTotal(unittest.TestCase):
     def test_without_the_record_the_voting_only_cover_serves(self):
         """The failure being fixed: 2,411,079,000 / 96,645,219 = 24.948."""
@@ -334,7 +405,12 @@ class TestOverlayTrigger(unittest.TestCase):
 
         def _boom(*a, **k):
             raise AssertionError("a filer tagging the total pays no fetch")
+        # (The cover-lag check reads the 2h-cached submissions record the
+        # per-share path loads anyway; stubbed: cover filed with the 10-Q.)
         with patch("data.sec_filing_scraper.latest_filing", _boom), \
+                patch("data.sec_earnings_8k.latest_periodic_filing",
+                      return_value={"form": "10-Q", "date": FILED,
+                                    "report_date": EQ_END}), \
                 patch.object(ov, "class_share_entries", _boom):
             self.assertIs(ov.overlay_class_shares(1004702, blob), blob)
 

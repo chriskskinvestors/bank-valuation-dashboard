@@ -246,6 +246,15 @@ def _overlay(cik: int, slim: dict) -> dict:
     except Exception as e:
         print(f"[SEC] class-share overlay skipped for CIK {cik}: "
               f"{type(e).__name__}: {e}")
+    # Preferred carrying value tagged only per series / as APIC-preferred
+    # (STT/NTRS/BOH/FRME/WSBC/NEWT/BYFC/BCBP) — read from the filing's own
+    # instance when the blob's ladder leaves it unresolved.
+    try:
+        from data.sec_facts_overlay import overlay_preferred_total
+        slim = overlay_preferred_total(cik, slim)
+    except Exception as e:
+        print(f"[SEC] preferred-total overlay skipped for CIK {cik}: "
+              f"{type(e).__name__}: {e}")
     return slim
 
 
@@ -497,6 +506,7 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             if 80 <= _gap_days(e2, e1) <= 100:
                 quarters[e1] = d1["val"] - d2["val"]
                 break
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
 
     # Same-END pairs give the EARLIER quarter: a YTD minus the direct quarter
     # that closes it (H1 − Q2 = Q1; only a ~3-month remainder counts). This
@@ -561,6 +571,30 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             return float(annual[0]["val"])
 
     return None
+
+
+def _fill_q4_from_fy_minus_quarters(durations: dict, quarters: dict, gap_days) -> None:
+    """Q4 = FY − (Q1 + Q2 + Q3) for a filer that tags the full year and three
+    discrete quarters but NO year-to-date cumulatives — the same-start
+    derivation above needs a 9M fact and has none. BANC and ACNB tag exactly
+    this shape (FY $0.40 beside Q1–Q3 $0.10 each, no 9M), so Q4 was
+    underivable and the whole TTM dividend went None: 175 SEC filers showed
+    no dividend yield on 2026-10-06, many of them obvious payers. Declared
+    per-share dividends and dollar flows sum exactly within a fiscal year;
+    for per-share EPS it is the same approximation the FY − 9M rule already
+    accepts. Direct and same-start-derived quarters always win; the three
+    quarters must start at the FY start and be consecutive, with Q4 landing
+    one quarter after Q3 at the FY end — anything else is left alone."""
+    direct_start = {end: start for (start, end), d in durations.items()
+                    if 80 <= d["span"] <= 100}
+    for (s_fy, e_fy), d_fy in durations.items():
+        if not (350 <= d_fy["span"] <= 380) or e_fy in quarters:
+            continue
+        inner = sorted(e for e, s in direct_start.items() if s_fy <= s and s < e < e_fy)
+        if (len(inner) == 3 and direct_start[inner[0]] == s_fy
+                and all(80 <= gap_days(a, b) <= 100 for a, b in zip(inner, inner[1:]))
+                and 80 <= gap_days(inner[-1], e_fy) <= 100):
+            quarters[e_fy] = d_fy["val"] - sum(quarters[e] for e in inner)
 
 
 def _extract_ttm_dividend(
@@ -654,6 +688,7 @@ def _extract_ttm_dividend(
                 quarters[e1] = d1["val"] - d2["val"]
                 break
 
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
     if E not in quarters:
         return None  # the anchor quarter itself is not a single quarter → unknown
     ends = sorted(q for q in quarters if q <= E)[-4:]
@@ -1442,6 +1477,13 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
     A preferred share count equal to a same-date COMMON share count is the
     common line tagged as preferred (_common_as_preferred_at): that count is
     not preferred evidence and no ladder value at that date is accepted.
+
+    Evidence must be positive and material (_preferred_evidence_material).
+    When the ladder resolves nothing but the filer has preferred, the
+    filing-instance total the overlay recorded (facts["_preferred_total"],
+    data/sec_facts_overlay.overlay_preferred_total) is the value — the same
+    equity-section line, read from the 10-Q's own inline XBRL where it is
+    tagged per series.
     """
     share_facts = [f for f in (
         _latest_fact(facts, "PreferredStockSharesOutstanding",
@@ -1484,6 +1526,13 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
         # accepted: a full mid-year redemption keeps this true until the
         # dividend facts age out (~a year) → n/a/release-figure, which is the
         # honest side to err on.
+        # Evidence must be POSITIVE and MATERIAL (_preferred_evidence_material):
+        # OPHC tagged ProceedsFromIssuanceOfPreferredStock −$1K (a rounding
+        # artifact; the old truthiness test took it) and LKFN tags a constant
+        # $13K PaymentsOfDividendsPreferredStock in every window since 2023
+        # against $773M of equity with no preferred on its balance sheet —
+        # both rendered a clean bank n/a (2026-10-06).
+        equity = _equity_total_at(facts, as_of)
         for concept in (
             "PreferredStockDividendsIncomeStatementImpact",
             "DividendsPreferredStock",
@@ -1491,16 +1540,96 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
             "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
         ):
             fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
-            if fact and fact.get("val") and fact.get("end", "") > zero_end:
+            if (fact and fact.get("end", "") > zero_end
+                    and _preferred_evidence_material(fact, concept, equity)):
                 has_preferred = True
                 break
 
     if not has_preferred:
         # No preferred outstanding — subtract nothing.
         return 0.0, False
+    if value is None:
+        # The filing's own inline XBRL (data/sec_facts_overlay
+        # .overlay_preferred_total): companyfacts carries no dimensioned
+        # facts, so a filer that tags preferred ONLY per series (STT, NTRS,
+        # BOH, FRME, WSBC, NEWT, BYFC) or only as APIC-preferred (BCBP) has
+        # no undimensioned value for the ladder above. The overlay reads the
+        # 10-Q's per-series members / equity-statement preferred column and
+        # records a total that ties across them; it is taken only for the
+        # blob's current balance-sheet date (as_of None or at/after it —
+        # never an earlier historical column) and not behind a fresh
+        # explicit zero count.
+        rec = facts.get("_preferred_total")
+        if (rec and rec.get("value") and rec.get("end")
+                and rec["end"] == _balance_sheet_date(facts)
+                and rec["end"] >= zero_end
+                and (as_of is None or as_of >= rec["end"])):
+            value = rec["value"]
     # Filer has preferred; value is None when only a par-zero/stale tag exists
     # (unresolved → caller renders n/a per the cardinal rule).
     return value, True
+
+
+# Preferred EVIDENCE materiality (2026-10-06). A dividend stream proves a
+# carrying value of at most dividends ÷ coupon; at the lowest bank-preferred
+# coupon on record (~4%) that is 25× the annual dividend. When even that
+# upper bound is under 0.2% of total equity, the preferred — real or a
+# mis-tag — cannot move a per-share figure past its cent rounding, and the
+# filer is read as having none. LKFN: $13K/6mo → $26K/yr × 25 = $650K =
+# 0.08% of $773M (no preferred on its balance sheet). FRME, the smallest
+# genuine preferred among the unresolved banks: $938K/6mo → $1.88M × 25 =
+# $47M = 1.7% of $2.70B (its Series A is $25.1M, 0.93%). Issuance proceeds
+# ARE a carrying amount and are compared directly. With no equity total to
+# compare against, any positive evidence counts (the 2026-08-19 BAFN/MBIN
+# fixtures).
+_PREFERRED_MIN_COUPON = 0.04
+_PREFERRED_IMMATERIAL_OF_EQUITY = 0.002
+_PREFERRED_DIVIDEND_CONCEPTS = frozenset({
+    "PreferredStockDividendsIncomeStatementImpact",
+    "DividendsPreferredStock",
+    "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+})
+
+
+def _preferred_evidence_material(fact: dict, concept: str,
+                                 equity: float | None) -> bool:
+    """True when a preferred-evidence duration fact proves a preferred
+    carrying value worth subtracting: positive, and (when the equity total
+    is known) implying at least _PREFERRED_IMMATERIAL_OF_EQUITY of it."""
+    val = fact.get("val")
+    if not val or val <= 0:
+        return False
+    if not equity or equity <= 0:
+        return True
+    implied = val
+    if concept in _PREFERRED_DIVIDEND_CONCEPTS:
+        implied = _annualized(fact) / _PREFERRED_MIN_COUPON
+    return implied >= _PREFERRED_IMMATERIAL_OF_EQUITY * equity
+
+
+def _annualized(fact: dict) -> float:
+    """A duration fact's value scaled to a year by its own start/end dates.
+    No start date → read as one quarter (×4): the side that keeps preferred
+    PRESENT, so a missing date never hides a real issuer."""
+    from datetime import date
+    val = fact.get("val") or 0.0
+    try:
+        days = (date.fromisoformat(fact["end"]) - date.fromisoformat(fact["start"])).days
+    except (KeyError, TypeError, ValueError):
+        days = 0
+    if days <= 0:
+        return val * 4
+    return val * 365.0 / days
+
+
+def _equity_total_at(facts: dict, as_of: str | None) -> float | None:
+    """Total equity (parent, else NCI-inclusive) at the current / as_of
+    balance sheet, for the evidence materiality test."""
+    for concept in (_SE, _SE_NCI):
+        fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
+        if fact and fact.get("val"):
+            return fact["val"]
+    return None
 
 
 def _share_counts_at(facts: dict, end: str, concepts) -> list:

@@ -208,19 +208,26 @@ def _overlay_latest(cik: int, slim: dict, periodic: dict) -> dict:
 # AVERAGE 11,729,271 as the period-end count (true A+B 11,390,407 — BVPS 3%
 # low); RBCAA resolved nothing. The per-class facts ARE in the filing's own
 # iXBRL, so they are read from there and summed — or the count is n/a.
-_CLASS_SHARES_CKEY_V = "v1"
+# v2: undimensioned counts and the dei cover's per-class counts are kept
+#     (OPHC: voting class undimensioned, nonvoting dimensioned).
+_CLASS_SHARES_CKEY_V = "v2"
 _CLASS_AXIS = "StatementClassOfStockAxis"
 _CLASS_COUNT_CONCEPTS = ("CommonStockSharesOutstanding", "CommonStockSharesIssued")
 _TREASURY_CONCEPTS = ("TreasuryStockCommonShares", "TreasuryStockShares")
+_COVER_CONCEPT = "EntityCommonStockSharesOutstanding"
+# An undimensioned count is attributed to the one cover class lacking a
+# balance-sheet count only when it is within this of that class's cover
+# count (OPHC: 12,340,785 at 6/30 vs 12,622,470 on the Aug-10 cover, 2.2%).
+_COVER_CLASS_TOL = 0.10
 
 
 def class_share_entries(cik: int, filing: dict) -> list[dict]:
     """Instant share-count facts from `filing`'s iXBRL that companyfacts
-    cannot carry: per-class outstanding / issued / treasury counts (exactly
-    one member, on StatementClassOfStockAxis) plus the UNDIMENSIONED treasury
-    count the per-class tie-out needs. [{concept, cls, end, val}], cls None
-    for undimensioned. Cached immutably by accession (a filing never
-    changes)."""
+    cannot carry: per-class outstanding / issued / treasury counts and the
+    dei cover's per-class counts (exactly one member, on StatementClassOf-
+    StockAxis) plus the UNDIMENSIONED counts and treasury the per-class
+    tie-outs need. [{concept, cls, end, val}], cls None for undimensioned.
+    Cached immutably by accession (a filing never changes)."""
     from data import cache
     from data.sec_filing_scraper import instance_facts
     ckey = f"class_shares:{_CLASS_SHARES_CKEY_V}:{filing['accession']}"
@@ -233,10 +240,11 @@ def class_share_entries(cik: int, filing: dict) -> list[dict]:
         concept = f.concept.split(":")[-1]
         if f.period_start or not f.period_end:
             continue
-        if concept not in _CLASS_COUNT_CONCEPTS + _TREASURY_CONCEPTS:
+        if concept not in _CLASS_COUNT_CONCEPTS + _TREASURY_CONCEPTS + (
+                _COVER_CONCEPT,):
             continue
         if not f.members:
-            if concept not in _TREASURY_CONCEPTS:
+            if concept == _COVER_CONCEPT:
                 continue
             cls = None
         elif (len(f.members) == 1
@@ -275,10 +283,24 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
     prior column has been retired). No per-class count at `end`, a class
     whose outstanding ≠ issued − its own treasury, a "preferred" member under
     a common-share concept, a negative count, or two different values for
-    one slot → unresolved."""
+    one slot → unresolved.
+
+    A filer can also tag ONE class undimensioned and the other per class —
+    OPHC 10-Q 0001493152-26-036825: CommonStockSharesOutstanding 12,340,785
+    with no member (its voting class) and 11,458,351 on
+    NonvotingCommonStockMember, while the cover page counts both classes
+    (12,622,470 / 11,458,351 at 2026-08-10). The balance sheet alone shows
+    one class, so the cover decides: when it names two or more classes and
+    exactly one of them has no balance-sheet count at `end`, the
+    undimensioned count is that class's (within _COVER_CLASS_TOL of its
+    cover count) — 23,799,136 in all, the release's "fully diluted" count
+    ($134,380K ÷ it = $5.65, as printed). An undimensioned count that is
+    instead the cover TOTAL is the whole already (None — nothing to do);
+    one that matches neither is unresolved."""
     counted = [e for e in entries
                if e["cls"] and e["concept"] in _CLASS_COUNT_CONCEPTS]
-    if len({e["cls"] for e in counted}) < 2:
+    cover = _cover_classes(entries)
+    if len({e["cls"] for e in counted}) < 2 and len(cover) < 2:
         return None
     # The classes outstanding at `end` are the ones the balance sheet tags at
     # `end`: a class tagged only in the prior column is gone (BANC: its NVCE
@@ -290,6 +312,23 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
         return {"end": end, "value": None, "classes": {},
                 "status": "unresolved", "reason": reason}
 
+    undim = {e["val"] for e in entries
+             if e["cls"] is None and e["concept"] == "CommonStockSharesOutstanding"
+             and e["end"] == end and e["val"] is not None}
+    attributed = None
+    if len(cover) >= 2 and len(undim) == 1:
+        count = undim.pop()
+        missing = [c for c in cover if c not in classes]
+        if abs(count - sum(cover.values())) <= _COVER_CLASS_TOL * sum(cover.values()):
+            return None                   # the undimensioned count IS the total
+        if len(missing) == 1 and abs(count - cover[missing[0]]) <= (
+                _COVER_CLASS_TOL * cover[missing[0]]):
+            attributed = (missing[0], count)
+            classes = sorted(classes + [missing[0]])
+        elif missing:
+            return _unresolved(
+                f"undimensioned count {count:.0f} at {end} is neither the "
+                f"cover total nor the uncounted class {missing}")
     if not classes:
         return _unresolved(f"no per-class count at {end}")
     # A preferred series tagged with a COMMON share concept (CFBK tags its
@@ -311,6 +350,9 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
     try:
         counts, pending, known_gap = {}, [], 0.0
         for cls in classes:
+            if attributed and cls == attributed[0]:
+                counts[cls] = attributed[1]
+                continue
             out = _slot(("CommonStockSharesOutstanding",), cls)
             iss = _slot(("CommonStockSharesIssued",), cls)
             tre = _slot(_TREASURY_CONCEPTS, cls)
@@ -361,6 +403,38 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
             "status": "resolved", "reason": ""}
 
 
+def _cover_classes(entries: list[dict]) -> dict:
+    """{class member: count} from the latest dei cover date that carries
+    per-class counts; {} when the cover is undimensioned."""
+    rows = [e for e in entries
+            if e["cls"] and e["concept"] == _COVER_CONCEPT and e["val"] is not None]
+    if not rows:
+        return {}
+    latest = max(e["end"] for e in rows)
+    return {e["cls"]: e["val"] for e in rows if e["end"] == latest}
+
+
+def _cover_lags_filing(cik: int, slim: dict) -> bool:
+    """True when the blob's newest dei cover count was filed BEFORE the
+    bank's latest 10-Q/10-K: that filing's cover count is absent from
+    companyfacts, which drops dimensioned facts — the cover names its share
+    classes (OPHC). A single-class cover is undimensioned and present, so
+    this is false for the universe at large (zero instance fetches); a
+    lagging SEC API is already completed by overlay_lagging_filing."""
+    from data.sec_earnings_8k import latest_periodic_filing
+    dei = ((slim.get("facts") or {}).get("dei") or {}).get(_COVER_CONCEPT) or {}
+    filed = max((e.get("filed") or "" for u in dei.get("units", {}).values()
+                 for e in u), default="")
+    if not filed:
+        return False
+    try:
+        periodic = latest_periodic_filing(cik)
+    except Exception:
+        return False
+    return bool(periodic and periodic.get("date") and filed
+                and periodic["date"] > filed)
+
+
 def _has_undimensioned_count_at(slim: dict, end: str) -> bool:
     ug = (slim.get("facts") or {}).get("us-gaap") or {}
     return any(e.get("end") == end and e.get("form") in ("10-K", "10-Q")
@@ -373,16 +447,19 @@ def overlay_class_shares(cik: int, slim: dict) -> dict:
     """Return `slim` plus a top-level "_class_shares" record (see
     resolve_class_shares, with the source accession/form) when the filer is
     multi-class; else `slim` itself. Only consulted when the blob has NO
-    undimensioned outstanding/issued count at its balance-sheet date — a
-    filer that tags the total never pays the instance fetch. The record is
-    read by data/sec_client's share chain; nothing is written into the
-    blob's facts (no fabricated undimensioned total)."""
+    undimensioned outstanding/issued count at its balance-sheet date, or
+    when the latest filing's cover count is missing from the blob — a
+    per-class cover (_cover_lags_filing; OPHC's voting-only undimensioned
+    count) — so a filer that tags the total never pays the instance fetch.
+    The record is read by data/sec_client's share chain; nothing is written
+    into the blob's facts (no fabricated undimensioned total)."""
     if not slim or not slim.get("facts"):
         return slim
     from data.sec_client import _balance_sheet_date
     from data.sec_filing_scraper import latest_filing
     end = _balance_sheet_date(slim)
-    if not end or _has_undimensioned_count_at(slim, end):
+    if not end or (_has_undimensioned_count_at(slim, end)
+                   and not _cover_lags_filing(cik, slim)):
         return slim
     meta = latest_filing(cik, forms=("10-Q", "10-K"))
     if not meta:
@@ -396,6 +473,222 @@ def overlay_class_shares(cik: int, slim: dict) -> dict:
     print(f"[SEC] class shares: CIK {cik} {rec['status']} at {end} — "
           f"{rec['classes'] or rec['reason']} ({meta.get('form')} "
           f"{meta['accession']})", flush=True)
+    return out
+
+
+# ── Preferred carrying value from the filing's own inline XBRL ───────────────
+# companyfacts carries NO dimensioned facts. A filer that tags its preferred
+# per series — PreferredStockValue on StatementClassOfStockAxis members
+# (STT: four series, NTRS, BOH, FRME, WSBC, NEWT, BYFC) — or only as
+# "Additional paid-in capital, preferred" (BCBP) has no undimensioned value
+# for sec_client's ladder, so the cardinal rule blanked every per-common-share
+# figure for 8 of the 11 SEC filers in the 2026-10-06 coverage audit's
+# "preferred outstanding, value unresolved" class. The 10-Q instance
+# itself carries the equity-section total in up to four shapes; the record
+# is accepted when they agree, or — a single shape — when it is plausible
+# as a carrying TOTAL over the same-date preferred share count.
+_PREFERRED_TOTAL_CKEY_V = "v1"
+_EQUITY_AXIS = "StatementEquityComponentsAxis"
+_PREFERRED_MEMBER = "PreferredStockMember"
+# Carrying-value concepts in sec_client's ladder order; liquidation last.
+_PREFERRED_VALUE_CONCEPTS = (
+    "PreferredStockValue",
+    "PreferredStockIncludingAdditionalPaidInCapital",
+    "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+    "PreferredStockValueOutstanding",
+    "PreferredStockLiquidationPreferenceValue",
+)
+_PREFERRED_APIC = "AdditionalPaidInCapitalPreferredStock"
+_PREFERRED_COUNT_CONCEPTS = ("PreferredStockSharesOutstanding",
+                             "PreferredStockSharesIssued")
+_PREFERRED_ENTRY_CONCEPTS = frozenset(
+    _PREFERRED_VALUE_CONCEPTS + _PREFERRED_COUNT_CONCEPTS
+    + (_PREFERRED_APIC, "StockholdersEquity"))
+_PREFERRED_AGREE_TOL = 0.005          # cross-shape agreement (rounding)
+
+
+def preferred_entries(cik: int, filing: dict) -> list[dict]:
+    """Instant facts from `filing`'s iXBRL that bear on the preferred
+    carrying value: the ladder's value concepts, preferred share counts,
+    APIC-preferred and StockholdersEquity — each with its members as
+    {axis_local_name: member_local_name} ({} when undimensioned).
+    [{concept, members, end, val}], cached immutably by accession."""
+    from data import cache
+    from data.sec_filing_scraper import instance_facts
+    ckey = f"preferred_total:{_PREFERRED_TOTAL_CKEY_V}:{filing['accession']}"
+    hit = cache.get(ckey, max_age_s=None)
+    if hit is not None:
+        return hit.get("entries", [])
+    out = []
+    for f in instance_facts({"cik": int(cik), "accession": filing["accession"],
+                             "doc": filing["doc"]}):
+        concept = f.concept.split(":")[-1]
+        if f.period_start or not f.period_end:
+            continue
+        if concept not in _PREFERRED_ENTRY_CONCEPTS:
+            continue
+        members = {a.split(":")[-1]: m.split(":")[-1]
+                   for a, m in f.members.items()}
+        out.append({"concept": concept, "members": members,
+                    "end": f.period_end, "val": f.value})
+    try:
+        cache.put(ckey, {"entries": out})
+    except Exception:
+        pass
+    return out
+
+
+def _is_preferred_member(member: str) -> bool:
+    return "Preferred" in member and "Common" not in member
+
+
+def _series_sum(entries: list[dict], concept: str, end: str,
+                extra: dict | None = None) -> float | None:
+    """Sum of `concept` over distinct StatementClassOfStockAxis preferred
+    members at `end` (with `extra` axis→member also required, for the
+    equity statement's per-series preferred column). None when no member
+    carries a value, or when one member carries two different values."""
+    per: dict = {}
+    want = dict(extra or {})
+    for e in entries:
+        if e["concept"] != concept or e["end"] != end or e["val"] is None:
+            continue
+        m = e["members"]
+        cls = m.get(_CLASS_AXIS)
+        if cls is None or not _is_preferred_member(cls):
+            continue
+        if set(m) != set(want) | {_CLASS_AXIS}:
+            continue
+        if any(m.get(a) != v for a, v in want.items()):
+            continue
+        if cls in per and abs(per[cls] - e["val"]) > 0.5:
+            return None
+        per[cls] = e["val"]
+    return sum(per.values()) if per else None
+
+
+def _undimensioned(entries: list[dict], concept: str, end: str) -> float | None:
+    vals = {e["val"] for e in entries
+            if e["concept"] == concept and e["end"] == end
+            and not e["members"] and e["val"] is not None}
+    return vals.pop() if len(vals) == 1 else None
+
+
+def _preferred_count_at(entries: list[dict], end: str) -> float | None:
+    """Preferred shares at `end`: the undimensioned count when tagged, else
+    the sum over series members (both Outstanding and Issued consulted, the
+    smallest nonzero total — sec_client._same_date_preferred_count's rule)."""
+    from data.sec_client import _same_date_preferred_count
+    totals = []
+    for concept in _PREFERRED_COUNT_CONCEPTS:
+        u = _undimensioned(entries, concept, end)
+        if u is not None:
+            totals.append(u)
+            continue
+        per = {}
+        for e in entries:
+            m = e["members"]
+            if (e["concept"] == concept and e["end"] == end
+                    and e["val"] is not None and set(m) == {_CLASS_AXIS}
+                    and _is_preferred_member(m[_CLASS_AXIS])):
+                per[m[_CLASS_AXIS]] = e["val"]
+        if per:
+            totals.append(sum(per.values()))
+    return _same_date_preferred_count(totals)
+
+
+def resolve_preferred_total(entries: list[dict], end: str) -> dict | None:
+    """The filer's preferred carrying value at `end` from its own instance,
+    {end, value, basis}, or None when the instance does not establish one.
+
+    Shapes read (all at `end`):
+      1. the equity statement's preferred column — StockholdersEquity on
+         StatementEquityComponentsAxis = PreferredStockMember (STT $3,559M,
+         NTRS $884.9M, WSBC $224.2M);
+      2. that column split per series — the same member plus a
+         StatementClassOfStockAxis series, summed (BOH 180,000 + 165,000;
+         FRME 125 + 25,000 $K);
+      3. a ladder value concept tagged per series on StatementClassOfStock-
+         Axis, summed — the first concept (ladder order) with any series
+         (STT 493 + 1,481 + 842 + 743 = 3,559; BYFC 150,000);
+      4. undimensioned AdditionalPaidInCapitalPreferredStock, plus any
+         undimensioned par value (BCBP 25,243 $K over 2,548 shares).
+    Members on any other axis are ignored (STT repeats PreferredStockValue
+    on a Basel-approach axis). Two or more shapes must agree within
+    _PREFERRED_AGREE_TOL or nothing is taken. A single shape is taken only
+    when it is plausible as a carrying total over the same-date preferred
+    share count (sec_client._not_a_carrying_total: no count, zero shares,
+    or a par-only per-share amount all refuse it) and is below total
+    equity. A zero is never a value."""
+    from data.sec_client import _not_a_carrying_total
+    cands: list[tuple[str, float, str]] = []
+    for e in entries:
+        if (e["concept"] == "StockholdersEquity" and e["end"] == end
+                and e["members"] == {_EQUITY_AXIS: _PREFERRED_MEMBER}
+                and e["val"]):
+            cands.append(("equity statement preferred column", e["val"],
+                          "PreferredStockValue"))
+            break
+    by_series = _series_sum(entries, "StockholdersEquity", end,
+                            {_EQUITY_AXIS: _PREFERRED_MEMBER})
+    if by_series:
+        cands.append(("equity statement preferred column by series",
+                      by_series, "PreferredStockValue"))
+    for concept in _PREFERRED_VALUE_CONCEPTS:
+        total = _series_sum(entries, concept, end)
+        if total:
+            cands.append((f"{concept} summed over series", total, concept))
+            break
+    apic = _undimensioned(entries, _PREFERRED_APIC, end)
+    if apic:
+        par = _undimensioned(entries, "PreferredStockValue", end) or 0.0
+        cands.append(("APIC-preferred + par", apic + par, "PreferredStockValue"))
+    if not cands:
+        return None
+    equity = _undimensioned(entries, "StockholdersEquity", end)
+    basis, value, concept = cands[0]
+    if value <= 0 or (equity is not None and value >= equity):
+        return None
+    if len(cands) >= 2:
+        if any(abs(c[1] - value) > _PREFERRED_AGREE_TOL * value for c in cands):
+            return None
+        basis = " = ".join(c[0] for c in cands)
+    else:
+        shares = _preferred_count_at(entries, end)
+        if shares is None or _not_a_carrying_total(concept, value, shares):
+            return None
+    return {"end": end, "value": value, "basis": basis}
+
+
+def overlay_preferred_total(cik: int, slim: dict) -> dict:
+    """Return `slim` plus a top-level "_preferred_total" record (see
+    resolve_preferred_total, with the source accession/form) when the blob's
+    own ladder leaves the filer's preferred present but unresolved; else
+    `slim` itself. A filer whose preferred resolves — or who has none —
+    never pays the instance fetch. Read by sec_client._resolve_preferred_stock
+    at the blob's balance-sheet date; nothing is written into the facts."""
+    if not slim or not slim.get("facts"):
+        return slim
+    from data.sec_client import _balance_sheet_date, _resolve_preferred_stock
+    from data.sec_filing_scraper import latest_filing
+    value, present = _resolve_preferred_stock(slim)
+    if not present or value is not None:
+        return slim
+    end = _balance_sheet_date(slim)
+    if not end:
+        return slim
+    meta = latest_filing(cik, forms=("10-Q", "10-K"))
+    if not meta:
+        return slim
+    rec = resolve_preferred_total(preferred_entries(cik, meta), end)
+    if rec is None:
+        return slim
+    out = dict(slim)
+    out["_preferred_total"] = {**rec, "accession": meta["accession"],
+                               "form": meta.get("form")}
+    print(f"[SEC] preferred total: CIK {cik} ${rec['value']:,.0f} at {end} "
+          f"from {rec['basis']} ({meta.get('form')} {meta['accession']})",
+          flush=True)
     return out
 
 

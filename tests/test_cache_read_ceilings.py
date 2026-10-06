@@ -90,7 +90,9 @@ class TestLatest8kResultCached(_IsolatedCache):
         with patch.object(se8k, "_get", side_effect=fake_get):
             first = se8k._latest_earnings_8k(1234567)
             second = se8k._latest_earnings_8k(1234567)
-        self.assertEqual(len(calls), 1)
+        # One submissions fetch (the 2.02 8-K's notice check reads its
+        # index once, cached by accession).
+        self.assertEqual(len([u for u in calls if "submissions" in u]), 1)
         self.assertEqual(first["accession_dash"], "0001234567-26-000042")
         self.assertEqual(first["accession"], "000123456726000042")
         self.assertEqual(second, first)
@@ -193,9 +195,11 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
         # version bumps — the shape version is SUPPOSED to move; these pins
         # guard the max_age_s=None read, not the version).
         ("data/sec_earnings_8k.py", r'ckey = f"earnings_8k:v\d+:'),
-        # The version moved into the _REPORTED_TBVPS_CKEY_V constant (v5 bump).
+        # The version moved into the _REPORTED_TBVPS_CKEY_V constant (v5 bump);
+        # the read itself moved into the same-quarter window walk
+        # (_window_status, 2026-10-06), which reported_bvps shares.
         ("data/sec_earnings_8k.py",
-         r'ckey = f"reported_tbvps:\{_REPORTED_TBVPS_CKEY_V\}:'),
+         r'ckey = f"\{prefix\}:\{f8k\[.accession.\]\}:\{anchors\}"'),
         # Version-agnostic on purpose: these keys carry an extraction-spec
         # version that is SUPPOSED to be bumped (otc_release v6->v7 etc.), and
         # a version bump must not look like a regression in this pin.
