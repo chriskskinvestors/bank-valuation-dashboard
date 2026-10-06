@@ -95,6 +95,34 @@ def _eps_src_mark(src) -> str:
     return "†" if "GAAP" in src else "*"
 
 
+# Why a reported row's EPS surprise is n/a (data/earnings_results.score_eps):
+# the surprise is scored only when the actual is PROVEN to be on the
+# consensus basis — never GAAP-vs-adjusted (review 2026-10-06 P0-1).
+_EPS_BASIS_FLAG = "basis unconfirmed (GAAP vs adjusted)"
+_EPS_BASIS_TIP = (
+    "EPS surprise n/a — " + _EPS_BASIS_FLAG + ": the actual could not be "
+    "confirmed as the same "
+    "basis as the consensus estimate (street EPS is usually ADJUSTED / ex-"
+    "items, the feed's actual is sometimes GAAP). A surprise is shown only "
+    "when the actual equals the bank's release-stated adjusted EPS to the "
+    "cent, or the release states no adjusted EPS and the actual equals its "
+    "GAAP diluted EPS.")
+_EPS_CONFLICT_TIP = (
+    "EPS actual withheld: the consensus feed's actual and the bank's own "
+    "release disagree, and nothing independent shows which is right (e.g. a "
+    "release filed under a merged registrant's CIK).")
+
+
+def _eps_unscored(row) -> str | None:
+    """'conflict' / 'basis' when a reported row's EPS surprise is withheld
+    for a stated reason (flag it); None when it is scored or simply absent."""
+    if row.get("eps_conflict"):
+        return "conflict"
+    if row.get("eps_basis") == "unconfirmed":
+        return "basis"
+    return None
+
+
 def _ec_cell(s):
     """HTML-safe cell text that also neutralises '$' so Streamlit's markdown
     doesn't interpret two dollar amounts on a line as LaTeX."""
@@ -231,15 +259,27 @@ def _render_reported_panel(ticker: str):
 
     eps_mark = _eps_src_mark(row.get("eps_act_src"))
     rev_mark = "*" if row.get("rev_act_src") else ""
+    unscored = _eps_unscored(row)
+    eps_val = _ec_cell(_vs(row.get("eps_act"), row.get("eps_est")) + eps_mark)
+    if unscored == "conflict":
+        eps_val = _ec_cell(f"n/a vs {_usd_str(row.get('eps_est')) or '—'} est")
+    surprise_val = (_delta_html(row.get("eps_surprise")) if not unscored else
+                    '<span style="color:var(--text-muted)">n/a — '
+                    + (_EPS_BASIS_FLAG if unscored == "basis"
+                       else "feed vs release conflict") + "</span>")
     _kpi_strip([
         ("Reported", _ec_cell(rep), "Report date and timing.", None),
-        ("EPS", _ec_cell(_vs(row.get("eps_act"), row.get("eps_est")) + eps_mark),
-         "Actual vs consensus estimate. The consensus feed's actual is "
-         "typically ADJUSTED EPS (the estimate's basis). * = taken from the "
-         "bank's own release (adjusted) while the feed catches up; † = the "
-         "release's GAAP diluted EPS (no adjusted figure stated).", None),
-        ("EPS Surprise", _delta_html(row.get("eps_surprise")),
-         "Actual vs estimate, % of estimate.", None),
+        ("EPS", eps_val,
+         "Actual vs consensus estimate. The actual is the consensus feed's "
+         "figure on the PROVIDER'S basis — adjusted in most quarters, GAAP in "
+         "some — unless marked: * = the bank's own release-stated adjusted "
+         "EPS; † = the release's GAAP diluted EPS (never scored against the "
+         "estimate).", None),
+        ("EPS Surprise", surprise_val,
+         "Actual vs estimate, % of estimate — scored only when the actual is "
+         "confirmed on the estimate's basis: it equals the release's adjusted "
+         "EPS to the cent, or the release states no adjusted EPS and it "
+         "equals the GAAP diluted EPS. Otherwise n/a with the reason.", None),
         ("Revenue", _ec_cell(_rev_vs(row.get("rev_act"), row.get("rev_est"))
                              + rev_mark),
          "Actual vs consensus estimate. * = actual taken from the bank's own "
@@ -404,7 +444,12 @@ def render_earnings_consensus(ticker: str, actual_metrics: dict):
                     st.caption("Actuals are the company's as-reported figures for "
                                "this period (SEC companyfacts — the same holding-"
                                "company basis as **Company Reported**, refreshed as "
-                               "filings are processed). ROAA is implied (annualized "
+                               "filings are processed). Quarterly EPS is the "
+                               "company's own tagged 3-month figure — n/a when "
+                               "none is tagged (typically Q4: per-share amounts "
+                               "aren't additive, so FY − 9M is not the reported "
+                               "quarter); EPS marked (basic) is the basic figure "
+                               "for a filer that tags no diluted EPS. ROAA is implied (annualized "
                                "income ÷ average assets). NIM and ROATCE show n/a — "
                                "filings don't carry a clean average-earning-assets "
                                "or common-tangible-equity basis to compare on.")
@@ -479,10 +524,11 @@ def _render_auto_estimates(ticker: str, estimates: dict):
 
 
 _SURPRISE_ACT_BASIS = (
-    "EPS Act is Yahoo Finance's consensus-basis actual (market data) — "
-    "typically ADJUSTED EPS excluding items, the same basis as the consensus "
-    "estimate it is scored against — not the GAAP diluted EPS shown in Key "
-    "Reported Metrics.")
+    "EPS Act is Yahoo Finance's reported actual (market data) on the "
+    "PROVIDER'S basis — usually adjusted EPS excluding items, but in some "
+    "quarters the GAAP figure (JPM 4Q25: $4.63 GAAP vs $5.23 ex-items), so a "
+    "surprise can mix bases. It is not necessarily the GAAP diluted EPS in "
+    "Key Reported Metrics.")
 
 
 def _render_surprise_history_grid(ticker: str, past: list[dict]):
@@ -507,21 +553,21 @@ def _render_surprise_history_grid(ticker: str, past: list[dict]):
             _signed_pct_cell(surprise),
             result,
         ]) + "</tr>")
-    # "EPS Act" is the consensus provider's actual — typically ADJUSTED EPS
-    # (JPM 2Q26 $6.14 ex-items vs GAAP $7.70; review P2-4) — so it is labeled
-    # as such beside the GAAP figures in Key Reported Metrics.
+    # "EPS Act" is the consensus provider's actual on ITS basis — usually
+    # adjusted, sometimes GAAP (JPM 4Q25 $4.63 GAAP; review 2026-10-06 P2-1)
+    # — so it is labeled "provider basis", never claimed as adjusted.
     _render_earnings_grid(
-        [("Date", "nm"), ("EPS Est", ""), ("EPS Act (adj.)", ""),
+        [("Date", "nm"), ("EPS Est", ""), ("EPS Act (provider basis)", ""),
          ("Surprise", ""), ("Result", "")], trs,
         col_widths=["28%", "18%", "18%", "18%", "18%"])
     # Underlying numeric history (unformatted EPS / surprise)
     table_export(
         pd.DataFrame([{"Date": e.get("date"),
                        "EPS Est ($)": e.get("eps_estimate"),
-                       "EPS Act adj. ($)": e.get("eps_actual"),
+                       "EPS Act provider basis ($)": e.get("eps_actual"),
                        "Surprise (%)": e.get("surprise_pct")} for e in past[:8]]),
         f"earnings_surprises_{ticker}", key=f"exp_earnings_surprises_{ticker}",
-        formats={"Date": "date", "EPS Est ($)": "usd2", "EPS Act adj. ($)": "usd2",
+        formats={"Date": "date", "EPS Est ($)": "usd2", "EPS Act provider basis ($)": "usd2",
                  "Surprise (%)": "pct"},
         provenance={"Page": "Company Analysis › Earnings › Earnings Surprise History",
                     "Ticker": ticker,
@@ -665,7 +711,7 @@ def _render_earnings_history_chart(ticker: str, estimates: dict):
 
     fig.add_trace(go.Bar(
         x=dates, y=actuals,
-        name="Actual EPS (adj.)",
+        name="Actual EPS (provider basis)",
         marker_color=[COLOR_NEUTRAL if s is None
                       else COLOR_SUCCESS if s >= 0 else COLOR_DANGER
                       for s in surprises],
@@ -799,6 +845,38 @@ def _render_comparison_table(comparison: list[dict], ticker: str | None = None,
         ])
 
 
+def _eps_card_calc(eps_src, value: str, entity: str, eps_doc):
+    """The Key Reported Metrics EPS card's source panel. Provenance must match
+    what produced the displayed number (review 2026-10-06 P2-5; same rule as
+    the TBVPS card): a release-anchored TTM is not "XBRL
+    EarningsPerShareDiluted"."""
+    from ui.source_trace import make_calc
+    if eps_src in ("release_ttm", "release_ttm_otc"):
+        return make_calc(
+            "Diluted EPS (TTM)", value, entity=entity,
+            source=("Company earnings releases (four quarters)"
+                    if eps_src == "release_ttm_otc" else
+                    "Company earnings release + SEC filings (10-K/10-Q)"),
+            asof="latest earnings release", unit="$ / share",
+            ref="as reported by the company",
+            definition=("Sum of the last four discrete quarters of diluted "
+                        "EPS, each from one of the bank's own earnings "
+                        "releases." if eps_src == "release_ttm_otc" else
+                        "Trailing-twelve-month diluted EPS: the latest "
+                        "quarter from the bank's own earnings release plus "
+                        "the three prior quarters as reported in its "
+                        "filings."),
+            terms=[{"label": "Diluted EPS (TTM)", "val": value}],
+            reported=True)
+    return make_calc(
+        "Diluted EPS (TTM)", value, entity=entity,
+        source="SEC filing (10-K/10-Q)", asof=(eps_doc or {}).get("label", "latest filing"),
+        unit="$ / share", ref="XBRL EarningsPerShareDiluted",
+        definition="Trailing-twelve-month diluted EPS from the holding company's filings.",
+        terms=[{"label": "Diluted EPS (TTM, reported)", "val": value, "doc": eps_doc}],
+        reported=True, link=(eps_doc or {}).get("url"))
+
+
 def _render_key_metrics(ticker: str, actual_metrics: dict):
     """Show key reported metrics — every value click-to-source (same provenance
     as the Overview cards): FDIC ratios → Call Report, SEC per-share → 10-K/10-Q,
@@ -851,14 +929,11 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                 "calc": fdic_calc(label, field, rec, cert, unit="%", entity=entity,
                                   value=fmt(key), reported=True, definition=defi)}
 
+    eps_calc = _eps_card_calc(actual_metrics.get("eps_source"), fmt("eps"),
+                              entity, eps_doc)
+
     cards = [
-        {"label": "EPS", "value": fmt("eps"),
-         "calc": make_calc("Diluted EPS (TTM)", fmt("eps"), entity=entity,
-                           source="SEC filing (10-K/10-Q)", asof=(eps_doc or {}).get("label", "latest filing"),
-                           unit="$ / share", ref="XBRL EarningsPerShareDiluted",
-                           definition="Trailing-twelve-month diluted EPS from the holding company's filings.",
-                           terms=[{"label": "Diluted EPS (TTM, reported)", "val": fmt("eps"), "doc": eps_doc}],
-                           reported=True, link=(eps_doc or {}).get("url"))},
+        {"label": "EPS", "value": fmt("eps"), "calc": eps_calc},
         fdic_card("NIM", "NIMY", "nim", "Net interest income as a percent of average earning assets."),
         fdic_card("Efficiency", "EEFFR", "efficiency_ratio",
                   "Non-interest expense ÷ (net interest income + non-interest income)."),
@@ -987,14 +1062,19 @@ def _avg_eps_surprise_cached(tickers: tuple) -> float | None:
     def _build():
         from data.estimates import fetch_all_estimates
         estimates = fetch_all_estimates(tickers)
-        surprises = [e.get("surprise_pct")
-                     for est in estimates.values()
-                     for e in (est.get("earnings_history") or [])[:1]
-                     if e.get("surprise_pct") is not None]
+        # Each bank's most recent REPORTED quarter: the first history row
+        # carrying a surprise. history[0] is the UPCOMING quarter (surprise
+        # None), so [:1] averaged nothing (review 2026-10-06 P2-2).
+        surprises = [s for est in estimates.values()
+                     if (s := next((e["surprise_pct"]
+                                    for e in (est.get("earnings_history") or [])
+                                    if e.get("surprise_pct") is not None),
+                                   None)) is not None]
         return (sum(surprises) / len(surprises)) if surprises else None
 
     try:
-        return _cache.served_snapshot("earnings_avg_eps_surprise_v1", 21600, _build)
+        # v2: last-REPORTED-quarter semantics (v1 read the upcoming row).
+        return _cache.served_snapshot("earnings_avg_eps_surprise_v2", 21600, _build)
     except Exception as e:
         print(f"[earnings] surprise fetch failed: {type(e).__name__}: {e}")
         return None
@@ -1160,7 +1240,7 @@ def _surprise_hover(ticker: str, quarter: str, est, actual, surprise) -> str:
     act_s = f"${actual:.2f}" if actual is not None else "n/a"
     return (f"{ticker} · {quarter}<br>"
             f"Consensus: {est_s}<br>"
-            f"Actual: {act_s}<br>"
+            f"Actual (provider basis): {act_s}<br>"
             f"Surprise: {surprise:+.1f}%")
 
 
@@ -1275,7 +1355,9 @@ def _render_surprise_heatmap(watchlist: list[str]):
 
     st.caption(
         "Each cell = EPS surprise % for that bank's FISCAL quarter (the "
-        "completed quarter the announcement covered). "
+        "completed quarter the announcement covered), the provider's actual "
+        "vs consensus — the actual is on the provider's basis (usually "
+        "adjusted, sometimes GAAP). "
         "Dark green = big beat, dark red = big miss. "
         "Banks sorted by most recent surprise (best on top)."
     )
@@ -1860,11 +1942,12 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     sec_hist = r.get("sec_hist") or {}
     cons = {"eps_adj": r.get("eps_est"), "total_revenue": r.get("rev_est")}
     # Consensus-feed ACTUALS fill the consensus-basis rows' current cells when
-    # the release didn't state them — FMP's epsActual is the consensus-basis
-    # figure, so it lands on EPS adj (never the GAAP row); a release-sourced
-    # board actual (eps_act_src/rev_act_src) already lives in `cur`.
+    # the release didn't state them; a release-sourced board actual
+    # (eps_act_src/rev_act_src) already lives in `cur`. FMP's epsActual lands
+    # on EPS adj ONLY when confirmed adjusted (score_eps) — it is GAAP-like
+    # in a notable-items quarter (JPM 2Q26 $7.59 vs $6.14 ex-items).
     if cur.get("eps_adj") is None and r.get("eps_act") is not None \
-            and not r.get("eps_act_src"):
+            and not r.get("eps_act_src") and r.get("eps_basis") == "adjusted":
         cur["eps_adj"] = r["eps_act"]
     if cur.get("total_revenue") is None and r.get("rev_act") is not None \
             and not r.get("rev_act_src"):
@@ -1984,7 +2067,17 @@ def _results_tr(r: dict, ncols: int) -> str:
     eps_act, eps_est = _usd(r.get("eps_act")), _usd(r.get("eps_est"))
     if eps_act is not None and r.get("eps_act_src"):
         eps_act += _eps_src_mark(r["eps_act_src"])   # filled from the release
-    if r.get("pending") and eps_act is None:
+    unscored = _eps_unscored(r)
+    if unscored:
+        tip = _EPS_CONFLICT_TIP if unscored == "conflict" else _EPS_BASIS_TIP
+        eps_d = (f'<td class="mut" title="{_html.escape(tip, quote=True)}">'
+                 + ("n/a (conflict)" if unscored == "conflict"
+                    else "n/a (basis?)") + "</td>")
+    else:
+        eps_d = _signed_pct_cell(r.get("eps_surprise"))
+    if unscored == "conflict":
+        eps_act = "n/a"               # feed and release disagree — neither shown
+    elif r.get("pending") and eps_act is None:
         eps_act = "pending"           # release is out; FMP actuals not posted yet
     elif r.get("awaiting") and eps_act is None:
         eps_act = "awaiting"          # scheduled today; nothing published yet
@@ -2012,7 +2105,7 @@ def _results_tr(r: dict, ncols: int) -> str:
         _cell(r.get("period_ending")),
         _cell(eps_act),
         _cell(eps_est),
-        _signed_pct_cell(r.get("eps_surprise")),
+        eps_d,
         _cell(_fmt_rev_est(r.get("rev_act"))
               + ("*" if r.get("rev_act") is not None and r.get("rev_act_src")
                  else "")),
@@ -2067,13 +2160,18 @@ def _render_results_board():
         ("Avg EPS Surprise", f"{sum(r['eps_surprise'] for r in eps_rows) / len(eps_rows):+.1f}%"
          if eps_rows else "—"),
         ("Avg Px Reaction", f"{sum(reacts) / len(reacts):+.1f}%" if reacts else "—"),
+        ("EPS Basis Unconfirmed", str(sum(1 for r in rows if _eps_unscored(r)))),
     ])
     st.caption(
         "Every universe bank that has **reported** in the trailing 30 days, "
         "newest first — actual vs estimated **EPS / Revenue** with the surprise "
-        "(FMP, filled the day results land; EPS Act is the consensus basis — "
-        "typically ADJUSTED EPS; \\* = from the bank's release, adjusted; "
-        "† = the release's GAAP diluted EPS), **Px React** = the release "
+        "(FMP, filled the day results land; EPS Act is on the provider's "
+        "basis; \\* = the bank's release-stated adjusted EPS; † = the "
+        "release's GAAP diluted EPS). **EPS Δ is scored only on a confirmed "
+        "basis** — the actual equals the release's adjusted EPS to the cent, "
+        "or the release states no adjusted EPS and the actual equals its GAAP "
+        "figure; otherwise **n/a (basis?)** (GAAP vs adjusted unconfirmed) or "
+        "**n/a (conflict)** (feed and release disagree). **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
         "results press **Release** from the news feed. Every bank SCHEDULED "
@@ -2162,6 +2260,10 @@ def _render_results_board():
                 "FMP" if r.get("eps_act") is not None else None),
             "EPS Est ($)": r.get("eps_est"),
             "EPS Surprise (%)": r.get("eps_surprise"),
+            "EPS Basis": ("feed vs release conflict" if r.get("eps_conflict")
+                          else _EPS_BASIS_FLAG
+                          if r.get("eps_basis") == "unconfirmed"
+                          else r.get("eps_basis")),
             "Rev Act ($)": r.get("rev_act"),
             "Rev Act Source": r.get("rev_act_src") or (
                 "FMP" if r.get("rev_act") is not None else None),

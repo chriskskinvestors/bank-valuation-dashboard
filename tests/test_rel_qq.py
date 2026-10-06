@@ -148,12 +148,19 @@ class TestRelExhibit(unittest.TestCase):
 
     def test_consensus_actuals_fill_consensus_rows_only(self):
         from ui.earnings import _rel_exhibit_rows
-        # FMP-sourced actuals (no _src flag) land on EPS adj / Revenue cur.
+        # FMP-sourced actuals (no _src flag) land on EPS adj / Revenue cur —
+        # EPS only when score_eps CONFIRMED it adjusted (review 2026-10-06
+        # P0-1: JPM 2Q26's FMP $7.59 was GAAP-like, the adjusted was $6.14).
         fix = {"rel": {"qend": "2026-06-30", "metrics": {},
                        "prior_metrics": {}, "yoy_metrics": {}, "capital": {}},
-               "eps_act": 3.46, "rev_act": 19.6e9, "eps_est": 2.89}
+               "eps_act": 3.46, "rev_act": 19.6e9, "eps_est": 2.89,
+               "eps_basis": "adjusted"}
         rows = {r["key"]: r for r in _rel_exhibit_rows(fix)}
         self.assertEqual(rows["eps_adj"]["cur"], 3.46)
+        unconf = {**fix, "eps_act": 7.59, "eps_basis": "unconfirmed"}
+        rows_u = {r["key"]: r for r in _rel_exhibit_rows(unconf)}
+        self.assertIsNone(rows_u["eps_adj"]["cur"])
+        self.assertIsNone(rows_u["eps_diluted"]["cur"])
         self.assertEqual(rows["total_revenue"]["cur"], 19.6e9)
         self.assertIsNone(rows["eps_diluted"]["cur"])   # never the GAAP row
         # Release-sourced board actuals (starred) must NOT double-land: the

@@ -178,8 +178,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
     `reaction_session` for the caller to fill `px_react` against real closes.
 
     Row: {ticker, date, when, period_ending, eps_act, eps_est, eps_surprise,
-          rev_act, rev_est, rev_surprise, reaction_session, pr_headline,
-          pr_url, pending}
+          eps_basis (both None here — see score_eps), rev_act, rev_est,
+          rev_surprise, reaction_session, pr_headline, pr_url, pending}
     """
     uni = set(universe or ())
     floor = today - timedelta(days=days_back)
@@ -223,6 +223,18 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             # magnitude under). Blank → release/AI fill supplies the stated
             # figure; a lost real number renders '—', never a wrong one.
             rev_act = None
+        if (rev_act is not None and not rev_est and ta
+                and rev_act > 0.05 * ta):
+            # ...and the UPPER bound (review 2026-10-06 P1-1: CMTV 2Q26
+            # shipped $16.04B against a ~$14M quarter on $1.23B of assets —
+            # ×1000). Real quarterly bank revenue runs ~1-3% of assets; 5%
+            # leaves headroom for fee-heavy banks.
+            rev_act = None
+        # No estimate AND no assets anchor: nothing can sanity the FMP figure,
+        # so it never displays — the release fill supplies the bank's own
+        # stated revenue (labeled), else n/a. The raw value still marks the
+        # bank as reported below (row existence is not a displayed number).
+        rev_unanchored = rev_act is not None and not rev_est and not ta
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = awaiting = False
         if eps_act is None and rev_act is None:
@@ -262,10 +274,14 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             "period_ending": period,
             "eps_act": eps_act,
             "eps_est": r.get("epsEstimated"),
-            "eps_surprise": surprise_pct(eps_act, r.get("epsEstimated")),
-            "rev_act": rev_act,
+            # Scored only once the actual's GAAP-vs-adjusted basis is
+            # confirmed against the release (score_eps, in the release fill).
+            "eps_surprise": None,
+            "eps_basis": None,
+            "rev_act": None if rev_unanchored else rev_act,
             "rev_est": r.get("revenueEstimated"),
-            "rev_surprise": surprise_pct(rev_act, r.get("revenueEstimated")),
+            "rev_surprise": (None if rev_unanchored else
+                             surprise_pct(rev_act, r.get("revenueEstimated"))),
             "reaction_session": reaction_session(d, when).isoformat(),
             "pr_headline": (pr or {}).get("headline"),
             "pr_url": (pr or {}).get("url"),
@@ -295,6 +311,7 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
                 "when": None,
                 "period_ending": None,
                 "eps_act": None, "eps_est": None, "eps_surprise": None,
+                "eps_basis": None,
                 "rev_act": None, "rev_est": None, "rev_surprise": None,
                 "reaction_session": reaction_session(ed, None).isoformat(),
                 "pr_headline": e.get("headline"),
@@ -379,6 +396,55 @@ def release_matches_report(filed_iso, report_iso) -> bool:
     return 0 <= (f - r).days <= 5
 
 
+# "Equals" for two EPS figures: to the cent (FMP stores 0.65 or 0.6500).
+_EPS_MATCH_TOL = 0.0101
+
+
+def eps_basis(row: dict) -> str | None:
+    """The confirmed basis of the row's EPS actual vs the bank's own release
+    (review 2026-10-06 P0-1 — FMP's epsActual is GAAP-like in a notable-items
+    quarter while epsEstimated is street/adjusted: JPM 2Q26 7.59 vs 5.59
+    shipped "+35.8%" against a 6.14 ex-items actual). One of:
+      'adjusted'    — the actual IS the release's adjusted / ex-items EPS
+                      (the feed's figure equals it to the cent, or it was
+                      filled from it);
+      'gaap_only'   — the release mentions no adjusted EPS at all and the
+                      actual equals its GAAP diluted EPS (when stated);
+      'unconfirmed' — anything else: no attached release, an adjusted EPS
+                      mentioned but not extractable (NTRS), the feed's figure
+                      matching neither (JPM), or the release's GAAP figure
+                      filled in (†);
+      None          — no actual."""
+    act = row.get("eps_act")
+    if act is None:
+        return None
+    src = row.get("eps_act_src")
+    if src == "release, adj.":
+        return "adjusted"
+    if src:
+        return "unconfirmed"                  # release GAAP figure (†)
+    rel = row.get("rel")
+    if not rel:
+        return "unconfirmed"
+    m = rel.get("metrics") or {}
+    adj, gaap = m.get("eps_adj"), m.get("eps_diluted")
+    if adj is not None:
+        return "adjusted" if abs(act - adj) <= _EPS_MATCH_TOL else "unconfirmed"
+    if rel.get("eps_adj_stated") is False and (
+            gaap is None or abs(act - gaap) <= _EPS_MATCH_TOL):
+        return "gaap_only"
+    return "unconfirmed"
+
+
+def score_eps(row: dict) -> None:
+    """Set row['eps_basis'] and row['eps_surprise'] — the surprise exists
+    only on a confirmed basis; 'unconfirmed' renders n/a + a flag."""
+    row["eps_basis"] = eps_basis(row)
+    row["eps_surprise"] = (surprise_pct(row["eps_act"], row.get("eps_est"))
+                           if row["eps_basis"] in ("adjusted", "gaap_only")
+                           else None)
+
+
 def _fill_release_metrics(rows, max_workers: int = 6) -> None:
     """Attach each row's release-extracted metrics in place (`rel` = {metrics,
     capital, url} or None): the per-CIK cached 8-K extraction, attached ONLY
@@ -393,7 +459,11 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
         try:
             rm = release_metrics(get_cik(row["ticker"]))
         except Exception:
-            return
+            rm = None
+        _attach(row, rm)
+        score_eps(row)          # every row — no release ⇒ basis unconfirmed
+
+    def _attach(row, rm):
         if rm and release_matches_report(rm.get("filed_date"), row["date"]):
             # An attached release IS the report — an "awaiting" row flips the
             # moment the 8-K lands, ahead of FMP and the wires.
@@ -408,6 +478,8 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
                           "prior_qend": rm.get("prior_qend"),
                           "yoy_metrics": rm.get("yoy_metrics") or {},
                           "yoy_qend": rm.get("yoy_qend"),
+                          # None on a pre-v22 extraction → basis unconfirmed
+                          "eps_adj_stated": rm.get("eps_adj_stated"),
                           "url": rm.get("url")}
             # Actuals fill (owner, 2026-07-13): FMP's consensus feed lags a
             # fresh report ("pending") — the bank's own release already
@@ -421,20 +493,35 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
             # the release states by more than max($0.25, 50% of the stated
             # value); the release's own (extraction-guarded) number then
             # replaces it, labeled via eps_act_src.
+            # Wrong-entity guard (review 2026-10-06 P2-3): PNFP's Q4-25 8-K
+            # under the merged CIK is legacy Synovus ($1.22) while FMP's
+            # $2.24 is Pinnacle's — and the swap shipped Synovus. The swap
+            # needs independent evidence that FMP is the junk side: FMP more
+            # than max($0.25, 50%) off the consensus estimate (NPB $0.09 vs
+            # $0.677 est). An FMP actual consistent with consensus (PNFP 2.24
+            # vs 2.26) that the release contradicts is an unresolved
+            # conflict → n/a, never either number. (The spec'd NI/revenue
+            # anchor cannot catch this pair: Synovus Q4-25 NI $171.1M /
+            # revenue $629.7M vs Pinnacle Bank's Q3-25 FDIC $183.4M /
+            # $546.6M — a merger of equals.)
             stated = [v for v in (metrics.get("eps_adj"),
                                   metrics.get("eps_diluted")) if v is not None]
             if (row.get("eps_act") is not None and stated
                     and all(abs(row["eps_act"] - v) > max(0.25, 0.5 * abs(v))
                             for v in stated)):
-                if metrics.get("eps_adj") is not None:
-                    row["eps_act"] = metrics["eps_adj"]
-                    row["eps_act_src"] = "release, adj."
+                est = row.get("eps_est")
+                if est is not None and abs(row["eps_act"] - est) > \
+                        max(0.25, 0.5 * abs(est)):
+                    if metrics.get("eps_adj") is not None:
+                        row["eps_act"] = metrics["eps_adj"]
+                        row["eps_act_src"] = "release, adj."
+                    else:
+                        row["eps_act"] = metrics["eps_diluted"]
+                        row["eps_act_src"] = "release, GAAP"
                 else:
-                    row["eps_act"] = metrics["eps_diluted"]
-                    row["eps_act_src"] = "release, GAAP"
-                row["eps_surprise"] = surprise_pct(row["eps_act"],
-                                                   row.get("eps_est"))
-            if row.get("eps_act") is None:
+                    row["eps_act"] = None
+                    row["eps_conflict"] = True
+            if row.get("eps_act") is None and not row.get("eps_conflict"):
                 if metrics.get("eps_adj") is not None:
                     row["eps_act"] = metrics["eps_adj"]
                     row["eps_act_src"] = "release, adj."
@@ -443,9 +530,6 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
                     row["eps_act_src"] = "release, GAAP"
                 if row.get("eps_act") is not None:
                     row["pending"] = False
-                    if row.get("eps_surprise") is None:
-                        row["eps_surprise"] = surprise_pct(
-                            row["eps_act"], row.get("eps_est"))
             if row.get("rev_act") is None and \
                     metrics.get("total_revenue") is not None:
                 row["rev_act"] = metrics["total_revenue"]
@@ -628,7 +712,11 @@ def _board_key(days_back: int) -> str:
     # v12: estimate-less revenue junk guard vs bank-sub assets (FDBC
     #      $1,450; PKBK $3.9M vs stated $39.3M — no estimate, so the
     #      0.2-5x guard couldn't fire).
-    return f"earnings_results_board_v12:{days_back}"
+    # v13: EPS surprise scored only on a confirmed GAAP-vs-adjusted basis
+    #      (rows gained `eps_basis`, `eps_conflict`; rel gained
+    #      `eps_adj_stated`), estimate-less revenue upper bound + no-anchor
+    #      blanking, resolver-cert assets (review 2026-10-06).
+    return f"earnings_results_board_v13:{days_back}"
 
 
 def results_board_available(days_back: int = 30) -> bool:
@@ -682,9 +770,18 @@ def _build_results_board(days_back: int) -> list[dict]:
                     if r.get("cert") and r.get("asset")}
         by_cert = _cache.served_snapshot(
             "fdic_assets_by_cert_v1", 86400, _assets_by_cert) or {}
+        # Lookup-time resolver, NOT the universe snapshot's cert (same rule
+        # as _fill_fdic_history): a stale snapshot cert anchored CARV/UNB to
+        # a ~$115M/$251M charter (real $676M/$1.62B) — under the 5% upper
+        # bound that would blank real revenue — and CMTV had no snapshot
+        # cert at all.
+        from data.bank_mapping import get_fdic_cert
         assets = {}
-        for tk, v in get_universe().items():
-            c = (v or {}).get("fdic_cert")
+        for tk in get_universe():
+            try:
+                c = get_fdic_cert(tk)
+            except Exception:
+                c = None
             if c and by_cert.get(str(int(c))):
                 assets[tk] = by_cert[str(int(c))]
     except Exception:

@@ -93,14 +93,14 @@ class TestSurpriseHover(unittest.TestCase):
         from ui.earnings import _surprise_hover
         h = _surprise_hover("JPM", "2025Q4", None, 4.81, 5.2)
         self.assertIn("Consensus: n/a", h)
-        self.assertIn("Actual: $4.81", h)
+        self.assertIn("Actual (provider basis): $4.81", h)
         self.assertIn("Surprise: +5.2%", h)
 
     def test_missing_actual_renders_na(self):
         from ui.earnings import _surprise_hover
         h = _surprise_hover("JPM", "2025Q4", 4.57, None, -1.0)
         self.assertIn("Consensus: $4.57", h)
-        self.assertIn("Actual: n/a", h)
+        self.assertIn("Actual (provider basis): n/a", h)
         self.assertIn("Surprise: -1.0%", h)
 
     def test_no_surprise_is_blank(self):

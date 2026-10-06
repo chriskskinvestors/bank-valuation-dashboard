@@ -273,7 +273,10 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertEqual([r["ticker"] for r in rows], ["JPM", "GS"])
         self.assertTrue(rows[1]["awaiting"])
         r = rows[0]
-        self.assertAlmostEqual(r["eps_surprise"], (5.80 - 5.61) / 5.61 * 100)
+        # EPS surprise is scored only after the release confirms the basis
+        # (score_eps in the release fill, review 2026-10-06 P0-1).
+        self.assertIsNone(r["eps_surprise"])
+        self.assertIsNone(r["eps_basis"])
         self.assertEqual(r["when"], "Before open")
         self.assertEqual(r["reaction_session"], "2026-07-14")
 
@@ -512,10 +515,11 @@ class TestBuildResultsRows(unittest.TestCase):
             {"symbol": "BWB", "date": "2026-07-14", "epsActual": 0.45,
              "revenueActual": 63e6, "revenueEstimated": 41e6},
             {"symbol": "NOEST", "date": "2026-07-14", "epsActual": 1.0,
-             "revenueActual": 5e6},                    # no estimate → kept
+             "revenueActual": 5e6},        # no estimate, assets-anchored → kept
         ]
         rows = {r["ticker"]: r for r in build_results_rows(
-            fmp, {"HWC", "BWB", "NOEST"}, {}, self.TODAY)}
+            fmp, {"HWC", "BWB", "NOEST"}, {}, self.TODAY,
+            assets_by_ticker={"NOEST": 500e6})}
         self.assertIsNone(rows["HWC"]["rev_act"])
         self.assertIsNone(rows["HWC"]["rev_surprise"])
         self.assertEqual(rows["BWB"]["rev_act"], 63e6)
@@ -534,7 +538,8 @@ class TestBuildResultsRows(unittest.TestCase):
             # Legit micro-cap: $8M on $500M assets = 1.6% — kept.
             {"symbol": "OKMC", "date": "2026-07-14", "epsActual": 0.5,
              "revenueActual": 8e6},
-            # No assets known → guard can't anchor, value kept.
+            # No assets known → nothing anchors an estimate-less figure:
+            # n/a (review 2026-10-06 P1-1), the release fill supplies it.
             {"symbol": "NOAST", "date": "2026-07-14", "epsActual": 0.5,
              "revenueActual": 1_450},
         ]
@@ -545,7 +550,7 @@ class TestBuildResultsRows(unittest.TestCase):
         self.assertIsNone(rows["FDBC"]["rev_act"])
         self.assertIsNone(rows["PKBK"]["rev_act"])
         self.assertEqual(rows["OKMC"]["rev_act"], 8e6)
-        self.assertEqual(rows["NOAST"]["rev_act"], 1_450)
+        self.assertIsNone(rows["NOAST"]["rev_act"])
 
     def test_estimate_present_skips_assets_guard(self):
         # With an estimate the 0.2-5x consensus guard owns the decision —
@@ -575,8 +580,14 @@ class TestBuildResultsRows(unittest.TestCase):
         # 2-day settling window passes, revenue-only rows display again.
         fmp = [{"symbol": "MLGF", "date": "2026-07-10", "epsActual": None,
                 "revenueActual": 12e6}]
-        rows = build_results_rows(fmp, {"MLGF"}, {}, self.TODAY)
+        rows = build_results_rows(fmp, {"MLGF"}, {}, self.TODAY,
+                                  assets_by_ticker={"MLGF": 1e9})
         self.assertEqual(rows[0]["rev_act"], 12e6)
+        # Without an assets anchor the row still exists (the bank reported)
+        # but the unanchored estimate-less figure renders n/a.
+        rows = build_results_rows(fmp, {"MLGF"}, {}, self.TODAY)
+        self.assertEqual(len(rows), 1)
+        self.assertIsNone(rows[0]["rev_act"])
 
     def test_actuals_row_is_not_pending(self):
         fmp = [{"symbol": "JPM", "date": "2026-07-14", "epsActual": 5.8,
@@ -668,6 +679,9 @@ class TestReleaseActualsFill(unittest.TestCase):
         self._run_fill(row, {"eps_adj": 1.14})
         self.assertEqual(row["eps_act"], 1.20)          # FMP actual kept
         self.assertNotIn("eps_act_src", row)
+        # ...but 1.20 ≠ the release's adjusted 1.14 → basis unconfirmed.
+        self.assertIsNone(row["eps_surprise"])
+        self.assertEqual(row["eps_basis"], "unconfirmed")
 
     def test_release_contradicted_fmp_eps_replaced(self):
         # NPB 2026-07-22: FMP posted $0.09 against the release's $0.60
@@ -678,8 +692,10 @@ class TestReleaseActualsFill(unittest.TestCase):
         self._run_fill(row, {"eps_diluted": 0.60})
         self.assertEqual(row["eps_act"], 0.60)
         self.assertEqual(row["eps_act_src"], "release, GAAP")
-        # (0.60 - 0.69) / 0.69 = -13.04%, recomputed off the real number
-        self.assertAlmostEqual(row["eps_surprise"], -13.043, places=2)
+        # The release's GAAP figure (†) is never scored against the street
+        # (adjusted) estimate — review 2026-10-06 P0-1.
+        self.assertIsNone(row["eps_surprise"])
+        self.assertEqual(row["eps_basis"], "unconfirmed")
 
     def test_fmp_matching_one_of_two_stated_figures_kept(self):
         # Big-charge quarter: GAAP $0.05, adjusted $1.20. FMP carrying the
@@ -690,6 +706,7 @@ class TestReleaseActualsFill(unittest.TestCase):
         self._run_fill(row, {"eps_adj": 1.20, "eps_diluted": 0.05})
         self.assertEqual(row["eps_act"], 0.05)
         self.assertNotIn("eps_act_src", row)
+        self.assertIsNone(row["eps_surprise"])          # GAAP vs adjusted est
 
     def test_stale_release_never_fills(self):
         # A release filed BEFORE the report date is last quarter's.
