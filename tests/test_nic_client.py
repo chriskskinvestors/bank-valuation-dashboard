@@ -750,5 +750,37 @@ class TestCaching(_Base):
         self.mock_bulk.assert_not_called()
 
 
+class TestCacheReadIgnoresBackendTtl(unittest.TestCase):
+    """UX-P1-05: the parsed tree/parent slices carry a 30-day stamp, but the
+    reads used data.cache's default 24h max age — every entry expired after
+    a day and Corporate Structure re-parsed the bulk CSVs (~15 s) on render."""
+
+    def _read(self, fn, key_prefix):
+        from datetime import datetime, timedelta
+        import data.nic_client as nic
+        stamp = (datetime.now() - timedelta(days=3)).isoformat()
+        cached = {"entity": {"rssd": 1}, "children": [], "parent": {"rssd": 2},
+                  "cached_at": stamp}
+        seen = {}
+
+        def fake_get(key, max_age_s="default"):
+            seen["max_age_s"] = max_age_s
+            return cached
+        with patch("data.cache.get", fake_get),                 patch("data.nic_client._bulk_path",
+                      side_effect=AssertionError("bulk re-parse on a fresh entry")):
+            out = getattr(nic, fn)(1)
+        return out, seen["max_age_s"]
+
+    def test_tree_three_days_old_is_served_without_reparse(self):
+        out, max_age = self._read("get_org_hierarchy", "nic:tree:")
+        self.assertIsNone(max_age)
+        self.assertEqual(out["entity"]["rssd"], 1)
+
+    def test_parent_three_days_old_is_served_without_reparse(self):
+        out, max_age = self._read("get_parent", "nic:parent:")
+        self.assertIsNone(max_age)
+        self.assertEqual(out, {"rssd": 2})
+
+
 if __name__ == "__main__":
     unittest.main()

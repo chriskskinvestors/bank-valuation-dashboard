@@ -23,10 +23,9 @@ rows), so they are downloaded at most once per 30 days to a local bulk dir
 and ALWAYS parsed with pandas chunking + usecols — the full file is never
 held in memory per request. The parsed per-RSSD slices (one tree / one
 parent lookup) are cached in data.cache for 30 days via the shared
-freshness check. Note the cache backend's own global TTL (24h) expires
-entries first locally; worst case is a daily re-parse from the on-disk
-bulk file (no re-download), and the 30d stamp stays correct if the
-backend TTL is ever raised.
+freshness check — read with max_age_s=None so the backend's default 24h
+TTL doesn't expire them first (it did: a daily ~15 s re-parse on the
+Corporate Structure render path, UX-P1-05).
 
 Functions (RSSD ids come from FDIC institutions FED_RSSD — callers
 already have them via the fdic mapping):
@@ -486,7 +485,7 @@ def get_org_hierarchy(rssd_id: int) -> dict | None:
 
     from data import cache
     key = f"nic:tree:{rssd_id}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)   # 30d stamp governs (_is_fresh)
     if _is_fresh(cached):
         return cached
 
@@ -566,7 +565,7 @@ def get_parent(rssd_id: int) -> dict | None:
 
     from data import cache
     key = f"nic:parent:{rssd_id}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)   # 30d stamp governs (_is_fresh)
     if _is_fresh(cached):
         return cached.get("parent")
 
