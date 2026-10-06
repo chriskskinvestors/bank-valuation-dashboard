@@ -1020,6 +1020,14 @@ def get_latest_fundamentals(cik: int) -> dict:
     preferred_stock, preferred_present = _resolve_preferred_stock(facts)
     result["preferred_stock"] = preferred_stock
     result["preferred_present"] = preferred_present
+    # Per-series liquidation preference above the carrying value (from the
+    # filing-instance record only): a bank may deduct it in its OWN
+    # per-common-share figures — analysis/valuation._resolve_tbvps.
+    _rec = facts.get("_preferred_total") or {}
+    result["preferred_liquidation"] = (
+        _rec.get("liquidation")
+        if preferred_stock is not None and preferred_stock == _rec.get("value")
+        else None)
 
     # CARDINAL RULE: the filer reports preferred but we can't resolve its value.
     # A preferred-inclusive figure labeled "common tangible book" is a

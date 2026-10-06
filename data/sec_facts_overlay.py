@@ -657,7 +657,16 @@ def resolve_preferred_total(entries: list[dict], end: str) -> dict | None:
         shares = _preferred_count_at(entries, end)
         if shares is None or _not_a_carrying_total(concept, value, shares):
             return None
-    return {"end": end, "value": value, "basis": basis}
+    # The per-series LIQUIDATION preference, when the instance also tags it:
+    # some banks deduct that, not the carrying value, in their own per-common-
+    # share figures (BAFN: $96,051K liquidation vs $90,238K carrying on a
+    # $19,850K common base — the release's $4.82 vs a carrying-value $6.25).
+    # analysis/valuation reads the gap to recognise the company's convention.
+    liq = _series_sum(entries, "PreferredStockLiquidationPreferenceValue", end)
+    if liq and "LiquidationPreference" in basis:
+        liq = None                      # the value IS the liquidation figure
+    return {"end": end, "value": value, "basis": basis,
+            "liquidation": liq if liq and liq > value else None}
 
 
 def overlay_preferred_total(cik: int, slim: dict) -> dict:
