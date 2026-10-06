@@ -311,9 +311,31 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
     return max(found, key=lambda f: (bool(f[1]), bool(f[2])))
 
 
+_NAME_CONNECTORS = {"of", "and", "&", "the", "de", "la", "du", "for"}
+
+
+def _trailing_name(phrase: str) -> str:
+    """The trailing run of capitalized words (connectors allowed) of a
+    captured name phrase: the pair regex starts at the earliest uppercase
+    letter within its window, so "FOR the proposed merger with Middlefield
+    Banc Corp" (Farmers 2026-01-13) is Middlefield Banc Corp. A phrase with
+    no capitalized tail (a lowercase brand) is returned as captured."""
+    words = phrase.split()
+    keep: list[str] = []
+    for w in reversed(words):
+        if w[:1].isupper() or w.lower() in _NAME_CONNECTORS or w == "&":
+            keep.append(w)
+        else:
+            break
+    while keep and keep[-1].lower() in _NAME_CONNECTORS:
+        keep.pop()               # a leading connector is not a name start
+    return " ".join(reversed(keep)) if keep else phrase
+
+
 def _pr_ticker_pairs(text: str) -> list[tuple[str, str]]:
     """[(company name phrase, ticker)] from '(NASDAQ: XXXX)' mentions."""
-    return [(m.group(1).strip(), m.group(2)) for m in _PR_TICKER_RE.finditer(text)]
+    return [(_trailing_name(m.group(1).strip()), m.group(2))
+            for m in _PR_TICKER_RE.finditer(text)]
 
 
 def _ticker_for_side(side_phrase: str, pairs: list[tuple[str, str]]) -> str | None:
@@ -1524,7 +1546,10 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         return bool(n) and any(n == s or s.startswith(n + " ") for s in self_names)
 
     rows, fetch_failed, seen_toks = [], False, set()
-    for ann in sorted(recent, key=lambda g: g["file_date"], reverse=True)[:3]:
+    # Oldest first: approval / vote update 8-Ks carry the merger phrase and
+    # name the same counterparty; with newest-first the board re-anchored
+    # Isabella/Grand River to its 2026-10-06 regulatory-approval 8-K.
+    for ann in sorted(recent, key=lambda g: g["file_date"])[:4]:
         time.sleep(_PAUSE_S)
         text, t_ok = _accession_text(ann["cik"], ann["adsh"], ann["doc"])
         fetch_failed = fetch_failed or not t_ok
@@ -1541,8 +1566,20 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         pairs = [(_clean_company_name(n), t) for n, t in _pr_ticker_pairs(text)
                  if t not in self_tickers]
         pairs = [(n, t) for n, t in pairs if n and not _is_self(n)]
-        if pairs:
-            counterparty, cp_ticker = pairs[0]
+        # The counterparty is the non-self pair the text names MOST (at
+        # least twice): a peer table in an investor exhibit lists other
+        # banks' pairs once (Farmers' 2026-01-13 8-K put Hingham, a peer,
+        # ahead of Middlefield, the actual target — live on the board).
+        low_text = text.lower()
+        ranked = []
+        for n, t in pairs:
+            tok = brand_token(n)
+            cnt = len(re.findall(r"\b" + re.escape(tok) + r"\b", low_text)) if tok else 0
+            if cnt >= 2:
+                ranked.append((cnt, n, t))
+        if ranked:
+            ranked.sort(key=lambda x: -x[0])
+            _cnt, counterparty, cp_ticker = ranked[0]
         else:
             best = {}
             for m in _ACQUIRE_OBJ_RE.finditer(text):

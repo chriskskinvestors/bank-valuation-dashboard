@@ -1488,6 +1488,18 @@ class TestTickerPairForms(unittest.TestCase):
         self.assertEqual(_pr_ticker_pairs(PEBO_PAIRS)[1][0], "Capital Bancorp, Inc.")
         self.assertEqual([t for _n, t in _pr_ticker_pairs(HBT_8K)][-2:], ["HBT", "TYFG"])
 
+    def test_pair_name_is_the_trailing_capitalized_run(self):
+        from data.ma_announcements import _pr_ticker_pairs
+        self.assertEqual(
+            _pr_ticker_pairs("vote FOR the proposed merger with Middlefield Banc Corp. "
+                             "(NASDAQ: MBCN)"),
+            [("Middlefield Banc Corp.", "MBCN")])
+        self.assertEqual(_pr_ticker_pairs("Bank of Hawaii Corporation (NYSE: BOH)"),
+                         [("Bank of Hawaii Corporation", "BOH")])
+        self.assertEqual(_pr_ticker_pairs("Cincinnati, Ohio - July 21, 2026. First "
+                                          "Financial Bancorp. (NASDAQ: FFBC)")[0][0],
+                         "First Financial Bancorp.")
+
     def test_election_list_possessive_ratio(self):
         from data.ma_announcements import extract_exchange_ratio
         self.assertEqual(extract_exchange_ratio(HBT_8K),
@@ -1686,6 +1698,89 @@ class TestFdicCertForName(unittest.TestCase):
             self.assertEqual(ma_pending.fdic_cert_for_name("First Carolina Bank"),
                              (None, None, False))
         self.assertEqual(ma_pending._FDIC_NAME_CACHE, {})
+
+
+# ── Pass-2 board gates (2026-10-06): closed deals that stayed pending ──────
+class TestBoardGates(unittest.TestCase):
+
+    def test_universe_match_requires_the_same_brand(self):
+        from data.ma_pending import _universe_match
+        uni = {"SBMW": {"name": "Security Midwest Bancorp", "fdic_cert": 27723, "cik": 1},
+               "MOFG": {"name": "MidWestOne Financial Group", "fdic_cert": 2, "cik": 3},
+               "CBNK": {"name": "Capital Bancorp", "fdic_cert": 35278, "cik": 1419536}}
+        with patch("data.bank_universe.get_universe", return_value=uni):
+            # Nicolet's 8-K wrote "MidWest One": no universe bank carries
+            # the brand "midwest" as its own — n/a, never Security Midwest.
+            self.assertEqual(_universe_match("MidWest One"), (None, None, None))
+            self.assertEqual(_universe_match("Capital"), ("CBNK", 35278, 1419536))
+
+    def test_collapsed_needle_resolves_the_midwestone_close(self):
+        from data.ma_pending import _resolving_needles, _resolved_after
+        self.assertEqual(_resolving_needles("MidWest One"), ["midwest", "midwestone"])
+        self.assertEqual(_resolving_needles("Capital", ["Capital Bancorp"]), ["capital"])
+        filings = [{"form": "8-K", "date": "2026-02-20", "accession": "0001-26-7",
+                    "doc": "nic-20260213.htm", "items": "2.01,5.02,7.01,9.01"}]
+        close = ("On February 20, 2026, Nicolet Bankshares, Inc. completed its "
+                 "previously announced merger with MidWestOne Financial Group, Inc.")
+        with patch("data.ma_pending._accession_text", return_value=(close, True)), \
+             patch("data.ma_pending.time.sleep", lambda *_: None):
+            self.assertEqual(_resolved_after(1174850, "MidWest One", "2025-10-23",
+                                             filings=filings), (True, True))
+
+    def test_wire_completion_resolves_an_edgar_row(self):
+        from data.ma_pending import _wire_resolved
+        prs = [{"title": "U.S. Bancorp Completes Acquisition of BTIG",
+                "published_at": "2026-06-01 10:00:00",
+                "text": "U.S. Bancorp (NYSE: USB) announced today that it has completed "
+                        "its acquisition of BTIG, LLC, effective June 1, 2026."},
+               {"title": "U.S. Bancorp Reports First Quarter 2026 Results",
+                "published_at": "2026-04-16 06:45:00", "text": ""}]
+        with patch("data.ma_pending._wire_releases", return_value=prs):
+            self.assertTrue(_wire_resolved("USB", ["btig"], "2026-01-13"))
+            self.assertFalse(_wire_resolved("USB", ["elavon"], "2026-01-13"))
+            self.assertFalse(_wire_resolved("USB", ["btig"], "2026-06-02"))
+        with patch("data.ma_pending._wire_releases", return_value=None):
+            self.assertFalse(_wire_resolved("USB", ["btig"], "2026-01-13"))
+
+    def test_peer_table_pair_is_not_the_counterparty(self):
+        # Farmers' 2026-01-13 8-K: a peer mention of Hingham (one ticker
+        # pair) sits ahead of Middlefield, the target named throughout.
+        text = ("Farmers National Banc Corp. (NASDAQ: FMNB) reminded shareholders to "
+                "vote FOR the proposed merger with Middlefield Banc Corp. (NASDAQ: "
+                "MBCN). Farmers entered into an Agreement and Plan of Merger with "
+                "Middlefield. Peer banks include Hingham Institution for Savings "
+                "(NASDAQ: HIFS). Middlefield shareholders will receive 2.26 shares of "
+                "Farmers common stock for each share of Middlefield common stock.")
+        rows, ok = _open_announcements(709337, "FARMERS NATIONAL BANC CORP (FMNB)",
+                                       text, "Farmers National Bank")
+        self.assertTrue(ok)
+        self.assertEqual([(r["counterparty_name"], r["counterparty_ticker"]) for r in rows],
+                         [("Middlefield Banc Corp", "MBCN")])
+
+    def test_oldest_announcement_8k_anchors_the_deal(self):
+        from unittest.mock import MagicMock
+        from data import ma_announcements as ma
+        text = ("Isabella Bank Corporation (NASDAQ: ISBA) announced a definitive "
+                "agreement to acquire Grand River Commerce, Inc. (OTC: GNRV). Grand "
+                "River shareholders will receive 0.60 shares of Isabella common stock "
+                "for each share of Grand River common stock.")
+        def hit(adsh, d, doc):
+            return {"_id": f"{adsh}:{doc}",
+                    "_source": {"adsh": adsh, "file_date": d, "ciks": ["0000842517"],
+                                "file_type": "8-K", "items": ["8.01", "9.01"],
+                                "display_names": ["ISABELLA BANK CORP (ISBA) (CIK 0000842517)"]}}
+        hits = [hit("0001-26-9", "2026-10-06", "approval.htm"),
+                hit("0001-26-1", "2026-06-12", "announce.htm")]
+        resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
+        resp.raise_for_status = MagicMock()
+        with patch("data.ma_announcements.requests.get", return_value=resp), \
+             patch("data.ma_announcements._accession_text", return_value=(text, True)), \
+             patch("data.ma_announcements.compute_stock_value", return_value=(None, True)), \
+             patch("data.ma_announcements._close_before", return_value=(None, None, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            rows, ok = ma.find_open_announcements(842517, "Isabella Bank")
+        self.assertTrue(ok)
+        self.assertEqual([r["announce_date"] for r in rows], ["2026-06-12"])
 
 
 if __name__ == "__main__":
