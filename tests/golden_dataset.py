@@ -138,8 +138,9 @@ GOLDEN_2025_Q4 = {  # name kept for backward compat; values are Q1 2026
         "equity_b":      {"expected": 212.02, "tol_pct": 3.0},
         # Citi's TCE reconciliation: common equity 192,465 − goodwill 19,012
         # − intangibles other than MSRs 4,216 = 169,237 ÷ 1,677.4M = $100.89
-        # (= the 2Q26 release). The pipeline reads 100.42: its intangible
-        # resolver also deducts Citi's 788 of MSRs (known MSR residual).
+        # (= the 2Q26 release). Since the MSR overlay (2026-10-06) the
+        # pipeline nets Citi's 788 of MSRs out of its 5,004 rollup and ties
+        # exactly (it read 100.42 before).
         "tbvps":         {"expected": 100.89, "tol_pct": 3.0},
         # NI-to-common TTM (EPS numerator "Net income allocated to common
         # shareholders for basic EPS"): 3Q25 3,438 + 4Q25 (FY 13,021 − 9M

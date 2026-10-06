@@ -701,6 +701,124 @@ def overlay_preferred_total(cik: int, slim: dict) -> dict:
     return out
 
 
+# ── MSRs bundled in the intangibles rollup, tagged where companyfacts can't see ─
+# TCE convention keeps mortgage servicing rights IN tangible equity, so
+# sec_client nets a same-date MSR out of the IntangibleAssetsNetExcludingGoodwill
+# rollup — but only an MSR companyfacts carries (undimensioned
+# ServicingAssetAtFairValueAmount). Citi tags its $788M of MSRs only as a
+# company extension (c:MortgageServicingRightsMSR) and as fair-value-axis
+# members, so the resolver deducted the full $5,004M rollup: TBVPS 100.42 vs
+# the release's 100.89, ROATCE 9.77% vs 9.72%. The MSR is read from the
+# filing's own instance — and netted ONLY when the filing also tags the
+# rollup's ex-MSR remainder itself (Citi: c:IntangibleAssetsExcludingMortgage-
+# ServicingRights = 4,216 = 5,004 − 788), which proves the rollup includes
+# the MSRs. A bank that reports MSRs beside (not inside) its intangibles
+# never ties out and is left alone.
+_MSR_CKEY_V = "v1"
+_RECURRING_MEMBER = "FairValueMeasurementsRecurringMember"
+# The remainder must equal rollup − MSR exactly at the filer's reporting unit
+# ($K or $M sums are exact). PEBO's "AndServicingRights" remainder is $8K off
+# (a non-compete agreement also sits in its rollup) — no proof, no netting.
+_MSR_TIE = 1_000.0
+
+
+def msr_entries(cik: int, filing: dict) -> list[dict]:
+    """Instant facts from `filing`'s iXBRL that can carry an MSR balance
+    (local name holds "ServicingAsset" or "MortgageServicingRight", any
+    namespace, undimensioned or recurring-fair-value-only) plus every
+    undimensioned "Intangible" fact — the candidate ex-MSR remainders.
+    [{concept, recurring, end, val}]; cached immutably by accession."""
+    from data import cache
+    from data.sec_filing_scraper import instance_facts
+    ckey = f"msr_entries:{_MSR_CKEY_V}:{filing['accession']}"
+    hit = cache.get(ckey, max_age_s=None)
+    if hit is not None:
+        return hit.get("entries", [])
+    out = []
+    for f in instance_facts({"cik": int(cik), "accession": filing["accession"],
+                             "doc": filing["doc"]}):
+        if f.period_start or not f.period_end:
+            continue
+        local = f.concept.split(":")[-1]
+        members = [m.split(":")[-1] for m in f.members.values()]
+        is_msr = ("Intangible" not in local
+                  and ("ServicingAsset" in local or "MortgageServicingRight" in local))
+        if is_msr and (not members or members == [_RECURRING_MEMBER]):
+            out.append({"concept": f.concept, "recurring": bool(members),
+                        "end": f.period_end, "val": f.value})
+        elif "Intangible" in local and not members:
+            out.append({"concept": f.concept, "recurring": False,
+                        "end": f.period_end, "val": f.value})
+    try:
+        cache.put(ckey, {"entries": out})
+    except Exception:
+        pass
+    return out
+
+
+def _local(concept: str) -> str:
+    return concept.split(":")[-1]
+
+
+def resolve_msr_in_rollup(entries: list[dict], end: str,
+                          rollup: float) -> float | None:
+    """The MSR balance inside the `rollup` (IntangibleAssetsNetExcludingGoodwill
+    at `end`), or None. A candidate MSR m (0 < m < rollup) counts only when
+    some OTHER undimensioned intangible fact at `end` equals rollup − m: the
+    filing itself states the ex-MSR remainder. Two different candidates that
+    both tie → ambiguous → None."""
+    at = [e for e in entries if e["end"] == end]
+    # An "Intangible…" concept is a remainder candidate even when its name
+    # mentions MSRs (Citi's IntangibleAssetsExcludingMortgageServicingRights);
+    # only non-intangible servicing concepts are MSR candidates.
+    msrs = {e["val"] for e in at
+            if "Intangible" not in _local(e["concept"])
+            and ("ServicingAsset" in e["concept"]
+                 or "MortgageServicingRight" in e["concept"])
+            and 0 < e["val"] < rollup}
+    remainders = [e["val"] for e in at
+                  if "Intangible" in _local(e["concept"]) and not e["recurring"]
+                  and abs(e["val"] - rollup) >= _MSR_TIE]
+    tied = {m for m in msrs
+            if any(abs((rollup - m) - r) < _MSR_TIE for r in remainders)}
+    return tied.pop() if len(tied) == 1 else None
+
+
+def overlay_msr(cik: int, slim: dict) -> dict:
+    """Return `slim` plus a top-level "_msr_in_rollup" record {end, value,
+    accession, form} when the latest filing proves an MSR sits inside the
+    blob's IntangibleAssetsNetExcludingGoodwill rollup at the balance-sheet
+    date; else `slim` itself. Only consulted when that rollup is tagged at
+    the date and companyfacts holds no same-date undimensioned MSR — a filer
+    whose MSR the blob already carries never pays the instance fetch. Read
+    by sec_client's intangible resolvers; nothing is written into the facts."""
+    if not slim or not slim.get("facts"):
+        return slim
+    from data.sec_client import _balance_sheet_date, _val_end
+    from data.sec_filing_scraper import latest_filing
+    end = _balance_sheet_date(slim)
+    rollup, r_end = _val_end(slim, "IntangibleAssetsNetExcludingGoodwill")
+    if not end or not rollup or r_end != end:
+        return slim
+    _, msr_end = _val_end(slim, "ServicingAssetAtFairValueAmount")
+    if msr_end == end:
+        return slim
+    meta = latest_filing(cik, forms=("10-Q", "10-K"))
+    if not meta:
+        return slim
+    msr = resolve_msr_in_rollup(msr_entries(cik, meta), end, rollup)
+    if msr is None:
+        return slim
+    out = dict(slim)
+    out["_msr_in_rollup"] = {"end": end, "value": msr,
+                             "accession": meta["accession"],
+                             "form": meta.get("form")}
+    print(f"[SEC] MSR in rollup: CIK {cik} ${msr:,.0f} of ${rollup:,.0f} "
+          f"intangibles at {end} ({meta.get('form')} {meta['accession']})",
+          flush=True)
+    return out
+
+
 # Flow concepts whose period ENDS reveal a skipped filing (any duration fact
 # ending at a quarter-end means companyfacts has that filing's flows).
 _FLOW_ANCHORS = ("NetIncomeLoss", "ProfitLoss", "EarningsPerShareDiluted")
