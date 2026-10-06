@@ -18,6 +18,8 @@ Cached for 24 hours per ticker.
 import os
 import re
 import json
+import threading
+import time
 import requests
 from datetime import datetime, timedelta, timezone
 from io import StringIO
@@ -39,6 +41,38 @@ RENDER_TTL_SECONDS = 4 * 86400
 HEADERS = {"User-Agent": SEC_USER_AGENT, "Accept": "application/json"}
 
 SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+
+# Per-bank Form 4 walk (fetch_insider_trades). Keep the newest
+# _MAX_OWN_FILINGS filings the bank is the ISSUER of; filings it made as a
+# reporting owner of OTHER issuers don't count toward that. Each XML costs 2
+# SEC requests, so the walk also stops after _MAX_XML_FETCHES per bank — the
+# nightly sweep's budget across ~600 banks. Sized from a 2026-10-06 scan of
+# all 215 banks with >30 Form 4s in 12 months: BAC reached its 30th own
+# filing at fetch 57 (27 foreign: fund-stake 10%-owner filings), GS at 38,
+# WFC at 36, every other bank by 31 — ~90 added requests on a ~17.6k sweep.
+# Even if every such bank hit the bound, the sweep would grow ~61%.
+_MAX_OWN_FILINGS = 30
+_MAX_XML_FETCHES = 75
+
+# SEC fair access is 10 req/s; the XML fetches go through data/http.py's
+# retry policy behind this min-interval lock (~9 req/s) — the same pattern as
+# sec_filing_scraper / xbrl_dimensional.
+_SEC_MIN_INTERVAL = 0.11
+_SEC_LOCK = threading.Lock()
+_sec_last = [0.0]
+
+
+def _sec_get(url: str, timeout: int = 10) -> requests.Response:
+    from data.http import get_with_retry
+    with _SEC_LOCK:
+        wait = _SEC_MIN_INTERVAL - (time.monotonic() - _sec_last[0])
+        if wait > 0:
+            time.sleep(wait)
+        _sec_last[0] = time.monotonic()
+    resp = get_with_retry(url, headers=HEADERS, timeout=timeout)
+    if resp is None:
+        raise RuntimeError(f"SEC fetch exhausted by 429s: {url}")
+    return resp
 
 # Transaction codes
 TRANSACTION_CODES = {
@@ -89,8 +123,7 @@ def _fetch_form4_xml(accession: str, cik: int) -> str | None:
     try:
         # Try direct index.json
         index_json_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/index.json"
-        r = requests.get(index_json_url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
+        r = _sec_get(index_json_url)
         items = r.json().get("directory", {}).get("item", [])
         xml_file = next(
             (it["name"] for it in items if it["name"].endswith(".xml") and "form4" in it["name"].lower()),
@@ -102,9 +135,7 @@ def _fetch_form4_xml(accession: str, cik: int) -> str | None:
         if not xml_file:
             return None
         xml_url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_no_hyphens}/{xml_file}"
-        resp = requests.get(xml_url, headers=HEADERS, timeout=10)
-        resp.raise_for_status()
-        return resp.text
+        return _sec_get(xml_url).text
     except Exception:
         return None
 
@@ -367,14 +398,18 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
                 acceptances[i] if i < len(acceptances) else None),
         })
 
-    # Limit to most recent 30 to avoid hammering SEC (each filing = 1-2 requests)
-    form4_accessions = form4_accessions[:30]
-
+    # Walk newest-first until _MAX_OWN_FILINGS issuer filings, the window
+    # cutoff, or the per-bank fetch bound. The cap counts only filings that
+    # pass the issuer check: capping first left BAC 11 of its own (2026-10-05).
     all_transactions = []
-    for entry in form4_accessions:
+    n_own = 0
+    for entry in form4_accessions[:_MAX_XML_FETCHES]:
+        if n_own >= _MAX_OWN_FILINGS:
+            break
         xml = _fetch_form4_xml(entry["accession"], cik)
         if not xml or not _issuer_matches(xml, cik):
             continue  # missing, or the bank is the reporting owner elsewhere
+        n_own += 1
         txs = _parse_form4(xml)
         for tx in txs:
             tx["filing_date"] = entry["filing_date"]

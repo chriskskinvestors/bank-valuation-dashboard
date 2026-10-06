@@ -113,8 +113,9 @@ def render_insider_activity(ticker: str, show_title: bool = True):
     from ui.tables import ksk_table
     ksk_table(pd.DataFrame(win_rows), signed_cols=("Net",))
     st.caption(
-        "Open-market P/S trades only. The 12-month fetch reads each CIK's 30 "
-        "most recent Form 4s, so very active filers may truncate the older "
+        "Open-market P/S trades only. The 12-month fetch reads the 30 most "
+        "recent Form 4s on the company's own stock, so very active filers may "
+        "truncate the older "
         "window; the 5Y aggregate needs the deeper EDGAR backfill (phase 2)."
     )
 

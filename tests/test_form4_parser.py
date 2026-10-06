@@ -148,6 +148,8 @@ _RVSB_ACC = "0002128593-26-000004"
 
 
 class _FakeResp:
+    status_code = 200  # XML fetches go through data/http.get_with_retry
+
     def __init__(self, text="", payload=None):
         self.text = text
         self._payload = payload
