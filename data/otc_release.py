@@ -352,7 +352,7 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     default 24h read ceiling would drop the record after any >24h gap and
     force a full re-crawl + re-extraction per bank."""
     from data import cache as _cache
-    key = f"otc_release:v15:{ticker.upper()}"
+    key = f"otc_release:v16:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
     except Exception:
@@ -392,6 +392,9 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v16 (2026-10-06): release_metrics v23 — revenue-basis facts (SEC
+    # filers' envelope field; the OTC extraction itself is unchanged, bumped
+    # under the unconditional coupling rule).
     # v15 (2026-10-06): release_metrics v22 — adjusted / ex-items EPS forms.
     # v13 (2026-10-06): OTC P/E + market cap — the envelope now carries the
     # release's discrete-quarter diluted-EPS SERIES (release_metrics

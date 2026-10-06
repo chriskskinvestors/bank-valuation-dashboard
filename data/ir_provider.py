@@ -100,17 +100,20 @@ def _earnings_8k_candidates(submissions: dict, limit: int = 4) -> list[dict]:
     any furnish-capable item (_FURNISH_ITEMS — item lists are filer-authored
     and earnings releases DO ship mis-itemized) qualifies as {gated: True}
     and the caller must verify the exhibit's headline before trusting it.
-    Stops at the first 2.02 hit (anything older is stale by definition) or
-    after `limit` rows."""
-    out = []
+    Stops at the first 2.02 hit (anything older is stale by definition).
+    `limit` caps only the GATED candidates (each costs an exhibit fetch);
+    the scan always continues to the 2.02 — HBAN 2026-09-24: four routine
+    8.01/7.01/5.02 + 9.01 filings after its 2Q26 release (0000049196-26-
+    000060) used to exhaust the cap, so the real release was never reached
+    and the bank had no release at all."""
+    out, n_gated = [], 0
     for present, hit in _iter_8ks(submissions):
         if _EARNINGS_ITEM in present:
             out.append({**hit, "gated": False})
             break
-        if present & _FURNISH_ITEMS:
+        if present & _FURNISH_ITEMS and n_gated < limit:
             out.append({**hit, "gated": True})
-        if len(out) >= limit:
-            break
+            n_gated += 1
     return out
 
 

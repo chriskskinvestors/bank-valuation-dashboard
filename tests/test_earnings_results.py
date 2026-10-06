@@ -662,8 +662,11 @@ class TestReleaseActualsFill(unittest.TestCase):
         self.assertAlmostEqual(row["eps_surprise"], 0.0)
         self.assertEqual(row["rev_act"], 174_752_000.0)
         self.assertEqual(row["rev_act_src"], "release")
-        # (174.752 - 178) / 178 = -1.82%
-        self.assertAlmostEqual(row["rev_surprise"], -1.8247, places=3)
+        # A release-filled revenue is shown but never scored (2026-10-06
+        # follow-up, the EPS rule's analog): the release's GAAP total is
+        # unproven as the consensus basis — n/a, not -1.82%.
+        self.assertEqual(row["rev_basis"], "unconfirmed")
+        self.assertIsNone(row["rev_surprise"])
 
     def test_gaap_fallback_when_no_adjusted(self):
         row = {"ticker": "T", "date": "2026-07-13", "eps_act": None,

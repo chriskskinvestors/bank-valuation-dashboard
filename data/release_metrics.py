@@ -833,18 +833,34 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
     return None
 
 
-def extract_table_metrics(html: str, expected_qend: str) -> dict:
+def extract_table_metrics(html: str, expected_qend: str,
+                          specs: dict | None = None,
+                          adj_specs: dict | None = None,
+                          quarter_only: bool = False) -> dict:
     """Metric values read from the release's structured tables at the column
     whose PERIOD HEADER equals `expected_qend` (ISO quarter-end). All the
     ambiguity refusals documented above apply; candidates across tables must
-    agree (as prose) or the metric is None."""
-    cands: dict = {k: [] for k in {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}}
+    agree (as prose) or the metric is None. `specs` / `adj_specs` replace
+    _TABLE_SPECS / _ADJ_TABLE_SPECS (the revenue-basis read uses its own).
+    `quarter_only` also skips a table whose header rows mark a year-to-date
+    block and no quarter (_YTD_HDR without _QTR_HDR): a lone "Six Months
+    Ended" table has UNIQUE period columns, so the twin-column refusal can't
+    see it (ZION 2Q26: its H1 adjusted revenue $1,737M beside the quarter's
+    $878M poisoned the key to None)."""
+    specs = _TABLE_SPECS if specs is None else specs
+    adj_specs = _ADJ_TABLE_SPECS if adj_specs is None else adj_specs
+    all_specs = {**specs, **adj_specs}
+    cands: dict = {k: [] for k in all_specs}
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
         hdr = _period_header(rows)
         if not hdr:
             continue                      # no period row → skip table
         qends, hdr_i, span_i, n_change = hdr
+        if quarter_only:
+            head_text = " ".join(c for r in rows[:hdr_i + 1] for c in r if c)
+            if _YTD_HDR.search(head_text) and not _QTR_HDR.search(head_text):
+                continue                  # year-to-date-only table
         if qends.count(expected_qend) == 1:
             col = qends.index(expected_qend)
         elif qends.count(expected_qend) > 1 and span_i is not None \
@@ -932,12 +948,12 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
                 continue                  # colspan drift → alignment unproven
             if _CONNECTOR_EXCLUDE.search(label):
                 # adjusted/core variant row — only the opt-in specs may read it
-                _try(_ADJ_TABLE_SPECS, label, row_text, vals)
+                _try(adj_specs, label, row_text, vals)
                 continue
-            _try(_TABLE_SPECS, label, row_text, vals)
+            _try(specs, label, row_text, vals)
     out = {}
     for key, vs in cands.items():
-        kind = {**_TABLE_SPECS, **_ADJ_TABLE_SPECS}[key][1]
+        kind = all_specs[key][1]
         if kind in ("$K", "#"):
             # Relative agreement for magnitudes/counts. For "#" this is
             # deliberately scale-BLIND: two tables printing the share count
@@ -960,6 +976,74 @@ def extract_table_metrics(html: str, expected_qend: str) -> dict:
         else:
             out[key] = None
     return out
+
+
+# ── Revenue basis (2026-10-06 review follow-up) ─────────────────────────────
+# The consensus feed's revenueActual has EPS's GAAP-vs-adjusted problem: ZION
+# 2Q26 scored "+29.6%" on a GAAP-basis actual incl. $252M of Visa/SBIC gains
+# (the release's NII $677M + noninterest income $460M = $1,137M) against an
+# ex-items consensus, while the release's own "Adjusted taxable-equivalent
+# revenue (non-GAAP)" was $878M.
+# The Results board scores a revenue surprise only when the feed's figure is
+# PROVEN to be one of the release's stated figures (data/earnings_results.
+# revenue_basis). These are only match targets — never displayed.
+_REV_BAND = (1e5, 200e9)
+# REPORTED revenue lines, any of which the feed may carry: the GAAP total
+# (the exhibit's total_revenue spec), the FTE/TE total (HBAN "Total revenue -
+# FTE (1)", ONB "Total revenue (FTE)"), WTFC-style "Net revenue (3)", and the
+# definitional sum NII + noninterest income (ZION states no total line).
+_REV_TABLE_SPECS = {
+    "rev_total": _TABLE_SPECS["total_revenue"],
+    "rev_fte": (r"(?:total |net )?revenues?\s*(?:[-–—,]\s*|\(\s*)"
+                r"(?:fte|te|(?:fully )?tax(?:able)?[- ]equivalent)(?: basis)?"
+                r"\s*\)?\s*(?:\(\d\)|\d)?\s*$", "$K", _REV_BAND),
+    "rev_net": (r"net revenues?\s*(?:\(\d\)|\d)?\s*$", "$K", _REV_BAND),
+    "nii": (r"net interest income\s*(?:\(\d\)|\d)?\s*$", "$K", _REV_BAND),
+    "nonii": (r"(?:total )?non-?interest income\s*(?:\(\d\)|\d)?\s*$", "$K",
+              _REV_BAND),
+}
+# ADJUSTED / ex-items revenue rows (opt-in past the adjusted-label refusal):
+# ONB "Adjusted revenue" / "Total adjusted revenue", ZION "Adjusted
+# taxable-equivalent revenue (non-GAAP)". "Adjusted pre-provision net
+# revenue" and "adjusted noninterest income" never match.
+_REV_ADJ_TABLE_SPECS = {
+    "rev_adj": (r"(?:total )?(?:adjusted|core|operating)(?: total)?(?: net)?"
+                r"(?: (?:fte|te|(?:fully )?tax(?:able)?[- ]equivalent))? "
+                r"revenues?(?:\s*[-–—,]?\s*\(?(?:fte|te|non-?gaap)\)?)?"
+                r"\s*(?:\(\w\)|\d)?\s*$", "$K", _REV_BAND),
+}
+# ANY mention of an adjusted / ex-items revenue — or of an adjusted
+# noninterest income, which makes adjusted revenue the likely consensus basis
+# even with no total stated (HBAN's "Total adjusted noninterest income
+# (Non-GAAP)"). With such a mention and no extractable adjusted figure the
+# basis stays UNCONFIRMED; a reported-revenue match proves nothing then.
+_ADJ_REV_MARK = re.compile(
+    r"\b(?:adjusted|core|operating|underlying|non-?gaap)\s+(?:total\s+)?"
+    r"(?:net\s+)?(?:(?:fully\s+)?tax(?:able)?[- ]equivalent\s+|fte\s+)?"
+    r"(?:revenues?|non-?interest income|fee income)\b"
+    r"|\b(?:revenues?|non-?interest income)\s*,?\s*(?:\([^)]{0,20}\)\s*)?"
+    r"excluding\b"
+    r"|\bexcluding (?:the )?(?:impact of )?(?:notable|significant|"
+    r"non-?recurring|certain) items\b" + _SPAN + r"{0,40}?\brevenues?\b",
+    re.I)
+
+
+def revenue_basis_facts(html: str, qend: str | None) -> dict:
+    """{reported: [raw $...], adjusted: raw $ | None, adj_stated: bool} — the
+    release's own current-quarter revenue figures, table-read at the column
+    whose header proves `qend` (no qend → no figures)."""
+    t = (extract_table_metrics(html, qend, specs=_REV_TABLE_SPECS,
+                               adj_specs=_REV_ADJ_TABLE_SPECS,
+                               quarter_only=True)
+         if qend else {})
+    reported = [t[k] for k in ("rev_total", "rev_fte", "rev_net")
+                if t.get(k) is not None]
+    if t.get("nii") is not None and t.get("nonii") is not None:
+        reported.append(t["nii"] + t["nonii"])
+    adj = t.get("rev_adj")
+    return {"reported": reported, "adjusted": adj,
+            "adj_stated": adj is not None
+            or bool(_ADJ_REV_MARK.search(_flat_text(html)))}
 
 
 # Header-row words that mark a YEAR-TO-DATE or annual column block ("Six
@@ -1220,7 +1304,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v22:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v23:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1241,6 +1325,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v23 (2026-10-06): `rev_basis` — the release's own current-quarter
+    # reported / adjusted revenue figures + an adjusted-revenue-mentioned
+    # flag, so the Results board scores a revenue surprise only on a
+    # confirmed basis (ZION 2Q26 "+29.6%" was GAAP revenue incl. Visa gains
+    # vs an ex-items consensus). Also re-selects releases the old 4-row
+    # candidate cap skipped (HBAN 2Q26 behind four gated 8-Ks).
     # v22 (2026-10-06): adjusted / ex-items EPS (review P0-1) — prose forms
     # (JPM "excluding significant items … ($6.14 per share)", ZION "(or
     # $1.74 excluding notable items)", HBAN/ONB "adjusted EPS 1 was/of"),
@@ -1283,7 +1373,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v22:{int(cik)}"
+    key = f"release_metrics:v23:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -1354,6 +1444,9 @@ def release_metrics(cik) -> dict | None:
         # Any adjusted / ex-items EPS mention at all (value extracted or
         # not) — the board's surprise-basis check (data/earnings_results).
         "eps_adj_stated": adjusted_eps_stated(rel["html"]),
+        # The revenue surprise's basis check (data/earnings_results
+        # .revenue_basis) — match targets only, never displayed.
+        "rev_basis": revenue_basis_facts(rel["html"], qend),
         # Q/Q from the SAME document's comparative column — same reporting
         # basis as the current quarter, zero extra fetches. Table-only (the
         # prose narrates the current quarter).

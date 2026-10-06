@@ -305,7 +305,7 @@ class TestRevenueUpperBound(unittest.TestCase):
 
     def test_board_key_bumped(self):
         import data.earnings_results as er
-        self.assertEqual(er._board_key(30), "earnings_results_board_v13:30")
+        self.assertEqual(er._board_key(30), "earnings_results_board_v14:30")
 
 
 def _facts(concepts):

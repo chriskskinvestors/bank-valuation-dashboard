@@ -154,13 +154,17 @@ class TestRelExhibit(unittest.TestCase):
         fix = {"rel": {"qend": "2026-06-30", "metrics": {},
                        "prior_metrics": {}, "yoy_metrics": {}, "capital": {}},
                "eps_act": 3.46, "rev_act": 19.6e9, "eps_est": 2.89,
-               "eps_basis": "adjusted"}
+               "eps_basis": "adjusted", "rev_basis": "reported"}
         rows = {r["key"]: r for r in _rel_exhibit_rows(fix)}
         self.assertEqual(rows["eps_adj"]["cur"], 3.46)
-        unconf = {**fix, "eps_act": 7.59, "eps_basis": "unconfirmed"}
+        unconf = {**fix, "eps_act": 7.59, "eps_basis": "unconfirmed",
+                  "rev_basis": "unconfirmed"}
         rows_u = {r["key"]: r for r in _rel_exhibit_rows(unconf)}
         self.assertIsNone(rows_u["eps_adj"]["cur"])
         self.assertIsNone(rows_u["eps_diluted"]["cur"])
+        # FMP revenue lands on the (reported) Revenue row only when score_rev
+        # confirmed it a reported figure (2026-10-06 follow-up).
+        self.assertIsNone(rows_u["total_revenue"]["cur"])
         self.assertEqual(rows["total_revenue"]["cur"], 19.6e9)
         self.assertIsNone(rows["eps_diluted"]["cur"])   # never the GAAP row
         # Release-sourced board actuals (starred) must NOT double-land: the

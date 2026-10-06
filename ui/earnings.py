@@ -113,6 +113,19 @@ _EPS_CONFLICT_TIP = (
     "release filed under a merged registrant's CIK).")
 
 
+# Why a reported row's revenue surprise is n/a (data/earnings_results
+# .score_rev) — the feed's revenueActual is GAAP in a notable-items quarter
+# (ZION 2Q26 "+29.6%": GAAP revenue incl. Visa gains vs ex-items consensus).
+_REV_BASIS_FLAG = "basis unconfirmed"
+_REV_BASIS_TIP = (
+    "Revenue surprise n/a — " + _REV_BASIS_FLAG + " (GAAP vs adjusted): "
+    "the actual could not be confirmed as the same basis as the consensus "
+    "estimate. A surprise is shown only when the actual matches the bank's "
+    "release-stated adjusted revenue within 0.5%, or the release states no "
+    "adjusted revenue and the actual matches its reported revenue within "
+    "0.5%.")
+
+
 def _eps_unscored(row) -> str | None:
     """'conflict' / 'basis' when a reported row's EPS surprise is withheld
     for a stated reason (flag it); None when it is scored or simply absent."""
@@ -284,8 +297,16 @@ def _render_reported_panel(ticker: str):
                              + rev_mark),
          "Actual vs consensus estimate. * = actual taken from the bank's own "
          "release while the consensus feed catches up.", None),
-        ("Rev Surprise", _delta_html(row.get("rev_surprise")),
-         "Actual vs estimate, % of estimate.", None),
+        ("Rev Surprise",
+         ('<span style="color:var(--text-muted)">n/a — '
+          + _REV_BASIS_FLAG + "</span>"
+          if row.get("rev_basis") == "unconfirmed"
+          else _delta_html(row.get("rev_surprise"))),
+         "Actual vs estimate, % of estimate — scored only when the actual "
+         "is confirmed on the estimate's basis: it matches the release's "
+         "adjusted revenue within 0.5%, or the release states no adjusted "
+         "revenue and it matches the reported revenue within 0.5%. "
+         "Otherwise n/a with the reason.", None),
         ("Px Reaction", _delta_html(row.get("px_react"),
                                     live=bool(row.get("px_react_live"))),
          "Release session close-over-prior-close move.", None),
@@ -294,6 +315,12 @@ def _render_reported_panel(ticker: str):
     ], cols=7, html_values=True)
 
     rel_all = row.get("rel") or {}
+    withheld = _rel_withheld_html(row)
+    if withheld:
+        st.markdown('<div class="ec-sec">From the Release</div>',
+                    unsafe_allow_html=True)
+        st.markdown(withheld, unsafe_allow_html=True)
+        return
     vals = {**(rel_all.get("metrics") or {}), **(rel_all.get("capital") or {})}
     if any(v is not None for v in vals.values()):
         st.markdown('<div class="ec-sec">From the Release</div>',
@@ -1949,8 +1976,11 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     if cur.get("eps_adj") is None and r.get("eps_act") is not None \
             and not r.get("eps_act_src") and r.get("eps_basis") == "adjusted":
         cur["eps_adj"] = r["eps_act"]
+    # Likewise FMP's revenueActual lands on the (reported) Revenue row only
+    # when confirmed as a reported figure (score_rev) — ONB's feed figure is
+    # its ADJUSTED revenue.
     if cur.get("total_revenue") is None and r.get("rev_act") is not None \
-            and not r.get("rev_act_src"):
+            and not r.get("rev_act_src") and r.get("rev_basis") == "reported":
         cur["total_revenue"] = r["rev_act"]
     def _split_ok(v, c, unit):
         """Platform per-share history is incomparable with the release's
@@ -2044,11 +2074,31 @@ def _rel_exhibit_table(r: dict) -> str:
             f"</tr></thead><tbody>{body}</tbody></table>{link}{note_html}")
 
 
+def _rel_withheld_html(r: dict) -> str:
+    """The flag that replaces the exhibit when the attached filing's figures
+    conflict with the feed (data/earnings_results: rel['withheld'] — PNFP's
+    Q4-25 8-K under the merged CIK is legacy Synovus): the reason plus a
+    link to the filing, never its numbers. Keyed on eps_conflict too, so a
+    row built before the data-layer strip still never shows them. '' when
+    nothing is withheld."""
+    rel = r.get("rel") or {}
+    if not rel or not (rel.get("withheld") or r.get("eps_conflict")):
+        return ""
+    src = rel.get("url")
+    link = (f' <a class="lnk" href="{_html.escape(src, quote=True)}" '
+            f'target="_blank" rel="noopener">filing ↗</a>' if src else "")
+    return ('<span style="color:var(--text-muted)" title="'
+            + _html.escape(_EPS_CONFLICT_TIP, quote=True) + '">'
+            "⚠ feed vs release conflict — release figures withheld: the "
+            "filing's figures conflict with the feed</span>" + link)
+
+
 def _rel_detail_tr(r: dict, ncols: int) -> str:
     """The hidden expansion <tr> under a bank's row: the exhibit-style
     release table (year-ago / prior / current actuals + consensus + deltas),
-    every value from the bank's own release columns."""
-    exhibit = _rel_exhibit_table(r)
+    every value from the bank's own release columns — or, when the filing
+    conflicts with the feed, only the withheld flag and the filing link."""
+    exhibit = _rel_withheld_html(r) or _rel_exhibit_table(r)
     return (f'<tr class="det"><td class="dt" colspan="{ncols}">'
             + (exhibit or '<span class="mut">—</span>') + "</td></tr>")
 
@@ -2110,7 +2160,9 @@ def _results_tr(r: dict, ncols: int) -> str:
               + ("*" if r.get("rev_act") is not None and r.get("rev_act_src")
                  else "")),
         _cell(_fmt_rev_est(r.get("rev_est"))),
-        _signed_pct_cell(r.get("rev_surprise")),
+        (f'<td class="mut" title="{_html.escape(_REV_BASIS_TIP, quote=True)}">'
+         "n/a (basis?)</td>" if r.get("rev_basis") == "unconfirmed"
+         else _signed_pct_cell(r.get("rev_surprise"))),
         _signed_pct_cell(r.get("px_react"), live=bool(r.get("px_react_live"))),
         release,
     ]) + "</tr>"
@@ -2171,7 +2223,11 @@ def _render_results_board():
         "basis** — the actual equals the release's adjusted EPS to the cent, "
         "or the release states no adjusted EPS and the actual equals its GAAP "
         "figure; otherwise **n/a (basis?)** (GAAP vs adjusted unconfirmed) or "
-        "**n/a (conflict)** (feed and release disagree). **Px React** = the release "
+        "**n/a (conflict)** (feed and release disagree). **Rev Δ** follows "
+        "the same rule — the actual matches the release's adjusted revenue "
+        "within 0.5%, or the release states no adjusted revenue and it "
+        "matches the reported revenue within 0.5%; otherwise **n/a "
+        "(basis?)**. **Px React** = the release "
         "session's close-over-prior-close move (after-close reports react the "
         "NEXT session; *live* marks today's in-progress session), and the "
         "results press **Release** from the news feed. Every bank SCHEDULED "
@@ -2269,6 +2325,9 @@ def _render_results_board():
                 "FMP" if r.get("rev_act") is not None else None),
             "Rev Est ($)": r.get("rev_est"),
             "Rev Surprise (%)": r.get("rev_surprise"),
+            "Rev Basis": (_REV_BASIS_FLAG + " (GAAP vs adjusted)"
+                          if r.get("rev_basis") == "unconfirmed"
+                          else r.get("rev_basis")),
             "Px React (%)": r.get("px_react"),
             "Px React Live": bool(r.get("px_react_live")),
             "Reaction Session": r.get("reaction_session"),
