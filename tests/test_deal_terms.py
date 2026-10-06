@@ -829,5 +829,53 @@ class TestPendingLegendGuards(unittest.TestCase):
         self.assertEqual(rows[0]["target_cik"], 2000)
 
 
+class TestPendingLegendGuardsPass2(unittest.TestCase):
+
+    def test_acquire_object_naming_self_flips_to_sale(self):
+        # Tri-County's 425 legends HBT as Subject Company; the PR headline
+        # says HBT is acquiring Tri-County and the deal is cash (no ratio).
+        from tests.test_ma_pending import _Harness, _filings
+        universe = {"HBT": {"name": "HBT Financial", "fdic_cert": 111, "cik": 1000},
+                    "TYFG": {"name": "Tri-County Financial Group", "fdic_cert": 222,
+                             "cik": 2000}}
+        legend = ("Filed by: Tri-County Financial Group Pursuant to Rule 425 "
+                  "Subject Company: HBT Financial, Inc. Commission File No.: "
+                  "001-38870 HBT Financial, Inc. Announces Agreement to Acquire "
+                  "Tri-County Financial Group, Inc. in a definitive agreement. "
+                  "Tri-County shareholders will receive $71.01 in cash for each "
+                  "share of Tri-County common stock.")
+        rows, ok = _Harness()._run(_filings([
+            ("425", "2026-08-10", "0001-26-1", "d4_425.htm", ""),
+        ]), texts=(legend, True), universe=universe, cik=2000,
+            subject="First State Bank", today="2026-08-12")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["direction"], "sale")
+        self.assertEqual(rows[0]["counterparty_name"], "HBT Financial, Inc")
+
+    def test_cash_leg_dateline_counterparty_dropped(self):
+        from unittest.mock import MagicMock
+        from data import ma_announcements as ma
+        pr = ("Cincinnati, Ohio - July 21, 2026. First Financial Bancorp "
+              "(NASDAQ: FFBC) today announced a definitive agreement to acquire "
+              "Cincinnati, Ohio - July 21, 2026. First Financial Bancorp, the "
+              "parent of its bank, in an all-stock transaction.")
+        hits = [{"_id": "0001-26-9:ffbc.htm",
+                 "_source": {"adsh": "0001-26-9", "file_date": "2026-07-21",
+                             "ciks": ["0000708955"], "file_type": "8-K",
+                             "items": ["1.01", "8.01"],
+                             "display_names": ["FIRST FINANCIAL BANCORP /OH/ "
+                                               "(FFBC) (CIK 0000708955)"]}}]
+        resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
+        resp.raise_for_status = MagicMock()
+        with patch("data.ma_announcements.requests.get", return_value=resp), \
+             patch("data.ma_announcements._accession_text",
+                   return_value=(pr, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            rows, ok = ma.find_open_announcements(708955, "First Financial Bank")
+        self.assertTrue(ok)
+        self.assertEqual(rows, [])
+
+
 if __name__ == "__main__":
     unittest.main()

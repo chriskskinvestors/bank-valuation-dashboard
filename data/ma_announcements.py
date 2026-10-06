@@ -1251,6 +1251,12 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 counterparty = next(iter(best.values()))
         if not counterparty or _is_self(counterparty):
             continue
+        # A capture that is not a company name — a dateline run-on
+        # ("Cincinnati, Ohio - July 21, 2026. First Financial Bancorp", live
+        # on the first universe board as a self-deal) — is unreadable: no
+        # row, never a guess.
+        if re.search(r"\d", counterparty) or len(counterparty.split()) > 8:
+            continue
         ct = brand_token(counterparty)
         if not ct or ct in seen_toks:
             continue

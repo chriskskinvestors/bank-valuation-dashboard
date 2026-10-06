@@ -199,6 +199,23 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
         direction, counterparty = "sale", other
     else:
         direction, counterparty = "acquisition", subject_co
+        # A target filing its own 425s may legend the REGISTRANT (acquirer)
+        # as the Subject Company. The PR's acquire-verb object settles it:
+        # when that object resolves to self, we are the one being acquired
+        # (live: Tri-County's 425s legended HBT, so the board showed TYFG
+        # "acquiring" HBT at 0.28x — a cash deal, so the ratio-side check
+        # below had nothing to arbitrate).
+        from data.ma_announcements import _ACQUIRE_OBJ_RE, _clean_company_name
+        # Headlines are title-cased ("Agreement to Acquire ..."): match
+        # case-insensitively (the cash leg's regex is case-sensitive by design).
+        for m in re.compile(_ACQUIRE_OBJ_RE.pattern, re.IGNORECASE).finditer(corpus):
+            obj = _clean_company_name(m.group(1))
+            o_cik = _universe_match(obj)[2]
+            o_tok = brand_token(obj)
+            if (o_cik and int(o_cik) == int(cik)) or (
+                    o_tok and self_tok and o_tok == self_tok):
+                direction = "sale"
+                break
 
     cp_tick, cp_cert, cp_cik = _universe_match(counterparty)
 
