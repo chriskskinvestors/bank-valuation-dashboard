@@ -159,7 +159,7 @@ class TestCacheVersionsStayCoupled(unittest.TestCase):
         rm = (REPO / "data/release_metrics.py").read_text(encoding="utf-8")
         otc = (REPO / "data/otc_release.py").read_text(encoding="utf-8")
         self.assertIn('key = f"release_metrics:v21:', rm)
-        self.assertIn('key = f"otc_release:v13:', otc)
+        self.assertIn('key = f"otc_release:v14:', otc)
 
 
 if __name__ == "__main__":
