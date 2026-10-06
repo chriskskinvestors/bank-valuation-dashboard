@@ -18,8 +18,10 @@ real row structures (colspans, '$' decoration cells, formula-reference cells):
     value per common share (non-GAAP) | aa/dd | 1,722.35" under
     "June 30,2026"; 1,722.35 × 11,390,407 = $19,618.2M = its TCE row 19,618.
 
-A supplementary exhibit's column order is NOT assumed: a row is read only when
-the header over its latest-quarter column names the release quarter-end.
+A supplementary exhibit's column order is NOT assumed: a row is read from the
+leftmost column whose header names the release quarter-end, wherever that
+column sits (STT's addendum runs 1Q25 → 2Q26, 2026-10-06), and dropped when
+no column does.
 
 Run: python -m unittest tests.test_sec_earnings_8k_supplements
 """
@@ -211,16 +213,26 @@ class TestSupplementRows(unittest.TestCase):
             html, period_end=Q2_26), (1767.79, "ok"))
 
     def test_other_quarter_end_reads_nothing(self):
+        # No column headed by the release quarter → no row at all.
         for html in (_doc(_rbcaa_selected_data()), _doc(_fcnca_supplement())):
-            self.assertEqual(_supplement_rows(html, (2026, 3)), [])
+            self.assertEqual(_supplement_rows(html, (2024, 9)), [])
             self.assertEqual(extract_reported_tbvps_status(
-                html, reconstructed=56.85, period_end=(2026, 3)),
+                html, reconstructed=56.85, period_end=(2024, 9)),
                 (None, "not_disclosed"))
 
-    def test_oldest_first_deck_is_not_read(self):
+    def test_rows_follow_the_release_quarter_column(self):
+        # The same tables read for a Q1 release give the Mar. 31 column —
+        # the column, never a position, decides.
+        html = _doc(_rbcaa_selected_data())
+        self.assertEqual(_supplement_rows(html, (2026, 3)), [
+            ("book value per share (3)", [57.78]),
+            ("tangible book value per share (3)", [55.30])])
+
+    def test_oldest_first_deck_reads_the_release_quarter_column(self):
         # The hazard the guard exists for: nums[0] here is 2Q25's 51.78, and
         # |51.78 − 56.85| / 56.85 = 8.9% clears the ±15% band — the release
-        # reader WOULD serve it as the current quarter.
+        # reader WOULD serve it as the current quarter. The supplement
+        # reader takes the 2Q26 column instead.
         table = (_tr("", ("2Q25", 2), ("3Q25", 2), ("4Q25", 2), ("1Q26", 2),
                      ("2Q26", 2))
                  + _plain_row("Tangible book value per share", "51.78",
@@ -229,8 +241,7 @@ class TestSupplementRows(unittest.TestCase):
         self.assertEqual(extract_reported_tbvps_status(html, reconstructed=56.85),
                          (51.78, "ok"))                 # EX-99.1 reader: wrong
         self.assertEqual(extract_reported_tbvps_status(
-            html, reconstructed=56.85, period_end=Q2_26),
-            (None, "not_disclosed"))
+            html, reconstructed=56.85, period_end=Q2_26), (56.44, "ok"))
 
     def test_prior_year_table_dropped_current_table_read(self):
         # RBCAA's segment tables sit under "June 30, 2025" headers; an earlier
@@ -275,23 +286,42 @@ class TestSupplementRows(unittest.TestCase):
         self.assertEqual(extract_reported_bvps_status(
             _doc(table), reconstructed=56.95, period_end=Q2_26), (56.95, "ok"))
 
-    def test_stt_oldest_first_reconciliation_rejected(self):
+    def test_stt_oldest_first_reconciliation_reads_2q26(self):
         # STT 2Q26 EX-99.2 (exhibit992-2q26earningsrel.htm) runs 1Q25 → 2Q26:
         # the first column is 1Q25's 80.13 / 51.23, and STT has NO
         # reconstruction — the in-release book value alone anchors tangible
-        # < book, so the release reader would serve a year-old pair.
-        table = (_tr("", ("Quarters", 5))
-                 + _tr("", "1Q25", "2Q25", "3Q25", "4Q25", "1Q26", "2Q26")
+        # < book, so the release reader would serve a year-old pair. The
+        # supplement reader takes the 2Q26 column (real figures: 89.95 /
+        # 59.23; hand-check 16,271M TCE ÷ 274,703K shares = 59.23).
+        table = (_tr("", ("Quarters", 6), ("Year-to-Date", 2))
+                 + _tr("", "1Q25", "2Q25", "3Q25", "4Q25", "1Q26", "2Q26",
+                       "2025", "2026")
                  + _tr("Book value per common share", "80.13", "83.16",
-                       "85.33", "86.01", "86.90", "88.02")
+                       "85.33", "87.01", "87.33", "89.95", "83.16", "89.95")
                  + _tr("Tangible book value per common share - non-GAAP",
-                       "51.23", "", "53.56", "54.10", "55.02", "56.20"))
+                       "51.23", "", "55.57", "56.13", "56.59", "59.23",
+                       "53.56", "59.23"))
+        self.assertAlmostEqual(16_271e6 / 274_702_550, 59.23, places=2)
         self.assertEqual(extract_reported_tbvps_status(_doc(table)),
                          (51.23, "ok"))                 # release reader: wrong
         self.assertEqual(extract_reported_tbvps_status(
-            _doc(table), period_end=Q2_26), (None, "not_disclosed"))
+            _doc(table), period_end=Q2_26), (59.23, "ok"))
         self.assertEqual(extract_reported_bvps_status(
-            _doc(table), period_end=Q2_26), (None, "not_disclosed"))
+            _doc(table), period_end=Q2_26), (89.95, "ok"))
+
+    def test_stt_change_columns_to_the_right_never_read(self):
+        # STT's Financial Highlights follow the quarters with "% Change"
+        # columns headed "2Q26 vs. 1Q26" / "2Q26 vs. 2Q25": two periods
+        # each, so neither qualifies — and the leftmost rule would take the
+        # value column first even if one did.
+        table = (_tr("", ("Quarters", 6), ("% Change", 2))
+                 + _tr("", "1Q25", "2Q25", "3Q25", "4Q25", "1Q26", "2Q26",
+                       "2Q26 vs. 1Q26", "2Q26 vs. 2Q25")
+                 + _tr("Tangible book value per common share(2)", "51.23",
+                       "53.56", "55.57", "56.13", "56.59", "59.23", "4.7",
+                       "10.6"))
+        self.assertEqual(_supplement_rows(_doc(table), Q2_26),
+                         [("tangible book value per common share(2)", [59.23])])
 
     def test_year_valued_data_row_is_not_a_header(self):
         from data.sec_earnings_8k import _is_year_header

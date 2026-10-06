@@ -62,7 +62,9 @@ class TestSubmissionsRecordCarriesPeriodicFiling(unittest.TestCase):
             f8k = se8k._latest_earnings_8k(707179)
             filed = se8k.latest_periodic_filing(707179)
             filed_again = se8k.latest_periodic_filing(707179)
-        self.assertEqual(len(calls), 1)                      # one fetch, both answers
+        # one submissions fetch, both answers (the 2.02 8-K's notice check
+        # reads its index once, cached by accession)
+        self.assertEqual(len([u for u in calls if "submissions" in u]), 1)
         self.assertEqual(f8k["accession_dash"], "b-2")
         self.assertEqual(filed, {"form": "10-Q", "date": "2026-07-29",
                                  "report_date": "2026-06-30"})
@@ -75,7 +77,8 @@ class TestSubmissionsRecordCarriesPeriodicFiling(unittest.TestCase):
             self.assertEqual(se8k.latest_periodic_filing(707179)["report_date"],
                              "2026-06-30")
             se8k.latest_periodic_filing(707179)
-        self.assertEqual(g.call_count, 1)
+        self.assertEqual(len([c for c in g.call_args_list
+                              if "submissions" in c.args[0]]), 1)
 
 
 class TestSecFactsLag(unittest.TestCase):

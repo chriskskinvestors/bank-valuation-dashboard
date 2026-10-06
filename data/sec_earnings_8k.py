@@ -55,12 +55,18 @@ _LATEST_8K_TTL_S = 2 * 3600
 
 def _latest_earnings_8k(cik) -> dict | None:
     """Most-recent earnings 8-K: {accession, accession_dash, date, cik} or None.
-    Item 2.02 (Results of Operations) is the earnings item, trusted outright. A
-    NEWER 8-K without 2.02 is taken only when its EX-99.1 proves itself the
-    release for a newer quarter (_is_misitemized_release) — FBP and NPB
-    furnished their Q2-2026 releases under Items 2.01/9.01 and 2.01/7.01, so
-    a 2.02-only finder landed on their Q1 8-Ks (found 2026-10-01). A furnished
-    deck or dividend notice never qualifies: the item code alone decides nothing.
+    Item 2.02 (Results of Operations) is the earnings item, trusted outright —
+    unless its EX-99.1 is demonstrably a NOTICE (_is_notice_8k: a scheduling
+    or dividend announcement that names a later date and is no earnings
+    headline), which is skipped for the next 2.02 8-K: WSBC furnished "to
+    Host 2026 Third Quarter Earnings Conference Call … October 22" and NEWT
+    its quarterly dividend declarations under Item 2.02, and each displaced
+    the real release (2026-10-06). A NEWER 8-K without 2.02 is taken only
+    when its EX-99.1 proves itself the release for a newer quarter
+    (_is_misitemized_release) — FBP and NPB furnished their Q2-2026 releases
+    under Items 2.01/9.01 and 2.01/7.01, so a 2.02-only finder landed on
+    their Q1 8-Ks (found 2026-10-01). A furnished deck or dividend notice
+    never qualifies: the item code alone decides nothing.
 
     The result (a no-8-K bank included) is cached ~2h: this runs per bank on
     every metrics build, and the uncached submissions fetch × ~440 SEC filers
@@ -68,6 +74,28 @@ def _latest_earnings_8k(cik) -> dict | None:
     timeout incident). A new release is picked up within the TTL; a transient
     fetch EXCEPTION propagates uncached, as before."""
     return _submissions_record(cik).get("f8k")
+
+
+def _earnings_8ks_same_quarter(cik) -> list[dict]:
+    """The earnings 8-K and every OLDER Item-2.02 8-K that reports the same
+    quarter (same _release_quarter_end), newest first — the release's
+    quarter window. BCBP furnished its Q2-2026 earnings-call TRANSCRIPT
+    under Item 2.02 four days after the release itself: the newest 2.02 8-K
+    discloses no book value, the one before it does, and both report the
+    same quarter, so the older figure is the latest the bank has stated
+    (2026-10-06). The per-share readers walk this list; an older quarter's
+    8-K is never in it (a stale figure would read as current). The window
+    is read from the record _latest_earnings_8k just cached — never a
+    second fetch; without it (a stubbed finder) the head alone."""
+    head = _latest_earnings_8k(cik)
+    if not head:
+        return []
+    from data import cache
+    rec = cache.get(_submissions_ckey(cik), max_age_s=_LATEST_8K_TTL_S) or {}
+    f8ks = rec.get("f8ks") or []
+    if f8ks and f8ks[0].get("accession") == head.get("accession"):
+        return f8ks
+    return [head]
 
 
 def latest_periodic_filing(cik) -> dict | None:
@@ -80,12 +108,17 @@ def latest_periodic_filing(cik) -> dict | None:
     return _submissions_record(cik).get("periodic")
 
 
+def _submissions_ckey(cik) -> str:
+    # v2: f8k may be a mis-itemized release newer than the latest 2.02 (FBP/NPB).
+    # v3: notice 8-Ks skipped (WSBC/NEWT) + the same-quarter window "f8ks".
+    return f"earnings_8k_latest:v3:{int(cik)}"
+
+
 def _submissions_record(cik) -> dict:
-    """{f8k, periodic} for a CIK, cached ~2h (see _latest_earnings_8k)."""
+    """{f8k, f8ks, periodic} for a CIK, cached ~2h (see _latest_earnings_8k)."""
     from data import cache
     from data.ir_provider import _FURNISH_ITEMS
-    # v2: f8k may be a mis-itemized release newer than the latest 2.02 (FBP/NPB).
-    ckey = f"earnings_8k_latest:v2:{int(cik)}"
+    ckey = _submissions_ckey(cik)
     hit = cache.get(ckey, max_age_s=_LATEST_8K_TTL_S)
     if hit is not None and "periodic" in hit:
         return hit
@@ -105,7 +138,9 @@ def _submissions_record(cik) -> dict:
                         "report_date": rdates[i] if i < len(rdates) else ""}
             break
     f8k = None
+    window: list[dict] = []        # f8k + older 2.02 8-Ks of the same quarter
     furnished = []                 # non-2.02 8-Ks newer than f8k, newest first
+    notices = 0
     for i, form in enumerate(forms):
         if form != "8-K":
             continue
@@ -116,8 +151,29 @@ def _submissions_record(cik) -> dict:
         row = {"accession_dash": acc_dash, "accession": acc_dash.replace("-", ""),
                "date": dates[i] if i < len(dates) else "", "cik": int(cik)}
         if "2.02" in item_str:
-            f8k = row
+            if f8k is None:
+                if notices < _NOTICE_MAX_CHECKS:
+                    try:
+                        skip = _is_notice_8k(row)
+                    except Exception as e:
+                        # Unverifiable: the next 8-K might be the release, so
+                        # this one must not stand in for it. Nothing cached.
+                        print(f"[sec_earnings_8k] notice check failed for cik "
+                              f"{cik} {acc_dash}: {type(e).__name__}: {e}")
+                        return {"f8k": None, "periodic": periodic}
+                    if skip:
+                        notices += 1
+                        continue
+                f8k = row
+                window = [row]
+                continue
+            if (len(window) < _WINDOW_MAX and _release_quarter_end(row["date"])
+                    == _release_quarter_end(f8k["date"])):
+                window.append(row)
+                continue
             break
+        if f8k is not None:
+            continue
         present = {s.strip() for s in item_str.replace(";", ",").split(",")}
         if present & _FURNISH_ITEMS:
             furnished.append(row)
@@ -132,6 +188,7 @@ def _submissions_record(cik) -> dict:
         try:
             if _is_misitemized_release(row):
                 f8k = row
+                window = [row]
                 break
         except Exception as e:
             # Unverifiable: a newer release may exist, so the older 2.02 8-K
@@ -139,7 +196,7 @@ def _submissions_record(cik) -> dict:
             print(f"[sec_earnings_8k] release check failed for cik {cik} "
                   f"{row['accession_dash']}: {type(e).__name__}: {e}")
             return {"f8k": None, "periodic": periodic}
-    record = {"f8k": f8k, "periodic": periodic}
+    record = {"f8k": f8k, "f8ks": window, "periodic": periodic}
     try:
         cache.put(ckey, record)
     except Exception:
@@ -149,6 +206,42 @@ def _submissions_record(cik) -> dict:
 
 # Non-2.02 8-Ks checked per scan — bounds a bank with no 2.02 8-K at all.
 _MISITEMIZED_MAX_CHECKS = 4
+# Item-2.02 8-Ks tested as notices before the newest is taken regardless.
+_NOTICE_MAX_CHECKS = 4
+# 2.02 8-Ks kept in a release's same-quarter window (newest first).
+_WINDOW_MAX = 4
+
+
+def _is_notice_8k(f8k: dict) -> bool:
+    """True when an Item-2.02 8-K's EX-99.1 is a NOTICE rather than a release:
+    its opening text names a full date AFTER the filing date (the call it
+    will host, the dividend it will pay) AND fails the earnings-headline gate.
+    Both are required — a real release often names its own call date, and
+    the headline gate alone fails some genuine releases (STT, NEWT 2Q26),
+    so neither signal may skip a release on its own. Universe scan
+    2026-10-06 over 359 SEC filers' newest 2.02 8-Ks: only scheduling and
+    dividend notices met both. An 8-K with no EX-99.1 is not a notice (it
+    is whatever the item says). Cached forever by accession; a fetch
+    EXCEPTION propagates uncached."""
+    from data import cache
+    from data.ir_provider import _headline_text, _is_earnings_headline
+    ckey = f"earnings_8k_notice:v1:{f8k['accession']}"
+    hit = cache.get(ckey, max_age_s=None)
+    if hit is not None:
+        return bool(hit.get("notice"))
+    notice = False
+    doc = _ex991_document(f8k["cik"], f8k["accession_dash"])
+    if doc:
+        html = _get(f"https://www.sec.gov/Archives/edgar/data/{int(f8k['cik'])}/"
+                    f"{f8k['accession']}/{doc}")
+        text = _headline_text(html.decode("utf-8", "replace"))
+        notice = (_names_later_date(text, f8k["date"])
+                  and not _is_earnings_headline(text))
+    try:
+        cache.put(ckey, {"notice": notice})
+    except Exception:
+        pass
+    return notice
 
 
 def _is_misitemized_release(f8k: dict) -> bool:
@@ -489,12 +582,17 @@ def _is_year_header(row: list) -> bool:
 
 
 def _supplement_rows(html_bytes: bytes, period_end: tuple) -> list[tuple]:
-    """(clean_label, nums) table rows of a SUPPLEMENTARY exhibit whose
-    latest-quarter column (nums[0]'s column) is headed by `period_end` — every
-    named period over it equal to the release quarter-end. Other rows are
-    DROPPED (not kept as n/a): they are not known to be the current quarter,
-    so they may not decide; a verified row carries the same exact label. No
-    text-layer rows — flat page text has no columns to verify."""
+    """(clean_label, [value]) table rows of a SUPPLEMENTARY exhibit, each
+    read from the LEFTMOST value column headed by `period_end` — every named
+    period over that column equal to the release quarter-end. Column order
+    is not assumed: STT's addendum runs 1Q25 → 2Q26 with the current quarter
+    SIXTH (2026-10-06; before this the first column had to be the one, and
+    a row whose first column was a year old was dropped). A row with no such
+    column is DROPPED (not kept as n/a): it is not known to carry the
+    current quarter, so it may not decide. Leftmost, so a change column
+    naming one period to the right of the periods themselves can never be
+    read ahead of the value. No text-layer rows — flat page text has no
+    columns to verify."""
     from lxml import html as lhtml
     rows: list[tuple] = []
     for table in lhtml.fromstring(html_bytes).findall(".//table"):
@@ -502,9 +600,11 @@ def _supplement_rows(html_bytes: bytes, period_end: tuple) -> list[tuple]:
         drows = _grid_rows(grid)
         data_rows = {r for r, *_ in drows if not _is_year_header(grid[r])}
         for r, cl, nums, cols in drows:
-            periods = _column_periods(grid, spans, data_rows, r, cols[0])
-            if periods and all(p == period_end for p in periods):
-                rows.append((cl, nums))
+            for v, c in zip(nums, cols):
+                periods = _column_periods(grid, spans, data_rows, r, c)
+                if periods and all(p == period_end for p in periods):
+                    rows.append((cl, [v]))
+                    break
     return rows
 
 
@@ -900,13 +1000,39 @@ def _tbvps_candidate(html_bytes: bytes, rows: list[tuple],
     prose=False — a supplementary exhibit's prose has no verifiable period).
     The first matching row of a tier decides (its blank latest-quarter cell
     → None, audit P3). explicit=False marks the two weaker tiers."""
-    for cl, nums in rows:
-        if _match_tbvps_label(cl):
-            return nums[0], True
+    explicit = [(cl, nums) for cl, nums in rows if _match_tbvps_label(cl)]
+    if explicit:
+        # A release can print BOTH "tangible book value per share" (every
+        # shareholder, preferred included) and "… per common share": NEWT
+        # 2Q26 reconciles $13.80 total ahead of $12.13 common (2026-10-06),
+        # and the total sits inside the ±15% band. Ours is per COMMON share:
+        # a label that says so outranks one that doesn't.
+        common = [r for r in explicit if "common" in r[0]]
+        return (common or explicit)[0][1][0], True
     for cl, nums in rows:
         if _strip_trailing_qualifiers(cl) in _TBVPS_BARE_LABELS:
-            return nums[0], False
+            tied = _self_tied_per_share(nums)
+            return (tied if tied is not None else nums[0]), False
     return (_tbvps_prose_value(html_bytes) if prose else None), False
+
+
+def _self_tied_per_share(nums: list) -> float | None:
+    """The per-share cell of a row laid out as [equity, shares, per share]
+    — BYFC's reconciliation prints "Tangible book value | $110,996 |
+    9,273,624 | $11.97" (2026-10-06): its first cell is a $K total, not the
+    figure. Returned only when the row's own first two cells reproduce the
+    third within 1% at a plausible scale (×1 / ×1e3 / ×1e6, as
+    _internal_tie_out), and that cell is per-share sized; else None."""
+    vals = [n for n in nums if n is not None]
+    if len(vals) < 3:
+        return None
+    total, shares, ps = vals[0], vals[1], vals[2]
+    if not (total > 0 and shares > 0 and 0 < ps < 10_000):
+        return None
+    ratio = total / shares
+    if any(abs(ratio * s - ps) / ps < 0.01 for s in (1.0, 1e3, 1e6)):
+        return ps
+    return None
 
 
 def _match_bvps_label(cl: str) -> bool:
@@ -940,6 +1066,10 @@ def _internal_tie_out(rows: list[tuple], v: float) -> bool:
     te = sh = None
     for cl, nums in rows:
         core = _strip_trailing_qualifiers(cl)
+        # A bare-label row that reproduces `v` from its own cells IS the
+        # reconciliation (BYFC: equity ÷ shares = per share on one line).
+        if core in _TBVPS_BARE_LABELS and _self_tied_per_share(nums) == v:
+            return True
         # First row with a non-blank latest-quarter cell wins (a summary-table
         # variant of the same row can have a blank first column — audit P3).
         if te is None and core in _TANGIBLE_CE_LABELS \
@@ -1771,15 +1901,8 @@ def reported_bvps_status(
 ) -> tuple[float | None, str]:
     """Cached wrapper for extract_reported_bvps_status — the BVPS sibling of
     reported_tbvps_status (same status vocabulary, same accession+anchor
-    cache discipline, same never-cache-exceptions rule)."""
-    if not cik:
-        return None, "not_disclosed"
-    from data import cache
-
-    f8k = _latest_earnings_8k(cik)
-    if not f8k:
-        return None, "not_disclosed"
-
+    cache discipline, same never-cache-exceptions rule, same same-quarter
+    window walk)."""
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     tk = f"{tbvps:.4f}" if tbvps is not None else "na"
     # v2: "… per common share at end of period" label (OCFC miss).
@@ -1791,25 +1914,11 @@ def reported_bvps_status(
     # v6: supplementary exhibits EX-99.2+ (RBCAA/FCNCA) + formula-ref suffixes.
     # v7: the finder also selects mis-itemized releases (FBP/NPB Q2-2026).
     # v8: header-year phantom column dropped in _table_rows (BHB).
-    ckey = f"reported_bvps:v8:{f8k['accession']}:{rk}:{tk}"
-    # Accession+anchor-keyed = immutable; no 24h read ceiling.
-    cached = cache.get(ckey, max_age_s=None)
-    if cached is not None:
-        return cached.get("value"), cached.get("status") or "not_disclosed"
-
-    try:
-        value, status = _exhibit_status(
-            f8k, lambda html, pe: extract_reported_bvps_status(
-                html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
-        try:
-            cache.put(ckey, {"value": value, "status": status})
-        except Exception:
-            pass
-        return value, status
-    except Exception as e:
-        print(f"[sec_earnings_8k] reported_bvps failed for cik {cik}: "
-              f"{type(e).__name__}: {e}")
-        return None, "not_disclosed"
+    # v9: supplement rows read from the release-quarter column (STT).
+    return _window_status(
+        cik, "reported_bvps:v9", f"{rk}:{tk}",
+        lambda html, pe: extract_reported_bvps_status(
+            html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
 
 
 # ── The company's per-share DENOMINATOR (owner decision 2026-10-06) ──────────
@@ -1913,7 +2022,9 @@ def reported_share_basis(cik, common_equity: float | None) -> float | None:
 #      newer quarter's release despite a non-2.02 item (FBP 2.01, NPB 2.01/7.01).
 # v13: a header year spanning a value column no longer adds a phantom first
 #      column to _table_rows (BHB: every row read [None, 23.43, …]).
-_REPORTED_TBVPS_CKEY_V = "v13"
+# v14: supplement rows read from the column headed by the release quarter
+#      (STT oldest-first addendum) + self-tying bare rows (BYFC).
+_REPORTED_TBVPS_CKEY_V = "v14"
 
 
 def reported_tbvps_status(
@@ -1940,36 +2051,49 @@ def reported_tbvps_status(
     Cached by 8-K accession + the anchors it was gated against (a different
     reconstruction/bvps must re-gate). A None result is cached so a
     non-disclosing release isn't re-fetched; a transient fetch/parse EXCEPTION is
-    never cached (returns None without poisoning the cache)."""
-    if not cik:
-        return None, "not_disclosed"
-    from data import cache
+    never cached (returns None without poisoning the cache).
 
-    f8k = _latest_earnings_8k(cik)
-    if not f8k:
-        return None, "not_disclosed"
-
+    Walks the release's same-quarter window (_earnings_8ks_same_quarter):
+    the first 8-K whose exhibits answer decides."""
     # Fold the anchors into the key: the same release gated against a different
     # reconstruction/bvps is a different question and must not reuse a stale None.
     rk = f"{reconstructed:.4f}" if reconstructed is not None else "na"
     bk = f"{bvps:.4f}" if bvps is not None else "na"
-    ckey = f"reported_tbvps:{_REPORTED_TBVPS_CKEY_V}:{f8k['accession']}:{rk}:{bk}"
-    # Accession+anchor-keyed = immutable; no 24h read ceiling (see above).
-    cached = cache.get(ckey, max_age_s=None)
-    if cached is not None:
-        # {"value": float|None, "status": str}; None values are cached too.
-        return cached.get("value"), cached.get("status") or "not_disclosed"
+    return _window_status(
+        cik, f"reported_tbvps:{_REPORTED_TBVPS_CKEY_V}", f"{rk}:{bk}",
+        lambda html, pe: extract_reported_tbvps_status(
+            html, reconstructed=reconstructed, bvps=bvps, period_end=pe))
 
-    try:
-        value, status = _exhibit_status(
-            f8k, lambda html, pe: extract_reported_tbvps_status(
-                html, reconstructed=reconstructed, bvps=bvps, period_end=pe))
-        try:
-            cache.put(ckey, {"value": value, "status": status})
-        except Exception:
-            pass
-        return value, status
-    except Exception as e:
-        print(f"[sec_earnings_8k] reported_tbvps failed for cik {cik}: "
-              f"{type(e).__name__}: {e}")
+
+def _window_status(cik, prefix: str, anchors: str,
+                   extract) -> tuple[float | None, str]:
+    """(value, status) of `extract` over the earnings 8-K's same-quarter
+    window, newest first: per 8-K the exhibit walk (_exhibit_status) is
+    cached immutably under `prefix:accession:anchors`; the first 8-K whose
+    status is not "not_disclosed" decides. An EXCEPTION on any 8-K ends the
+    walk with (None, "not_disclosed"), uncached — an older 8-K must never
+    answer for a newer one that could not be read."""
+    if not cik:
         return None, "not_disclosed"
+    from data import cache
+    for f8k in _earnings_8ks_same_quarter(cik):
+        ckey = f"{prefix}:{f8k['accession']}:{anchors}"
+        # Accession+anchor-keyed = immutable; no 24h read ceiling.
+        cached = cache.get(ckey, max_age_s=None)
+        if cached is not None:
+            # {"value": float|None, "status": str}; None values are cached too.
+            value, status = cached.get("value"), cached.get("status") or "not_disclosed"
+        else:
+            try:
+                value, status = _exhibit_status(f8k, extract)
+            except Exception as e:
+                print(f"[sec_earnings_8k] {prefix.split(':')[0]} failed for cik "
+                      f"{cik} {f8k['accession_dash']}: {type(e).__name__}: {e}")
+                return None, "not_disclosed"
+            try:
+                cache.put(ckey, {"value": value, "status": status})
+            except Exception:
+                pass
+        if status != "not_disclosed":
+            return value, status
+    return None, "not_disclosed"
