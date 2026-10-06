@@ -103,3 +103,36 @@ def load_fdic_latest(ticker: str) -> dict:
     from the warm nightly cache (no live FDIC round-trip on render)."""
     recs = load_fdic_hist(ticker, min_quarters=1)
     return dict(recs[0]) if recs else {}
+
+
+def fetch_group_histories_parallel(certs: dict, limit: int = 8,
+                                   max_workers: int = 4) -> dict[str, list[dict]]:
+    """{ticker: consolidated FDIC history (newest first)} for the cache-miss
+    paths (app.load_fdic_data, jobs/refresh_home_snapshot), through THE
+    charter-group seam (data.cert_group.fetch_group_history) — never
+    fdic_client's per-cert fetch, which showed one charter of a multi-bank
+    holdco and only 4 quarters (REVIEW 2026-10-06 P1-4). ``certs`` is
+    {ticker: lead cert}; 4 workers, the FDIC API's tolerated concurrency. A
+    ticker whose group fetch fails or comes back empty is ABSENT (the caller
+    caches nothing for it), never a lead-charter-only stand-in."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from data.cert_group import fetch_group_history
+
+    out: dict[str, list[dict]] = {}
+    todo = {t: c for t, c in (certs or {}).items() if c}
+    if not todo:
+        return out
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(fetch_group_history, t, limit, c): t
+                for t, c in todo.items()}
+        for f in as_completed(futs):
+            t = futs[f]
+            try:
+                recs = f.result()
+            except Exception as e:
+                print(f"[loaders] group history failed for {t}: "
+                      f"{type(e).__name__}: {e}")
+                continue
+            if recs:
+                out[t] = recs
+    return out

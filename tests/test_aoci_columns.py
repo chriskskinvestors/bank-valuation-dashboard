@@ -28,7 +28,8 @@ from analysis.metrics import _aoci_metrics, _bank_aoci_by_ticker, build_all_bank
 
 JPM_FDIC = {"REPDTE": "20260630", "SCHF": 250313000, "SCHA": 268516000,
             "EQTOT": 341610000, "INTAN": 50505000}
-JPM_SEC = {"aoci_holdco": -7_693e6, "tce_holdco": 299_547e6, "tce_goodwill_prior": False}
+JPM_SEC = {"aoci_holdco": -7_693e6, "tce_holdco": 299_547e6, "tce_goodwill_prior": False,
+           "sec_as_of": "2026-06-30"}   # SAME quarter-end as the FDIC HTM mark
 
 
 class TestAociMetrics(unittest.TestCase):

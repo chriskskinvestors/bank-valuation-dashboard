@@ -83,6 +83,47 @@ def compute_rate_funding_risk(fdic_data: dict,
     }
 
 
+def compute_cre_concentration(fdic_data: dict) -> float | None:
+    """Regulatory CRE concentration (2006 interagency CRE guidance) — the
+    ratio its 300% supervisory threshold applies to, bank-sub (FDIC) basis:
+
+        total CRE = construction & land development  LNRECONS (RC-C 1.a)
+                  + multifamily                      LNREMULT (1.d)
+                  + non-owner-occupied nonfarm nonres LNRENROT (1.e.2)
+                  + loans to finance CRE not secured  LNCOMRE  (Memo 3)
+                    by real estate
+        ÷ total risk-based capital                   RBC (RBC-TOTAL-PCA) × 100
+
+    The old column was ALL nonfarm-nonres (owner-occupied included, no
+    construction/multifamily) over book equity under the same 250/300
+    thresholds (REVIEW 2026-10-06 P1-3: ONB 176 vs 257). LNCOMRE is the
+    risview "COMMERCIAL RE LOANS" field — verified as Memo 3 on 6/30/2026:
+    never exceeds C&I + other loans (items 4 and 9, which it is "included
+    in") on any of 4,313 institutions, ONB $358,260K beside $17.06B secured
+    CRE, and 0 for the FFIEC 051 filers that don't report Memo 3.
+
+    All levels, so a charter group's summed record is exact. n/a when any
+    component is absent (a pre-field cached record included) or when RBC is
+    not positive: community-bank-leverage-ratio electors report RBC = 0, and
+    a group whose summed RBC falls below its summed Tier 1 holds such a
+    charter (total capital ≥ Tier 1 always) — never a guessed denominator.
+    """
+    def n(k):
+        v = (fdic_data or {}).get(k)
+        try:
+            return None if v is None or v != v else float(v)
+        except (TypeError, ValueError):
+            return None
+
+    parts = [n(k) for k in ("LNRECONS", "LNREMULT", "LNRENROT", "LNCOMRE")]
+    rbc, t1 = n("RBC"), n("RBCT1")
+    if any(p is None for p in parts) or rbc is None or rbc <= 0:
+        return None
+    if t1 is not None and rbc < t1:
+        return None
+    return sum(parts) / rbc * 100
+
+
 def compute_pe_ratio(price: float | None, eps: float | None) -> float | None:
     if price is None or eps is None or eps <= 0:
         return None
@@ -225,9 +266,12 @@ def compute_roatce(fdic_data: dict) -> float | None:
     """
     net_income = fdic_data.get("NETINC")
     equity = fdic_data.get("EQTOT")
-    intangibles = fdic_data.get("INTAN") or 0
+    # Absent INTAN is n/a, never 0 (REVIEW 2026-10-06 P2): `or 0` turned a
+    # missing intangibles figure into an untouched-equity "TCE" and an
+    # understated ROATCE. A reported 0 is data and stands.
+    intangibles = fdic_data.get("INTAN")
 
-    if net_income is None or equity is None:
+    if net_income is None or equity is None or intangibles is None:
         return None
 
     tce = equity - intangibles
@@ -240,7 +284,8 @@ def compute_roatce(fdic_data: dict) -> float | None:
     return (ni_annualized / tce) * 100
 
 
-def compute_roatce_holdco(sec_data: dict) -> float | None:
+def compute_roatce_holdco(sec_data: dict,
+                          tce_window: dict | None = None) -> float | None:
     """
     Compute HOLDING-COMPANY ROATCE using SEC data (what shareholders actually own).
 
@@ -258,6 +303,17 @@ def compute_roatce_holdco(sec_data: dict) -> float | None:
     ties TBV/share and the golden hand-check. Cardinal rule: when the filer HAS
     preferred but its carrying value is unresolved (par-zero/stale), the common
     basis is unknowable → return None (n/a), never a preferred-inflated ROATCE.
+
+    Denominator (REVIEW 2026-10-06 P1-1): ``tce_window`` is
+    holdco_tce_window()'s result — AVERAGE common TCE over the TTM window's
+    quarter-ends, the "A" in ROATCE. Period-end TCE put a year of earnings
+    over one day's equity: PNFP 8.23% (TTM NI incl. legacy-Pinnacle FY25 over
+    the combined post-Synovus TCE), BAFN −239% (a loss year over the
+    post-loss trough). When TCE stepped up inside the window by more than
+    25% beyond what the year's earnings explain (a merger), the earnings and
+    the equity describe different companies → None, and the window's
+    ``merger`` flag says why. Without a window (the legacy
+    single-argument call, ui/valuation_model) the period-end figure stands.
     """
     if not sec_data:
         return None
@@ -280,17 +336,148 @@ def compute_roatce_holdco(sec_data: dict) -> float | None:
     if ni is None:
         return None
 
+    if tce_window is not None:
+        tce = tce_window.get("avg")
+        if tce_window.get("merger") or tce is None or tce <= 0:
+            return None
+        return (ni / tce) * 100
+
     # Denominator: common tangible equity. Use the robust intangible adjustment
     # (goodwill + intangibles resolved across alternate XBRL tags, MSR-excluded)
-    # so TCE matches the tangible-book calc; fall back to raw fields.
+    # so TCE matches the tangible-book calc; fall back to raw fields — and
+    # when neither is present the deduction is unknown: n/a, never 0.
     common_equity = equity - (preferred_stock or 0)
     adj = sec_data.get("intangible_adjustment")
     if adj is None:
-        adj = (sec_data.get("goodwill") or 0) + (sec_data.get("intangibles") or 0)
+        gw, oth = sec_data.get("goodwill"), sec_data.get("intangibles")
+        if gw is None and oth is None:
+            return None
+        adj = (gw or 0) + (oth or 0)
     tce = common_equity - adj
     if tce <= 0:
         return None
     return (ni / tce) * 100
+
+
+# TCE growth inside the TTM window beyond this share of the starting TCE —
+# AFTER crediting the window's entire earnings — is a merger (or an
+# equivalent capital event): the trailing earnings and the equity then
+# describe different companies. The earnings credit keeps a high-return
+# retainer from reading as a deal (CARE: 403 → 537 $M on $127M of NI, +33%
+# raw, all retained earnings); full-year NI is the most growth earnings can
+# explain, so a flag means equity arrived from outside the P&L.
+_TCE_WINDOW_STEP_UP = 0.25
+
+
+def _holdco_tce_at(facts: dict, as_of: str) -> float | None:
+    """Holdco common TCE at one balance-sheet date, on the snapshot's rules
+    (data/sec_client): parent equity − preferred carrying value − goodwill
+    and other intangibles (MSRs kept). Goodwill tagged only at fiscal
+    year-end is carried from its latest value within a year (the snapshot's
+    tce_goodwill_prior convention); nothing tagged within a year means no
+    intangibles. Any unresolvable leg → None (that point is unavailable)."""
+    from data import sec_client as sc
+    eq_tup, _, _ = sc._parent_equity_at(facts, as_of)
+    if not eq_tup or eq_tup[0] is None:
+        return None
+    pfd, present = sc._resolve_preferred_stock(facts, as_of=as_of)
+    if present and pfd is None:
+        return None
+    adj, _ = sc._intangible_adjustment_at(facts, as_of)
+    if adj is None:
+        gw = sc._usd_latest_before(facts, as_of, "Goodwill")[0]
+        incl = sc._usd_latest_before(facts, as_of,
+                                     "IntangibleAssetsNetIncludingGoodwill")[0]
+        oth = sc._usd_latest_before(facts, as_of,
+                                    "IntangibleAssetsNetExcludingGoodwill",
+                                    "FiniteLivedIntangibleAssetsNet")[0]
+        adj = (gw + (oth or 0) if gw is not None else
+               incl if incl is not None else oth if oth is not None else 0.0)
+    return float(eq_tup[0]) - (pfd or 0) - adj
+
+
+def holdco_tce_window(ticker: str | None, sec_data: dict,
+                      bank_goodwill_k: float | None = None) -> dict:
+    """Common TCE at the five quarter-ends of the TTM window ending at the
+    latest balance sheet (end, −3m, −6m, −9m, −12m), from SEC companyfacts.
+
+    {"avg", "points": [(date, tce)], "merger": bool, "reason"}. ``avg`` is
+    the mean over the points that resolve — at least the window's begin AND
+    end, else None. ``merger`` is True when TCE rose between two points by
+    more than 25% of the earlier one plus the window's whole TTM earnings
+    (PNFP/Synovus, HBAN/Veritex+Cadence, FITB/Comerica) —
+    compute_roatce_holdco then returns None. The window ends at the
+    snapshot's sec_as_of, and its end point is the snapshot's own tce_holdco
+    (the TCE tangible book uses). ``bank_goodwill_k``: the FDIC bank-sub's
+    goodwill ($K, INTANGW) — a holdco consolidates its bank, so a zero
+    holdco deduction beside MATERIAL bank goodwill (>1% of the holdco's
+    TCE: CFR $652.7M) means the holdco's goodwill is untagged: n/a, never
+    0. Below 1% (TRST $553K on ~$0.8B) the omission cannot move the ratio
+    visibly. Goodwill, not INTAN: INTAN also carries servicing assets
+    (BAFN's $8.7M INTANOTH beside zero goodwill) that the house TCE keeps."""
+    out = {"avg": None, "points": [], "merger": False, "reason": None}
+    if not sec_data:
+        out["reason"] = "no SEC fundamentals"
+        return out
+    tce_now = sec_data.get("tce_holdco")
+    if (bank_goodwill_k is not None and bank_goodwill_k > 0
+            and "intangible_adjustment" in sec_data
+            and not sec_data.get("intangible_adjustment")
+            and (not tce_now or bank_goodwill_k * 1000 > 0.01 * abs(tce_now))):
+        out["reason"] = ("holdco goodwill untagged in XBRL while the bank "
+                         "subsidiary reports goodwill")
+        return out
+    try:
+        import pandas as pd
+        from data import sec_client as sc
+        from data.bank_mapping import get_cik
+        cik = get_cik(ticker) if ticker else None
+        facts = sc.fetch_company_facts(cik) if cik else None
+        # Anchor on the snapshot's own as-of (the date its tce_holdco and
+        # TTM NI describe) — a fresher companyfacts blob must not relabel an
+        # older snapshot's TCE with a newer quarter-end.
+        bs = (sec_data.get("sec_as_of")
+              or (sc._balance_sheet_date(facts) if facts else None)) if facts else None
+        if not bs:
+            out["reason"] = "no SEC balance sheet"
+            return out
+        end = pd.Timestamp(bs)
+        dates = [(end - pd.DateOffset(months=3 * k) + pd.offsets.MonthEnd(0))
+                 .strftime("%Y-%m-%d") for k in range(5)]
+        # End point: the snapshot's own tce_holdco; a snapshot cached before
+        # that key existed (absent, not None) is rebuilt from the facts.
+        pts = [(d, sec_data.get("tce_holdco")
+                if i == 0 and "tce_holdco" in sec_data else _holdco_tce_at(facts, d))
+               for i, d in enumerate(dates)]
+    except Exception as e:
+        out["reason"] = f"TCE history unavailable ({type(e).__name__})"
+        return out
+    out["points"] = pts
+    if pts[0][1] is None or pts[-1][1] is None:
+        out["reason"] = "TCE not resolvable at the window's begin and end"
+        return out
+    vals = [v for _, v in reversed(pts) if v is not None]   # oldest → newest
+    if any(v <= 0 for v in vals):
+        out["reason"] = "non-positive TCE inside the window"
+        return out
+    ni = sec_data.get("net_income_to_common_ttm")
+    if ni is None:
+        ni = sec_data.get("net_income")
+    earned = max(ni or 0.0, 0.0)
+    lowest = vals[0]
+    for v in vals[1:]:
+        if v - lowest > lowest * _TCE_WINDOW_STEP_UP + earned:
+            out["merger"] = True
+            out["reason"] = (
+                f"merger in TTM window — TCE rose {(v / lowest - 1) * 100:.0f}% "
+                "inside the trailing-12-month window, more than 25% beyond what "
+                "the year's earnings explain (an acquisition or equivalent "
+                "capital event), so the year's earnings and the equity describe "
+                "different companies")
+            return out
+        lowest = min(lowest, v)
+    out["avg"] = sum(vals) / len(vals)
+    return out
 
 
 def _quarter_index(repdte) -> int | None:
@@ -360,8 +547,8 @@ def compute_roatce_4q(fdic_hist: list[dict]) -> float | None:
     for i in range(4):
         ni_q = _derive_quarterly_value("NETINC", fdic_hist, i)
         eq = fdic_hist[i].get("EQTOT")
-        intan = fdic_hist[i].get("INTAN") or 0  # total intangibles (house TCE convention)
-        if ni_q is None or eq is None:
+        intan = fdic_hist[i].get("INTAN")  # total intangibles (house TCE convention)
+        if ni_q is None or eq is None or intan is None:   # absent ≠ 0
             return None
         ttm_ni += ni_q
         tce_values.append(eq - intan)
@@ -430,12 +617,19 @@ def _normalized_earnings_factor(fdic_hist: list[dict] | None) -> float:
     """
     if not fdic_hist or len(fdic_hist) < 5:
         return 1.0
-    import statistics
     qtrs = []
     for i in range(min(8, len(fdic_hist))):
         v = _derive_quarterly_value("NETINC", fdic_hist, i)
         if v is not None:
             qtrs.append(v)
+    return _winsorized_ttm_factor(qtrs)
+
+
+def _winsorized_ttm_factor(qtrs: list[float]) -> float:
+    """normalized_TTM / raw_TTM over up to 8 single-quarter net incomes,
+    newest first (see _normalized_earnings_factor). 1.0 below 5 quarters."""
+    import statistics
+    qtrs = [q for q in (qtrs or [])[:8] if q is not None]
     if len(qtrs) < 5:
         return 1.0
     med = statistics.median(qtrs)
@@ -621,7 +815,6 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     lnrecons = fdic_data.get("LNRECONS")
     lnci = fdic_data.get("LNCI")
     lncon = fdic_data.get("LNCON")
-    eq = fdic_data.get("EQTOT")
 
     def _pct(part, whole):
         if part is not None and whole and whole > 0:
@@ -636,10 +829,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     ln_ci_pct = _pct(lnci, loans_gross)
     ln_consumer_pct = _pct(lncon, loans_gross)
 
-    # CRE concentration: regulators flag at 300% of capital. No falsy-zero
-    # wrapper (audit P3, owner call): a genuine $0 CRE book is DATA — it renders
-    # 0% and classifies as no-CRE; _pct already handles None/zero-denominator.
-    cre_to_capital = _pct(lnrenres, eq)
+    cre_to_capital = compute_cre_concentration(fdic_data)
 
     # ── Securities composition ───────────────────────────────────────────
     sc_total = fdic_data.get("SC")
@@ -683,28 +873,95 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     if nonixay is not None and noniiay is not None:
         nonint_burden = nonixay - noniiay
 
+    # Per-cell n/a reasons / caveats for the screen ({metric key: text}).
+    notes: dict[str, str] = {}
+
+    # Capital return first: its SEC timeline also carries the holdco's
+    # single-quarter net income the holdco earnings normalizer needs.
+    capital_return = _compute_capital_return_for_ticker(ticker, price_data, sec_data)
+    holdco_ni_q = capital_return.pop("_holdco_ni_q", None)
+
     # Profitability
     roatce_current = compute_roatce(fdic_data)   # sub-bank
     roatce_4q = compute_roatce_4q(fdic_hist or [])   # sub-bank TTM
-    roatce_holdco = compute_roatce_holdco(sec_data)  # HoldCo (what stock represents)
+    # HoldCo (what the stock represents) over AVERAGE TCE across the TTM
+    # window (P1-1); n/a + flag when a merger sits inside the window.
+    tce_window = None
+    if ticker:
+        tce_window = holdco_tce_window(ticker, sec_data,
+                                       fdic_data.get("INTANGW"))
+    roatce_holdco = compute_roatce_holdco(sec_data, tce_window)
+    holdco_merger = bool(tce_window and tce_window.get("merger"))
+    if holdco_merger:
+        for k in ("roatce_holdco", "roatce_blended", "roatce_normalized",
+                  "fair_ptbv", "fair_price", "ptbv_discount"):
+            notes[k] = tce_window["reason"]
+    elif roatce_holdco is None and sec_data and tce_window and tce_window.get("reason"):
+        notes["roatce_holdco"] = tce_window["reason"]
 
     # Fair value screening — use HoldCo ROATCE when available (what investors
-    # price off); fall back to sub-bank blended if SEC data is missing.
-    roatce_blended = roatce_holdco if roatce_holdco is not None else compute_roatce_blended(roatce_current, roatce_4q)
+    # price off); fall back to sub-bank blended if SEC data is missing. A
+    # merger in the holdco window is NOT "missing": the FDIC blend averages
+    # the same pre/post-merger mix, so fair value is n/a, flagged.
+    if roatce_holdco is not None or holdco_merger:
+        roatce_blended = roatce_holdco
+    else:
+        roatce_blended = compute_roatce_blended(roatce_current, roatce_4q)
+        if roatce_blended is not None and notes.get("roatce_holdco"):
+            # SEC data exists but the holdco window didn't resolve: the fair
+            # value now runs on the bank subsidiary — say so on the cell.
+            notes["roatce_blended"] = ("bank-subsidiary (FDIC) basis — holdco "
+                                       "ROATCE n/a: " + notes["roatce_holdco"])
 
     # Normalize away one-time earnings spikes (loan recoveries, tax benefits,
     # securities gains) before deriving fair value — otherwise a non-recurring
-    # gain inflates ROATCE and produces a false "undervalued" signal.
-    earnings_norm_factor = _normalized_earnings_factor(fdic_hist)
+    # gain inflates ROATCE and produces a false "undervalued" signal. The
+    # factor comes from the SAME entity's earnings as the ROATCE it scales:
+    # holdco quarterly NI (SEC) for the holdco figure, bank-sub NETINC (FDIC)
+    # for the FDIC blend — a bank-sub ratio never scales a holdco return.
+    if roatce_holdco is not None:
+        earnings_norm_factor = _winsorized_ttm_factor(holdco_ni_q or [])
+    else:
+        earnings_norm_factor = _normalized_earnings_factor(fdic_hist)
     roatce_normalized = (
         roatce_blended * earnings_norm_factor if roatce_blended is not None else None
     )
     fair_ptbv = compute_fair_ptbv(roatce_normalized)
+
+    # P/TBV basis (P2): book per share is on the quarter-end share count;
+    # price is today's. When the cover count diverges >10% (BAFN converted
+    # its preferred into 22.9M common after 6/30: 4.1M → 27.0M shares) the
+    # per-share book and every price multiple on it compare two different
+    # share bases — n/a, flagged, never 2.49x.
+    div = sec_data.get("shares_cover_divergence_pct")
+    basis_mismatch = div is not None and div > 10
+    if basis_mismatch:
+        reason = (f"share-basis mismatch — the latest cover-page share count "
+                  f"differs {div:.0f}% from the quarter-end count behind book "
+                  f"value per share (post-quarter issuance/conversion), so "
+                  f"per-share book and today's price are on different bases")
+        tbvps = bvps = None
+        for k in ("tbvps", "bvps", "ptbv_ratio", "pb_ratio", "fair_price",
+                  "ptbv_discount"):
+            notes.setdefault(k, reason)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
     # Key kept as ptbv_discount (saved screens / peer highlights); the VALUE
     # is now upside to fair PRICE — bounded, conventionally read. Same sign
     # convention: positive = undervalued. See compute_upside_to_fair.
     ptbv_discount = compute_upside_to_fair(price, fair_price)
+
+    # TCE CAGR 1Y (FDIC bank-sub): an acquisition inside the window makes
+    # the growth acquisition-driven (PNFP 111.6%, HBAN 49.3%) — keep the
+    # figure, drop its "good" color, say why (P2).
+    cap_dyn = _compute_capital_dynamics(fdic_hist, sec_data.get("shares_outstanding"))
+    tbv_acq = (_window_acquisitions(ticker, fdic_hist, fdic_data.get("CERT"))
+               if cap_dyn.get("tbv_cagr_1y") is not None else [])
+    if tbv_acq:
+        notes["tbv_cagr_1y"] = (
+            "acquisition-driven — whole-bank acquisition completed in the "
+            "window: " + "; ".join(
+                f"{d.get('target_name') or 'target'} ({str(d.get('date'))[:10]})"
+                for d in tbv_acq))
 
     # Released holdco efficiency — ADD-ALONGSIDE (increment 3, owner decision
     # 2026-08-19): the FDIC bank-sub EEFFR column stays THE efficiency;
@@ -783,9 +1040,12 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "dividend_yield": compute_dividend_yield(price, dps),
         "roatce": roatce_current,
         "roatce_holdco": roatce_holdco,
-        "roaa_4q": compute_4q_avg(fdic_hist or [], "ROA"),
+        # Single-QUARTER FDIC ratios (ROAQ / NIMYQ) averaged over four
+        # quarters — ROA/NIMY are YTD-annualized, so their 4-record mean
+        # double-weights early-year quarters (P1-2: ONB 1.254 vs 1.315).
+        "roaa_4q": compute_4q_avg(fdic_hist or [], "ROAQ"),
         "roatce_4q": roatce_4q,
-        "nim_4q": compute_4q_avg(fdic_hist or [], "NIMY"),
+        "nim_4q": compute_4q_avg(fdic_hist or [], "NIMYQ"),
         "uninsured_pct": uninsured_pct,
         "core_dep_pct": core_dep_pct,
         "brokered_pct": brokered_pct,
@@ -823,14 +1083,22 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         "fair_ptbv": fair_ptbv,
         "fair_price": fair_price,
         "ptbv_discount": ptbv_discount,
+        # True when the holdco TTM window holds a merger (P1-1): ROATCE and
+        # the fair-value chain are n/a; the reason rides in _notes.
+        "roatce_holdco_merger": holdco_merger,
+        "ptbv_basis_mismatch": basis_mismatch,
         # ── Deposit Dynamics (computed from fdic_hist) ──
         **_compute_deposit_dynamics(fdic_hist),
         # ── Credit Dynamics (computed from fdic_hist) ──
         **_compute_credit_dynamics(fdic_hist),
         # ── Capital Dynamics (computed from fdic_hist + SEC shares) ──
-        **_compute_capital_dynamics(fdic_hist, sec_data.get("shares_outstanding")),
+        **cap_dyn,
+        # True when a whole-bank acquisition completed inside the TCE CAGR
+        # window — the growth is bought, not earned (neutral color + † note).
+        "tbv_cagr_1y_acq": bool(tbv_acq),
         # ── Capital Return Attribution (SEC XBRL: divs + buybacks + shares) ──
-        **_compute_capital_return_for_ticker(ticker, price_data, sec_data),
+        **capital_return,
+        "_notes": notes,
     }
 
 
@@ -1459,6 +1727,24 @@ def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec
         return dict(_CAPITAL_RETURN_DEFAULTS)
 
 
+def _window_acquisitions(ticker: str | None, fdic_hist: list[dict] | None,
+                         cert) -> list[dict]:
+    """Whole-bank acquisitions completed inside the TCE CAGR 1Y window —
+    (5th-newest, newest] equity-bearing FDIC quarter — across the charter
+    group. Cache-only (ui/history_range.group_acquisitions: jobs warm the
+    FDIC structure history, renders read); a miss is [] (unflagged)."""
+    recs = [r for r in (fdic_hist or [])
+            if r.get("REPDTE") is not None and r.get("EQTOT") is not None]
+    if len(recs) < 5 or not cert:
+        return []
+    try:
+        from ui.history_range import acquisitions_between, group_acquisitions
+        return acquisitions_between(group_acquisitions(ticker, cert),
+                                    recs[4].get("REPDTE"), recs[0].get("REPDTE"))
+    except Exception:
+        return []
+
+
 def _compute_capital_dynamics(fdic_hist: list[dict] | None, shares: float | None) -> dict:
     """Compute capital-dynamics metrics for screening."""
     if not fdic_hist:
@@ -1486,6 +1772,17 @@ _CAPITAL_RETURN_DEFAULTS = {
 }
 
 
+def _newest_first_ni(timeline) -> list[float]:
+    """Up to 8 most recent non-null single-quarter net incomes, newest first."""
+    try:
+        col = timeline["net_income_q"]
+    except (TypeError, KeyError, IndexError):
+        return []
+    import pandas as pd
+    vals = [float(v) for v in pd.to_numeric(col, errors="coerce").dropna()]
+    return vals[::-1][:8]
+
+
 def _compute_capital_return(cik: int | None, market_cap: float | None) -> dict:
     """Compute SEC-sourced capital return metrics for screening."""
     if not cik:
@@ -1506,6 +1803,9 @@ def _compute_capital_return(cik: int | None, market_cap: float | None) -> dict:
             "dps_yoy_pct": growth.get("dps_yoy_pct"),
             "dividends_ttm": ttm.get("dividends_ttm"),
             "buybacks_ttm": ttm.get("buybacks_ttm"),
+            # Holdco single-quarter NI, newest first — the earnings
+            # normalizer's input for holdco ROATCE (popped by the caller).
+            "_holdco_ni_q": _newest_first_ni(res.get("timeline")),
         }
     except Exception as e:
         print(f"[capital_return] error for CIK {cik}: {e}")

@@ -81,9 +81,11 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
     # blob is keyed by CIK, not ticker, and sat under a 24h TTL that expired
     # on the same seconds-of-jitter as the gate baseline — so which banks
     # actually re-downloaded each night was a coin flip until 2026-09-22.
+    # The FDIC entries are NOT invalidated up front: they are overwritten
+    # below only when the group fetch succeeds, so a failed fetch keeps the
+    # last good consolidated copy instead of leaving a hole the app's
+    # cache-miss path would refill (REVIEW 2026-10-06 P1-4).
     cache.invalidate(f"sec:{ticker}")
-    cache.invalidate(f"fdic:{ticker}")
-    cache.invalidate(f"fdic_hist:{ticker}")
     if cik:
         sec_client.invalidate_company_facts(cik)
 
@@ -100,6 +102,9 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
                 fdic_data = fdic_hist[0]
                 cache.put_fdic(ticker, fdic_data)
                 cache.put(f"fdic_hist:{ticker}", fdic_hist)
+            else:
+                # Last good copy stays cached (not invalidated above).
+                row["warnings"].append("fdic_group_fetch_failed:kept_last_good")
             # Warm the FDIC structure history per charter (7d cache): the
             # statement tables' growth-row acquisition flag reads it
             # cache-only (ui/history_range.group_acquisitions) so a render

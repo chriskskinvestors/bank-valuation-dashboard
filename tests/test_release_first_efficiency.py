@@ -201,7 +201,8 @@ class TestConfig(unittest.TestCase):
         fdic = METRICS_BY_KEY["efficiency_ratio"]
         self.assertEqual(fdic["source"], "fdic")
         self.assertEqual(fdic["fdic_field"], "EEFFR")
-        self.assertEqual(fdic["label"], "Efficiency")
+        # "(Bank)": bank-sub FDIC figure beside holdco columns (REVIEW 2026-10-06).
+        self.assertEqual(fdic["label"], "Efficiency (Bank)")
 
     def test_valuation_screen_lists_release_column(self):
         from config import TABS

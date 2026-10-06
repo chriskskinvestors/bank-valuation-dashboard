@@ -14,7 +14,7 @@ from config import (PRICE_REFRESH_SECONDS, TABS, METRICS, METRICS_BY_KEY,
                     TAB_META, THEME_ORDER)
 from data.bank_mapping import get_fdic_cert, get_cik, get_name
 from data.bank_universe import get_universe_tickers
-from data import fdic_client, sec_client, cache
+from data import sec_client, cache
 from data.ibkr_client import get_ibkr_client, get_empty_price
 from analysis.metrics import build_all_bank_metrics
 from ui.styles import CUSTOM_CSS
@@ -620,18 +620,17 @@ def load_fdic_data(tickers: tuple) -> tuple[dict, dict]:
         else:
             uncached_certs[ticker] = cert
 
-    # Second pass: fetch uncached tickers IN PARALLEL
+    # Second pass: fetch uncached tickers IN PARALLEL — through the charter-
+    # group seam, 8 quarters, exactly like the nightly producer (a per-cert
+    # 4-quarter fetch here cached one charter of a multi-bank holdco).
     if uncached_certs:
-        parallel_results = fdic_client.fetch_multiple_banks_parallel(uncached_certs, limit=4)
-        for ticker, hist_df in parallel_results.items():
-            if hist_df is None or hist_df.empty:
-                continue
-            records = hist_df.to_dict("records")
+        from data.loaders import fetch_group_histories_parallel
+        for ticker, records in fetch_group_histories_parallel(
+                uncached_certs, limit=8).items():
             hist_results[ticker] = records
             cache.put(f"fdic_hist:{ticker}", records)
 
-            latest = hist_df.iloc[0].to_dict()
-            latest = {k: (None if pd.isna(v) else v) for k, v in latest.items()}
+            latest = {k: (None if pd.isna(v) else v) for k, v in records[0].items()}
             cache.put_fdic(ticker, latest)
             latest_results[ticker] = latest
 

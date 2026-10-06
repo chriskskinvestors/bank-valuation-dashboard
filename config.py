@@ -251,13 +251,13 @@ METRICS = [
 
     # ── Profitability ───────────────────────────────────────────────────
     {
-        "key": "roaa", "label": "ROAA", "source": "fdic", "fdic_field": "ROA",
+        "key": "roaa", "label": "ROAA (Bank)", "source": "fdic", "fdic_field": "ROA",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 1.0, "warn": 0.5},
         "category": "Profitability",
     },
     {
-        "key": "roaa_4q", "label": "ROAA 4Q", "source": "computed",
+        "key": "roaa_4q", "label": "ROAA 4Q (Bank)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 1.0, "warn": 0.5},
         "category": "Profitability",
@@ -281,19 +281,19 @@ METRICS = [
         "category": "Profitability",
     },
     {
-        "key": "nim", "label": "NIM", "source": "fdic", "fdic_field": "NIMY",
+        "key": "nim", "label": "NIM (Bank)", "source": "fdic", "fdic_field": "NIMY",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 2.0},
         "category": "Profitability",
     },
     {
-        "key": "nim_4q", "label": "NIM 4Q", "source": "computed",
+        "key": "nim_4q", "label": "NIM 4Q (Bank)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 2.0},
         "category": "Profitability",
     },
     {
-        "key": "efficiency_ratio", "label": "Efficiency", "source": "fdic", "fdic_field": "EEFFR",
+        "key": "efficiency_ratio", "label": "Efficiency (Bank)", "source": "fdic", "fdic_field": "EEFFR",
         "format": "pct", "decimals": 1,
         "color_rule": "lower_better", "thresholds": {"good": 55, "warn": 65},
         "category": "Profitability",
@@ -313,7 +313,7 @@ METRICS = [
 
     # ── Credit Quality ──────────────────────────────────────────────────
     {
-        "key": "npl_ratio", "label": "NPL Ratio", "source": "fdic", "fdic_field": "NCLNLSR",
+        "key": "npl_ratio", "label": "NPL Ratio (Bank)", "source": "fdic", "fdic_field": "NCLNLSR",
         "format": "pct", "decimals": 2,
         "color_rule": "lower_better", "thresholds": {"good": 1.0, "warn": 2.0},
         "category": "Credit Quality",
@@ -336,7 +336,7 @@ METRICS = [
 
     # ── Capital ─────────────────────────────────────────────────────────
     {
-        "key": "cet1_ratio", "label": "CET1", "source": "fdic", "fdic_field": "IDT1CER",
+        "key": "cet1_ratio", "label": "CET1 (Bank)", "source": "fdic", "fdic_field": "IDT1CER",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 10, "warn": 7},
         "category": "Capital",
@@ -519,7 +519,11 @@ METRICS = [
         "category": "Loan Concentration",
     },
     {
-        "key": "cre_to_capital", "label": "CRE/Capital", "source": "computed",
+        # The regulatory CRE concentration (construction + multifamily +
+        # non-owner-occupied nonfarm nonres + Memo 3 unsecured-CRE loans ÷
+        # total risk-based capital — analysis/valuation.compute_cre_
+        # concentration); its 300% guidance threshold is what "warn" means.
+        "key": "cre_to_capital", "label": "CRE / Total RBC (Bank)", "header": "CRE/RBC", "source": "computed",
         "format": "pct", "decimals": 0,
         "color_rule": "lower_better", "thresholds": {"good": 250, "warn": 300},
         "category": "Loan Concentration",
@@ -612,7 +616,7 @@ METRICS = [
 
     # ── Capital Dynamics (computed from history + SEC shares) ────────────
     {
-        "key": "cet1_current", "label": "CET1 %", "source": "computed",
+        "key": "cet1_current", "label": "CET1 % (Bank)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 10.0, "warn": 8.0},
         "category": "Capital Dynamics",
@@ -658,7 +662,7 @@ METRICS = [
         "category": "Capital Return",
     },
     {
-        "key": "dividend_yield_sec", "label": "Div Yield", "source": "computed",
+        "key": "dividend_yield_sec", "label": "Div Yield (total $ paid, incl. pref.)", "source": "computed",
         "format": "pct", "decimals": 2,
         "color_rule": "higher_better", "thresholds": {"good": 3.0, "warn": 1.0},
         "category": "Capital Return",

@@ -158,7 +158,12 @@ def render_generic_table(
     thead = "<tr>" + "".join(heads) + "</tr>"
 
     body = []
+    any_note = False
     for rec in df.to_dict("records"):
+        # Per-cell reasons ({metric key: text}, analysis/valuation _notes): a
+        # flagged cell reads "n/a †" (or "value †"), unshaded, reason on hover.
+        notes = rec.get("_notes")
+        notes = notes if isinstance(notes, dict) else {}
         tk = str(rec.get("ticker") or "")
         cert = rec.get("_fdic_cert")
         defunct = rec.get("_defunct") and cert and not (
@@ -194,11 +199,18 @@ def render_generic_table(
                     bg = ""
             else:
                 bg = get_bg_color(c, v)
+            note = notes.get(c)
+            tip = ""
+            if note:
+                any_note = True
+                txt = ("n/a" if missing else txt) + " †"
+                bg = ""
+                tip = f' title="{_html.escape(str(note), quote=True)}"'
             cls = "num"
             if not bg and isinstance(v, (int, float)) and not missing and v < 0:
                 cls += " neg"
             style = f' style="{bg}"' if bg else ""
-            cells.append(f'<td class="{cls}"{style}>{txt}</td>')
+            cells.append(f'<td class="{cls}"{style}{tip}>{txt}</td>')
         body.append("<tr>" + "".join(cells) + "</tr>")
 
     st.markdown(
@@ -241,5 +253,8 @@ def render_generic_table(
         f'<thead>{thead}</thead><tbody>{"".join(body)}</tbody></table></div>',
         unsafe_allow_html=True,
     )
+    if any_note:
+        st.caption("† flagged figure, shown unshaded — hover the cell for the "
+                   "reason (n/a † = withheld rather than a mixed-basis number).")
 
     return df
