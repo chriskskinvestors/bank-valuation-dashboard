@@ -79,6 +79,13 @@ class TestScraperPayloadsServedPast24h(_IsolatedCache):
         with patch.object(sfs, "_get", _no_network):
             self.assertEqual(sfs._holdco_capital_extract_cached(META, None), cap)
 
+    def test_untagged_capital_table(self):
+        parsed = {"period": "2026-06-30",
+                  "tables": [{"2026-06-30": {"cet1_ratio": 11.09}}]}
+        self._put_aged(f"holdco_cap_html:v1:{META['accession']}", parsed)
+        with patch.object(sfs, "_get", _no_network):
+            self.assertEqual(sfs._untagged_capital_cached(META), parsed)
+
     def test_fye_month(self):
         self._put_aged(f"fyemonth:v1:{META['accession']}", "06")
         with patch.object(sfs, "_get", _no_network):
@@ -130,6 +137,7 @@ class TestAccessionReadsWithoutCeiling(unittest.TestCase):
     SITES = [
         ("data/sec_filing_scraper.py", r'ckey = f"fyemonth:v\d+:'),
         ("data/sec_filing_scraper.py", r'ckey = f"holdco_cap:v\d+:'),
+        ("data/sec_filing_scraper.py", r'ckey = f"holdco_cap_html:v\d+:'),
         ("data/sec_filing_scraper.py", r'ckey = f"fair_value:v\d+:'),
         ("data/sec_filing_scraper.py", r'ckey = f"securities:v\d+:'),
         ("data/sec_filing_scraper.py", r'ckey = f"credit_quality:v\d+:'),

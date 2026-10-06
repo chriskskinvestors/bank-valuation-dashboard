@@ -809,6 +809,11 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
     text — P2-1, 2026-09-24), so the table legitimately ends at the FY-end
     while a newer 10-Q is on file; the caller says so instead of implying the
     10-K is the latest filing.
+
+    When that newer 10-Q's HTML capital table passes _untagged_quarter's gates
+    (owner decision 2026-10-06), its quarter's RATIOS join "capital" (flagged
+    _untagged_table), the 10-Q moves from "untagged" to "untagged_table"
+    ([meta + "period"]) so the page can label the column's source.
     """
     if not cik:
         return None
@@ -863,7 +868,14 @@ def holdco_capital_for(cik, cert=None) -> dict | None:
         return None
     if untagged and untagged["date"] <= latest_meta["date"]:
         untagged = None                  # an older 10-Q is not news
-    return {"meta": latest_meta, "capital": capital, "untagged": untagged}
+    from_table = []
+    if untagged:                         # its HTML table, where the gates verify it
+        period, q = _untagged_10q_quarter(untagged, capital, anchor)
+        if q:
+            capital[period] = q
+            from_table, untagged = [dict(untagged, period=period)], None
+    return {"meta": latest_meta, "capital": capital, "untagged": untagged,
+            "untagged_table": from_table}
 
 
 def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | None:
@@ -874,8 +886,10 @@ def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | 
     to the newest n_quarters period-ends. Quarters whose filing doesn't tag
     the table simply aren't present (n/a downstream). Returns
     {"meta": <latest contributing filing>, "capital": {period: {...}},
-    "untagged": <newest filing, newer than meta, that tags no capital table,
-    or None>} or None (see holdco_capital_for on "untagged")."""
+    "untagged": <newest filing, newer than meta, that tags no capital table
+    and whose quarter stays n/a, or None>, "untagged_table": [10-Qs whose
+    untagged HTML table supplied a gated quarter]} or None (see
+    holdco_capital_for on "untagged" / "untagged_table")."""
     if not cik:
         return None
     anchor = _fdic_cet1(cert)
@@ -896,11 +910,289 @@ def holdco_capital_quarterly_for(cik, cert=None, n_quarters: int = 8) -> dict | 
                 capital[period] = d
     if not _has_capital(capital):
         return None
+    # Filings newer than the latest tagged one lack the table in iXBRL; a 10-Q
+    # among them may still carry it as untagged HTML (C / ONB) — read its
+    # quarter only where the owner's gates verify it (_untagged_10q_quarter).
+    ahead = metas[:next(i for i, m in enumerate(metas)
+                        if m["accession"] == latest_meta["accession"])]
+    untagged, from_table = None, []
+    for meta in ahead:                                # newest-first
+        period, q = (_untagged_10q_quarter(meta, capital, anchor)
+                     if meta["form"] == "10-Q" else (None, None))
+        if q:
+            capital[period] = q
+            from_table.append(dict(meta, period=period))
+        elif untagged is None:
+            untagged = meta                    # newest filing still n/a
     keep = sorted(capital, reverse=True)[:n_quarters]
-    untagged = (metas[0] if metas[0]["accession"] != latest_meta["accession"]
-                else None)                     # newest-first: all ahead lack it
     return {"meta": latest_meta, "capital": {p: capital[p] for p in keep},
-            "untagged": untagged}
+            "untagged": untagged, "untagged_table": from_table}
+
+
+# ── Untagged 10-Q capital table (owner decision 2026-10-06) ─────────────────
+# Some filers tag the regulatory-capital table only in the 10-K; their 10-Qs
+# carry it as plain HTML (ONB Q2-2026: "Common equity Tier 1 capital to
+# risk-weighted total assets | 7.00 | N/A | 11.09 | 11.08" under "Regulatory
+# Guidelines Minimum | PCA Well Capitalized | June 30, 2026 | December 31,
+# 2025"; C: one table, a "June 30, 2026" block and a "December 31, 2025" block,
+# each "Required Ratios | Standardized | Required Ratios | Advanced"). A value
+# is read ONLY from a column whose header carries exactly one date and no
+# threshold wording, and the quarter is accepted ONLY when the same table's
+# prior period column(s) reproduce the already-extracted 10-K figures to
+# 0.01pt (proves the row + column mapping), CET1 ≤ Tier 1 ≤ Total, and CET1
+# sits in the FDIC anchor band. Ratios only — never amounts. Otherwise n/a.
+_UT_DATE = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?"
+                      r"\s*(\d{1,2})\s*,\s*(\d{4})", re.I)
+_UT_MONTH = {m: i + 1 for i, m in enumerate(
+    ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"))}
+_UT_THRESHOLD_HDR = re.compile(
+    r"minimum|required|requirement|well[^a-z]*capitalized|guideline|buffer|"
+    r"adequa|threshold|prompt corrective|amount", re.I)
+_UT_ROW_EXCL = re.compile(
+    r"requir|minimum|well[^a-z]*capitalized|buffer|stated|supplementary|adequa|"
+    r"threshold|exposure|surcharge|excess|phase|pro forma|fully|amount", re.I)
+_UT_RATIO_WORD = re.compile(r"ratio|to (total )?risk|risk[- ]weighted|risk[- ]based|\brwa\b",
+                            re.I)
+# "Average equity to average assets" is not leverage: the subject must be capital
+# (EBC: "Tier 1 capital (to average assets) leverage").
+_UT_LEV = re.compile(r"leverage ratio|tier (1|one|i) leverage|"
+                     r"capital \(?to (total |adjusted |quarterly )*average (total )?assets", re.I)
+_UT_CET1 = re.compile(r"common equity tier (1|one|i)\b|\bcet ?1\b|tier (1|one) common", re.I)
+_UT_T1 = re.compile(r"\btier (1|one|i)\b", re.I)
+_UT_TOTAL = re.compile(r"\btotal\b.*\b(capital|risk[- ]based)\b", re.I)  # ZION "Total risk-based ratio"
+_UT_LINES = ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio")
+
+
+def _ut_line(label: str) -> str | None:
+    """Capital-ratio line for an untagged-table row label, or None. Thresholds,
+    buffers, supplementary leverage and $ amount rows never match."""
+    lab = re.sub(r"\(\d+\)", " ", label)
+    if _UT_ROW_EXCL.search(lab):
+        return None
+    if _UT_LEV.search(lab):
+        return "lev_ratio"
+    if not _UT_RATIO_WORD.search(lab):
+        return None                        # "Common Equity Tier 1 Capital" ($)
+    if _UT_CET1.search(lab):
+        return "cet1_ratio"
+    if _UT_T1.search(lab):
+        return "t1_ratio"
+    if _UT_TOTAL.search(lab):
+        return "total_ratio"
+    return None
+
+
+def _ut_dates(text: str) -> set:
+    """ISO dates ("June 30, 2026" → "2026-06-30") written out in `text`."""
+    out = set()
+    for m, d, y in _UT_DATE.findall(text):
+        try:
+            out.add(date(int(y), _UT_MONTH[m[:3].lower()], int(d)).isoformat())
+        except ValueError:
+            pass
+    return out
+
+
+def _ut_date(text: str) -> str | None:
+    """The ONE ISO date `text` names, else None (none or several)."""
+    ds = _ut_dates(text)
+    return ds.pop() if len(ds) == 1 else None
+
+
+def _ut_table(table) -> dict:
+    """{iso_date: {line: percent | None}} from one HTML table. Header cells are
+    mapped onto data cells by grid column (colspan + rowspan aware); a header row after
+    data rows starts a new header block (C's per-date blocks), while a
+    label-only section row ("Risk-based capital ratios:") does not. None marks
+    a line the table makes ambiguous (two different values) — unusable."""
+    out: dict = {}
+    header: list = []                     # [(start, end, text)] of the block
+    in_data = False
+    held: dict = {}                       # grid col -> rows still taken by a rowspan
+
+    def _int(v):
+        try:
+            return max(1, int(v or 1))
+        except ValueError:
+            return 1
+    for tr in table.iter("tr"):
+        cells, col = [], 0
+        taken = {c for c, n in held.items() if n > 0}
+        held = {c: n - 1 for c, n in held.items() if n > 1}
+        for td in tr:
+            if td.tag not in ("td", "th"):
+                continue
+            while col in taken:
+                col += 1
+            span, rows = _int(td.get("colspan")), _int(td.get("rowspan"))
+            if rows > 1:
+                held.update({c: rows - 1 for c in range(col, col + span)})
+            txt = " ".join(" ".join(td.itertext()).replace("​", " ")
+                           .split())     # no fused words; AUB pads with U+200B
+            if txt:
+                cells.append((col, col + span, txt))
+            col += span
+        if not cells:
+            continue
+        label = cells[0][2] if _num_cell(cells[0][2]) is None else None
+        vals = [(s, _num_cell(t)) for s, _e, t in cells[1:] if _num_cell(t) is not None]
+        if label is None or not vals:                 # a header / section row
+            if in_data and all(s == 0 for s, _e, _t in cells):
+                continue                              # section label: keep block
+            if in_data:
+                header, in_data = [], False
+            header.extend(cells)
+            continue
+        in_data = True
+        line = _ut_line(label)
+        if not line:
+            continue
+        by_date: dict = {}
+        for s, v in vals:
+            if not 0 < v < 100:
+                continue                              # an amount, not a ratio
+            over = [(hs, he, t) for hs, he, t in header if hs <= s < he]
+            hdr = " ".join(t for _s, _e, t in over)
+            # Exactly one date. A date split over header rows ("June 30," /
+            # "2026" — AUB) is joined only from cells spanning the SAME grid
+            # columns, never from cells of different widths.
+            same_span: dict = {}
+            for hs, he, t in over:
+                same_span.setdefault((hs, he), []).append(t)
+            dates = set().union(*(_ut_dates(" ".join(g)) for g in same_span.values())) \
+                if same_span else set()
+            if len(dates) != 1 or _UT_THRESHOLD_HDR.search(hdr):
+                continue
+            iso = dates.pop()
+            by_date.setdefault(iso, []).append((hdr, v))
+        for iso, cands in by_date.items():
+            if len(cands) > 1:                        # Standardized beats Advanced
+                cands = [c for c in cands if "standardized" in c[0].lower()] or cands
+            v = cands[0][1] if len({c[1] for c in cands}) == 1 else None
+            have = out.setdefault(iso, {})
+            have[line] = v if have.get(line, v) == v else None
+    return out
+
+
+def extract_untagged_capital_tables(html_bytes: bytes) -> dict:
+    """{"period": <dei:DocumentPeriodEndDate ISO or None>, "tables": [<_ut_table>
+    with a CET1 line, …]} — the raw, ungated read of a filing's HTML capital
+    tables. Gating is _untagged_quarter's job."""
+    from lxml import html as lhtml
+    # EDGAR documents are UTF-8; without a meta charset lxml would read them
+    # as Latin-1 (U+200B padding → "â\x80\x8b", a phantom header cell).
+    root = lhtml.fromstring(html_bytes, parser=lhtml.HTMLParser(encoding="utf-8"))
+    period = None
+    for el in root.iter():
+        if (_local(el.tag) == "nonnumeric"
+                and (el.get("name") or "").endswith(":DocumentPeriodEndDate")):
+            txt = " ".join(el.text_content().split())
+            period = (_ut_date(txt)
+                      or (txt if re.fullmatch(r"\d{4}-\d{2}-\d{2}", txt) else None))
+            break
+    tables = []
+    for t in root.iter("table"):
+        if not _UT_CET1.search(" ".join(" ".join(t.itertext()).split())):
+            continue                            # cells space-joined, runs collapsed
+        parsed = _ut_table(t)
+        if any(d.get("cet1_ratio") is not None for d in parsed.values()):
+            tables.append(parsed)
+    return {"period": period, "tables": tables}
+
+
+def _untagged_quarter(parsed: dict, capital: dict, anchor: float | None
+                      ) -> tuple[dict | None, str]:
+    """Gate the untagged read of one 10-Q against the already-extracted 10-K
+    capital (`capital`, fractions). Returns (quarter dict | None, reason)."""
+    period = parsed.get("period")
+    if not period:
+        return None, "no document period end"
+    passing, reasons = [], []
+    for t in parsed.get("tables") or []:
+        q = t.get(period) or {}
+        if q.get("cet1_ratio") is None:
+            reasons.append("no CET1 in a column dated the period end")
+            continue
+        comps = sorted(d for d in t if d < period and d in capital
+                       and not capital[d].get("_untagged_table"))
+        if not comps:
+            reasons.append("no comparative column the 10-K covers")
+            continue
+        verified, bad = set(), []
+        for d in comps:
+            for line, v in t[d].items():
+                fy = capital[d].get(line)
+                if v is None or fy is None:
+                    continue
+                if abs(v - fy * 100) <= 0.01 + 1e-9:
+                    verified.add(line)
+                else:
+                    bad.append(f"{line} {d}: table {v} vs 10-K {fy * 100:.2f}")
+        if bad or "cet1_ratio" not in verified:
+            reasons.append("comparative column does not match the 10-K ("
+                           + ("; ".join(bad) or "CET1 not comparable") + ")")
+            continue
+        vals = {ln: q[ln] for ln in _UT_LINES if q.get(ln) is not None and ln in verified}
+        if any(ln not in vals for ln in ("cet1_ratio", "t1_ratio", "total_ratio")):
+            reasons.append("CET1 / Tier 1 / Total not all present and verified")
+            continue
+        if not vals["cet1_ratio"] <= vals["t1_ratio"] <= vals["total_ratio"]:
+            reasons.append("capital stack broken (CET1 ≤ Tier 1 ≤ Total)")
+            continue
+        if not 5.0 <= vals["cet1_ratio"] <= 60.0 or (
+                anchor is not None and abs(vals["cet1_ratio"] - anchor) > 6.0):
+            reasons.append("CET1 outside the FDIC anchor band")
+            continue
+        passing.append((comps[-1], vals))
+    if not passing:
+        return None, "; ".join(reasons) or "no capital-ratio table"
+    comp, vals = passing[0]
+    if any(o.get(ln) is not None and o[ln] != vals.get(ln, o[ln])
+           for _c, o in passing[1:] for ln in _UT_LINES):
+        return None, "tables disagree on the quarter"
+    fy = capital[comp]
+    d = {ln: v / 100.0 for ln, v in vals.items()}
+    d.update(_confidence=fy.get("_confidence", "default"), _cblr=False,
+             _untagged_table=True)
+    if fy.get("_basis") == "bank":
+        d["_basis"] = "bank"
+    return d, "ok"
+
+
+def _untagged_capital_cached(meta: dict) -> dict:
+    """extract_untagged_capital_tables for one filing, cached per accession
+    (immutable payload). {} on a fetch/parse failure, not cached."""
+    from data import cache
+    ckey = f"holdco_cap_html:v1:{meta['accession']}"
+    got = cache.get(ckey, max_age_s=None)
+    if got is None:
+        try:
+            got = extract_untagged_capital_tables(
+                _get(filing_url(meta["cik"], meta["accession"], meta["doc"])))
+            try:
+                cache.put(ckey, got)
+            except Exception:
+                pass
+        except Exception as e:
+            print(f"[sec_scraper] untagged capital table failed for cik "
+                  f"{meta.get('cik')}: {type(e).__name__}: {e}")
+            got = {}
+    return got or {}
+
+
+def _untagged_10q_quarter(meta: dict, capital: dict, anchor: float | None
+                          ) -> tuple[str | None, dict | None]:
+    """(period, gated quarter dict) read from an untagged 10-Q, or (None, None)."""
+    parsed = _untagged_capital_cached(meta)
+    period = parsed.get("period")
+    if not period or period in capital:
+        return None, None
+    q, why = _untagged_quarter(parsed, capital, anchor)
+    if q is None:
+        print(f"[sec_scraper] untagged capital table n/a for cik {meta.get('cik')} "
+              f"{meta.get('accession')}: {why}")
+        return None, None
+    return period, q
 
 
 # ── Fair-value hierarchy (ASC 820) extraction ───────────────────────────────

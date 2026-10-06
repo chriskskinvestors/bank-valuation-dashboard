@@ -463,6 +463,33 @@ class TestHoldcoNewerUntaggedFiling(_HoldcoSite):
         self.assertIn("not yet in the SEC-filed capital table below", info[0])
         self.assertNotIn("ahead of the next 10-Q", info[0])
 
+    def test_quarter_read_from_untagged_table_is_labeled(self):
+        # Owner decision 2026-10-06: the 10-Q's untagged table supplied Q2
+        # (gated by the scraper) — caption + export Source say so, and the
+        # "its quarter is n/a" note is gone because the quarter is shown.
+        import data.ir_provider as irp
+        import data.sec_filing_scraper as sfs
+        q2 = {"cet1_ratio": 0.1109, "t1_ratio": 0.1153, "total_ratio": 0.1365,
+              "lev_ratio": 0.0895, "_untagged_table": True, "_cblr": False}
+        res = {"meta": dict(META),
+               "capital": {"2025-12-31": dict(FY25), "2026-06-30": q2},
+               "untagged": None,
+               "untagged_table": [dict(self.UNTAGGED, period="2026-06-30")]}
+        self._patch(sfs, "holdco_capital_for", lambda cik, cert=None: res)
+        self._patch(irp, "fresh_capital", lambda cik, covered_through=None: None)
+        self.CD._render_holdco_capital("RF")
+        scr = self._screen()
+        self.assertIn("Q2 '26 read from the 10-Q's untagged capital table "
+                      "([10-Q filed 2026-08-06](https://www.sec.gov/Archives/"
+                      "edgar/data/", scr)
+        self.assertIn("000083100126000045/c-20260630.htm)) — ratios only", scr)
+        self.assertNotIn("does not tag its", scr)
+        wb, ws, kw = self._book(0, expect=2)            # table + walk exports
+        self.assertEqual(self._grid(ws)[0], ["Line item", "Q2 '26", "FY2025"])
+        src = self._source(wb)
+        self.assertIn("Q2 '26 read from the 10-Q's untagged capital table "
+                      "(10-Q filed 2026-08-06, ratios only)", src["Source"])
+
     def test_no_untagged_filing_no_note(self):
         self._render({"2025-12-31": dict(FY25)})
         self.assertNotIn("does not tag its", self._screen())

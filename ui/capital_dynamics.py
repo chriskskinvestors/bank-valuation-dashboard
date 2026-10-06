@@ -518,10 +518,18 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
         f" The newer {_ut['form']} filed {_ut['date']} does not tag its "
         "regulatory-capital table in inline XBRL, so its quarter is n/a here."
         if _ut else "")
+    # Quarters read from an untagged 10-Q's HTML table (gated: the same table's
+    # year-end column ties to the 10-K) — label them, ratios only.
+    _tbl = res.get("untagged_table") or []
+    table_note = "".join(
+        f" {_plab(m['period'])} read from the 10-Q's untagged capital table "
+        f"([10-Q filed {m['date']}](https://www.sec.gov/Archives/edgar/data/"
+        f"{int(cik)}/{m['accession']}/{m['doc']})) — ratios only; its year-end "
+        "column ties to the 10-K." for m in _tbl)
     st.caption(
         f"Source: SEC [{meta['form']} filed {meta['date']}]({src}) — holding-company "
         f"consolidated, anchored to the bank's FDIC CET1{note}. Updates as soon as "
-        f"the company files (not the delayed FR Y-9C).{untagged_note}")
+        f"the company files (not the delayed FR Y-9C).{untagged_note}{table_note}")
 
     rows = [
         ("Common Equity Tier 1 ratio", "cet1_ratio", "pct"),
@@ -556,7 +564,10 @@ def _render_holdco_capital(ticker: str, period: str | None = None):
         "FDIC cert": get_fdic_cert(ticker),
         "Source": f"SEC {meta['form']} filed {meta['date']} — inline XBRL, "
                   "holding-company consolidated, anchored to the bank subsidiary's "
-                  f"FDIC CET1 ratio{note}",
+                  f"FDIC CET1 ratio{note}"
+                  + "".join(f"; {_plab(m['period'])} read from the 10-Q's untagged "
+                            f"capital table (10-Q filed {m['date']}, ratios only)"
+                            for m in _tbl),
         "Filing": src,
         "View": mode,
         "Periods": f"{plabs[-1]} to {plabs[0]}",
