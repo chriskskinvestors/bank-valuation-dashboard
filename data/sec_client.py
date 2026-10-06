@@ -407,7 +407,9 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
       2. Derive missing quarters from same-start YTD differences
          (FY − 9M = Q4, 9M − H1 = Q3, H1 − Q1 = Q2).
       3. Sum the latest 4 quarters ONLY if they are consecutive
-         (each gap ≈ 3 months).
+         (each gap ≈ 3 months) and from one filing vintage — across a
+         restatement, the latest-vintage textbook TTM or None
+         (_latest_vintage_ttm).
       4. Otherwise fall back to the latest annual (~365-day) entry.
 
     Returns None if no path yields a value.
@@ -434,11 +436,13 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             except ValueError:
                 continue
             key = (start, end)
-            history.setdefault(key, []).append((e.get("filed", ""), val))
             # A 12-month duration is a 10-K fact: a 10-Q never overrides it
             # (FCBC's Q1-2026 10-Q tags FY2025 = 12,027,000 — its Q1 value —
-            # beside the 10-K's 48,794,000).
+            # beside the 10-K's 48,794,000) — nor is it a vintage of that
+            # year in `history` (it would read as a restatement).
             annual_10k = 350 <= span <= 380 and e.get("form") == "10-K"
+            if annual_10k or not 350 <= span <= 380:
+                history.setdefault(key, []).append((e.get("filed", ""), val))
             prev = durations.get(key)
             if (prev is None
                     or (annual_10k and not prev["annual_10k"])
@@ -497,10 +501,14 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
                 if len(prior) == 1 and not superseded:
                     textbook = float(d_cur["val"] + d_fy["val"] - prior[0]["val"])
 
-    # Direct ~3-month facts
-    quarters: dict[str, float] = {
-        end: d["val"] for (start, end), d in durations.items() if 80 <= d["span"] <= 100
-    }
+    # Direct ~3-month facts. `src` records each quarter as signed durations
+    # ({(start, end): ±1}); their filing dates decide whether the window is
+    # one vintage.
+    quarters: dict[str, float] = {}
+    src: dict[str, dict] = {}
+    for (start, end), d in durations.items():
+        if 80 <= d["span"] <= 100:
+            quarters[end], src[end] = d["val"], {(start, end): 1}
 
     # Derive missing quarters from same-start YTD pairs: a duration minus a
     # ~3-months-shorter duration with the same start is the quarter between
@@ -512,9 +520,9 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             if s2 != s1 or e2 >= e1:
                 continue
             if 80 <= _gap_days(e2, e1) <= 100:
-                quarters[e1] = d1["val"] - d2["val"]
+                quarters[e1], src[e1] = d1["val"] - d2["val"], {(s1, e1): 1, (s2, e2): -1}
                 break
-    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days, src)
 
     # Same-END pairs give the EARLIER quarter: a YTD minus the direct quarter
     # that closes it (H1 − Q2 = Q1; only a ~3-month remainder counts). This
@@ -538,7 +546,7 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
                 continue
             q_end = (datetime.fromisoformat(s2) - timedelta(days=1)).strftime("%Y-%m-%d")
             if 80 <= _gap_days(s1, q_end) <= 100 and not _near_known(q_end):
-                quarters[q_end] = d1["val"] - d2["val"]
+                quarters[q_end], src[q_end] = d1["val"] - d2["val"], {(s1, e1): 1, (s2, e2): -1}
 
     # Q4 = FY − (Q1 + Q2 + Q3) when a filer tags all three discrete quarters but
     # no 9M YTD (HOMB 2025: FY − 9M impossible, so the window broke and the
@@ -552,12 +560,21 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
                 and all(80 <= _gap_days(a, b) <= 100 for a, b in zip(inside, inside[1:]))
                 and 80 <= _gap_days(inside[-1], e1) <= 100):
             quarters[e1] = d1["val"] - sum(quarters[e] for e in inside)
+            src[e1] = _net_terms([({(s1, e1): 1}, 1)] + [(src[e], -1) for e in inside])
 
-    # Path 1: latest 4 quarters, required consecutive (~3-month gaps)
+    # Path 1: latest 4 quarters, required consecutive (~3-month gaps) — and
+    # from ONE filing vintage. When a restatement may fall between the
+    # filings feeding them (LARK: Q4 = restated FY − original 9M), the TTM is
+    # the latest-vintage textbook figure or None (_latest_vintage_ttm).
     if len(quarters) >= 4:
         ends = sorted(quarters)[-4:]
         if all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
-            return float(sum(quarters[e] for e in ends))
+            stitched = float(sum(quarters[e] for e in ends))
+            events = _restatements(history, per_share)
+            filed = [durations[k]["filed"] for k in _net_terms([(src[e], 1) for e in ends])]
+            if not filed or _one_vintage(events, min(filed), max(filed)):
+                return stitched
+            return _latest_vintage_ttm(durations, events, _gap_days, stitched, per_share)
 
     if textbook is not None:
         return textbook
@@ -581,7 +598,145 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
     return None
 
 
-def _fill_q4_from_fy_minus_quarters(durations: dict, quarters: dict, gap_days) -> None:
+def _net_terms(parts: list) -> dict:
+    """Sum signed {duration: coefficient} terms, dropping what cancels: the
+    durations a derived figure really depends on. BANC's window Q3 + (FY −
+    Q1 − Q2 − Q3) + … does not depend on Q3 at all, so a re-tag of Q3 alone
+    does not split its vintage."""
+    net: dict = {}
+    for terms, sign in parts:
+        for k, c in terms.items():
+            net[k] = net.get(k, 0) + sign * c
+    return {k: c for k, c in net.items() if c}
+
+
+def _restatements(history: dict, per_share: bool = False) -> list[tuple]:
+    """Every re-report of a duration at a moved value: (prev, filed, key) —
+    `filed` re-reported duration `key` at a value its previous filing
+    `prev` did not give, so the reporting basis changed in (prev, filed].
+    `history` maps (start, end) → every (filed, val) reported for it.
+
+    Re-tagging noise is not a restatement: a move within 0.5 % (BOTJ Q2-25
+    net income 2,704K → 2,705K → 2,704K; FMFG re-tagging whole dollars as
+    thousands) or, per share, within one cent (MGYR 0.34 → 0.33, rounding)
+    is ignored (_same_figure)."""
+    events = []
+    for key, h in history.items():
+        filings = sorted({f for f, _ in h})
+        for prev, f in zip(filings, filings[1:]):
+            old = [v for g, v in h if g == prev]
+            if any(not any(_same_figure(n, o, per_share) for o in old)
+                   for g, n in h if g == f):
+                events.append((prev, f, key))
+    return events
+
+
+def _same_figure(a: float, b: float, per_share: bool) -> bool:
+    """Equal up to re-tagging noise: 0.5 %, or one cent per share."""
+    return abs(a - b) <= max(0.005 * abs(b), 0.01 if per_share else 0.0) + 1e-9
+
+
+def _caught_up(events: list, prev: str, key, by: str) -> bool:
+    """Another duration reported in filing `prev` had already been restated
+    by a filing on or before `by` — so the change behind a later re-report
+    of `key` from that same filing had happened by `by` (a catch-up). BBT's
+    Q2-26 10-Q restates H1-25 (first filed 2025-08-11); the FY2025 10-K had
+    already restated Q2-25 from that same filing."""
+    return any(p == prev and f <= by and k != key for p, f, k in events)
+
+
+def _one_vintage(events: list, first: str, last: str) -> bool:
+    """No basis change can fall between the earliest and the latest filing
+    feeding a figure: every restatement whose interval reaches inside
+    (first, last] must be a proven catch-up of a change made by `first`."""
+    return not any(f > first and prev < last and not _caught_up(events, prev, key, first)
+                   for prev, f, key in events)
+
+
+def _fy_is_current(events: list, fy_filed: str) -> bool:
+    """The 10-K filed `fy_filed` is on the basis of every later filing. A
+    later re-report of a value first filed AFTER the 10-K is a change after
+    it. One of a value filed BEFORE it is a catch-up when the 10-K itself
+    restated (it IS the new basis — LARK's FY2025 10-K re-reported FY2024
+    2.26 → 2.15, then the 10-Qs re-reported Q1-25 and H1-25) or the change
+    is proven by then (_caught_up); otherwise the 10-K may be stale."""
+    restated = any(f == fy_filed for _p, f, _k in events)
+    return all(f <= fy_filed or (prev < fy_filed and (
+        restated or _caught_up(events, prev, key, fy_filed)))
+        for prev, f, key in events)
+
+
+def _latest_vintage_ttm(durations: dict, events: list, gap_days,
+                        stitched: float, per_share: bool) -> float | None:
+    """The textbook TTM, from latest-vintage facts only, for a window whose
+    stitched quarters may straddle a restatement — or None.
+
+    LARK (5 % stock dividend): Q3-25 0.85 and 9M-25 2.41 are the 2025-11
+    10-Q's originals, FY2025 3.07 the restated 10-K, so the stitched Q4 =
+    3.07 − 2.41 = 0.66 and the TTM read 3.22. The current 10-Q carries its
+    own restated prior-year YTD: 1.70 + 3.07 − 1.49 = 3.28. The FY at the
+    newest end is itself the TTM; otherwise current YTD + the FY ending
+    just before it − the current filing's own prior-year same-length YTD,
+    with the FY on the current filing's basis (_fy_is_current). Else None —
+    never a figure assembled across two bases.
+
+    When it equals the `stitched` sum (_same_figure), the older filings
+    were already on the restated basis and the stitched figure stands
+    (LSBK: the 2025-11 10-Q's 9M already reflected the second-step
+    conversion — 0.32 + 0.27 + 0.26 + 0.29 = 0.56 + 0.97 − 0.39 = 1.14)."""
+    latest_end = max(e for _s, e in durations)
+    annual = [d for (_s, e), d in durations.items() if e == latest_end
+              and 350 <= d["span"] <= 380 and d.get("annual_10k", True)]
+    if annual:
+        fy = max(annual, key=lambda d: d["filed"])
+        value = float(fy["val"])
+    else:
+        # Both YTDs from the current filing alone: its longest facts tiling
+        # FY end → newest end, and FY start → the same date a year earlier
+        # (BANC tags discrete quarters only: Q1 + Q2 of each year).
+        f_cur = max(d["filed"] for (_s, e), d in durations.items() if e == latest_end)
+        fys = [((s, e), d) for (s, e), d in durations.items()
+               if 350 <= d["span"] <= 380 and d.get("annual_10k", True)
+               and 0 < gap_days(e, latest_end) < 350]
+        prior_ends = {e for (_s, e), d in durations.items()
+                      if d["filed"] == f_cur and 350 <= gap_days(e, latest_end) <= 380}
+        if len(fys) != 1 or len(prior_ends) != 1:
+            return None
+        (s_fy, e_fy), fy = fys[0]
+        cur = _tiled(durations, f_cur, e_fy, latest_end, gap_days)
+        prior = _tiled(durations, f_cur, _day_before(s_fy), prior_ends.pop(), gap_days)
+        if cur is None or prior is None:
+            return None
+        value = float(cur + fy["val"] - prior)
+    if _same_figure(stitched, value, per_share):
+        return stitched
+    return value if _fy_is_current(events, fy["filed"]) else None
+
+
+def _day_before(iso: str) -> str:
+    from datetime import date, timedelta
+    return (date.fromisoformat(iso) - timedelta(days=1)).isoformat()
+
+
+def _tiled(durations: dict, filed: str, after: str, end: str, gap_days) -> float | None:
+    """Sum of one filing's facts tiling (after, end] — the longest fact
+    ending at `end`, then the one ending the day before it starts, … —
+    or None if that filing's facts don't reach back to `after`."""
+    total = 0.0
+    while True:
+        pieces = [s for (s, e), d in durations.items()
+                  if e == end and d["filed"] == filed and gap_days(after, s) >= -5]
+        if not pieces:
+            return None
+        start = min(pieces)
+        total += durations[(start, end)]["val"]
+        if gap_days(after, start) <= 5:
+            return total
+        end = _day_before(start)
+
+
+def _fill_q4_from_fy_minus_quarters(durations: dict, quarters: dict, gap_days,
+                                    src: dict | None = None) -> None:
     """Q4 = FY − (Q1 + Q2 + Q3) for a filer that tags the full year and three
     discrete quarters but NO year-to-date cumulatives — the same-start
     derivation above needs a 9M fact and has none. BANC and ACNB tag exactly
@@ -603,10 +758,13 @@ def _fill_q4_from_fy_minus_quarters(durations: dict, quarters: dict, gap_days) -
                 and all(80 <= gap_days(a, b) <= 100 for a, b in zip(inner, inner[1:]))
                 and 80 <= gap_days(inner[-1], e_fy) <= 100):
             quarters[e_fy] = d_fy["val"] - sum(quarters[e] for e in inner)
+            if src is not None:
+                src[e_fy] = _net_terms([({(s_fy, e_fy): 1}, 1)] + [(src[e], -1) for e in inner])
 
 
 def _extract_ttm_dividend(
     facts: dict, concept: str = "CommonStockDividendsPerShareDeclared",
+    as_of: str | None = None,
 ) -> float | None:
     """
     Robust trailing-twelve-months dividends-per-share.
@@ -631,6 +789,13 @@ def _extract_ttm_dividend(
     quarter for an untagged Q4, or returned ONE quarter for a YTD-only tagger;
     a step 3 then served a 9-month cumulative under the TTM label
     (REVIEW-2026-09-24 P0-2). Full window or None, never a partial.
+
+    `as_of` is the newest filing's balance-sheet date. When the newest
+    dividend tag ends > 100 days before it, E is not the trailing period:
+    BAFN suspended its dividend in 2025, its 2026 10-Qs tag only the 2025
+    comparatives, and FY2025 $0.16 was served as the TTM to 2026-06-30 (a
+    1.33 % yield on a non-payer; Screen review 2026-10-06). Then the TTM is
+    _suspended_dividend_ttm's figure or None.
     """
     from datetime import datetime
     units = facts.get("facts", {}).get("us-gaap", {}).get(concept, {}).get("units", {})
@@ -647,12 +812,37 @@ def _extract_ttm_dividend(
             except ValueError:
                 continue
             entries.append({"start": start, "end": end, "val": val,
-                            "span": span, "filed": e.get("filed", "")})
+                            "span": span, "filed": e.get("filed", ""),
+                            "form": e.get("form"), "accn": e.get("accn")})
     if not entries:
         return None
+    # Every (filed, val) per duration, for restatement evidence. A split or
+    # stock dividend restates EPS too, and EPS is re-reported far more often
+    # than dividends (LARK tags no restated dividend comparative), so EPS
+    # re-reports count as evidence of a per-share basis change.
+    history: dict[tuple, list] = {}
+    for e in entries:
+        if e["form"] == "10-K" or not 350 <= e["span"] <= 380:
+            history.setdefault((e["start"], e["end"]), []).append((e["filed"], e["val"]))
+    us_gaap = facts.get("facts", {}).get("us-gaap", {})
+    for c in ("EarningsPerShareBasic", "EarningsPerShareDiluted"):
+        for e in us_gaap.get(c, {}).get("units", {}).get("USD/shares", []):
+            if (e.get("form") not in ("10-K", "10-Q") or not e.get("start")
+                    or not e.get("end") or e.get("val") is None):
+                continue
+            try:
+                span = (datetime.fromisoformat(e["end"]) - datetime.fromisoformat(e["start"])).days
+            except ValueError:
+                continue
+            if e["form"] == "10-K" or not 350 <= span <= 380:
+                history.setdefault((c, e["start"], e["end"]), []).append(
+                    (e.get("filed", ""), e["val"]))
+    events = _restatements(history, per_share=True)
 
     E = max(e["end"] for e in entries)
     Ed = datetime.fromisoformat(E)
+    if as_of and (datetime.fromisoformat(as_of) - Ed).days > 100:
+        return _suspended_dividend_ttm(facts, entries, events, as_of)
 
     # Staleness guard: if the most recent dividend tag is too old (the bank
     # stopped tagging dividends in XBRL — e.g. CBNK after mid-2024), we don't
@@ -680,9 +870,11 @@ def _extract_ttm_dividend(
     def _gap_days(a: str, b: str) -> int:
         return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).days
 
-    quarters: dict[str, float] = {
-        end: d["val"] for (start, end), d in durations.items() if 80 <= d["span"] <= 100
-    }
+    quarters: dict[str, float] = {}
+    src: dict[str, dict] = {}   # the durations behind each quarter
+    for (start, end), d in durations.items():
+        if 80 <= d["span"] <= 100:
+            quarters[end], src[end] = d["val"], {(start, end): 1}
     # Derive a missing quarter from two same-start cumulative facts whose ends
     # are one quarter apart (FY − 9M = Q4, 9M − H1 = Q3, H1 − Q1 = Q2). Direct
     # facts always beat derived ones.
@@ -693,10 +885,10 @@ def _extract_ttm_dividend(
             if s2 != s1 or e2 >= e1:
                 continue
             if 80 <= _gap_days(e2, e1) <= 100:
-                quarters[e1] = d1["val"] - d2["val"]
+                quarters[e1], src[e1] = d1["val"] - d2["val"], {(s1, e1): 1, (s2, e2): -1}
                 break
 
-    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days, src)
     if E not in quarters:
         return None  # the anchor quarter itself is not a single quarter → unknown
     ends = sorted(q for q in quarters if q <= E)[-4:]
@@ -704,7 +896,49 @@ def _extract_ttm_dividend(
         return None
     if not all(80 <= _gap_days(a, b) <= 100 for a, b in zip(ends, ends[1:])):
         return None
-    return float(sum(quarters[e] for e in ends))
+    # One filing vintage, as in _extract_ttm_value: a stock dividend restates
+    # per-share dividends too, so quarters straddling it are not one basis.
+    stitched = float(sum(quarters[e] for e in ends))
+    filed = [durations[k]["filed"] for k in _net_terms([(src[e], 1) for e in ends])]
+    if filed and not _one_vintage(events, min(filed), max(filed)):
+        return _latest_vintage_ttm(durations, events, _gap_days, stitched, per_share=True)
+    return stitched
+
+
+def _suspended_dividend_ttm(facts: dict, entries: list[dict], events: list,
+                           as_of: str) -> float | None:
+    """TTM dividends when the newest filing (balance sheet at `as_of`) tags
+    the dividend concept ONLY for prior-year comparatives: the current
+    period's dividend is absent — a suspension — so the current YTD is 0 and
+    the TTM is the last FY − that filing's own prior-year YTD comparative.
+    BAFN 10-Q 2026-06-30 (0001649739-26-000061) tags H1-25 $0.16 and Q2-25
+    $0.08, nothing for 2026, and says the Company "suspended the payment of
+    dividends in 2025": FY2025 0.16 − H1-25 0.16 + 0 = 0. For a 10-K the
+    comparative IS the prior FY, so the TTM is 0. None when the newest
+    filing tags no dividend at all (BHRB, NWPP: annual-only taggers — the
+    current dividend is unknown), when the FY isn't there, or when the two
+    facts are not one filing vintage."""
+    from datetime import date
+
+    def gap(a: str, b: str) -> int:
+        return (date.fromisoformat(b) - date.fromisoformat(a)).days
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    accns = {e.get("accn") for c in ("Assets", _SE, _SE_NCI)
+             for e in ug.get(c, {}).get("units", {}).get("USD", [])
+             if e.get("form") in ("10-K", "10-Q") and e.get("end") == as_of} - {None}
+    own = [e for e in entries if e["accn"] in accns]
+    comps = [e for e in own if 350 <= gap(e["end"], as_of) <= 380]
+    if not comps or any(gap(e["end"], as_of) < 350 for e in own):
+        return None
+    comp = max(comps, key=lambda e: e["span"])
+    fys = [e for e in entries if e["form"] == "10-K" and e["start"] == comp["start"]
+           and 350 <= e["span"] <= 380]
+    if not fys:
+        return None
+    fy = max(fys, key=lambda e: e["filed"])
+    if not _fy_is_current(events, fy["filed"]):
+        return None
+    return float(fy["val"] - comp["val"])
 
 
 def _extract_time_series(facts: dict, concept: str) -> pd.DataFrame:
@@ -846,7 +1080,7 @@ def get_latest_fundamentals(cik: int) -> dict:
     # loop set above — we'd rather show no yield than a stale one.
     result["dividends_per_share_latest_period"] = result.get("dividends_per_share")
     result["dividends_per_share"] = _extract_ttm_dividend(
-        facts, "CommonStockDividendsPerShareDeclared")
+        facts, "CommonStockDividendsPerShareDeclared", as_of=equity_date)
     result["dividends_per_share_ttm"] = result["dividends_per_share"]
 
     # Rounded-placeholder guard for the primary CommonStockSharesOutstanding.
