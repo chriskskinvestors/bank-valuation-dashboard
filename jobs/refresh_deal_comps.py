@@ -13,6 +13,12 @@ failure logs and continues — the snapshot compiles from whatever warmed;
 the job fails (rc 1) only when the final snapshot build itself refuses to
 cache (lookup failures mid-compile) or coverage is implausibly thin.
 
+``python -m jobs.refresh_deal_comps pending`` runs the PENDING fast pass
+instead (owner 2026-10-06): only the pending leg per bank, spliced into
+the served snapshot (data/deal_comps.refresh_pending_snapshot) — minutes,
+not hours, so a same-day announcement reaches the board the same day.
+Dispatch: run-job.yml with args "-m,jobs.refresh_deal_comps,pending".
+
 Cloud Run job: refresh-deal-comps (in deploy.yml's image-sync loop).
 Schedule nightly AFTER refresh-universe (e.g. 7:30am ET) via Cloud
 Scheduler — remember the scheduler-invoker run.invoker binding.
@@ -25,20 +31,42 @@ import time
 _MIN_UNIVERSE_DEALS = 100
 
 
-def main() -> int:
+def _universe_banks() -> list[dict]:
     from data.bank_mapping import get_cik, get_fdic_cert, get_name
     from data.bank_universe import get_universe_tickers
-    from data.deal_comps import build_comps_snapshot
-    from data.ma_history import get_ma_history
-
-    tickers = sorted(get_universe_tickers())
     banks = []
-    for t in tickers:
+    for t in sorted(get_universe_tickers()):
         cert = get_fdic_cert(t)
         if not cert:
             continue
         banks.append({"ticker": t, "name": get_name(t) or t,
                       "cert": int(cert), "cik": get_cik(t)})
+    return banks
+
+
+def main_pending() -> int:
+    from data.deal_comps import refresh_pending_snapshot
+    banks = _universe_banks()
+    print(f"▶ Pending fast pass over {len(banks)} banks", flush=True)
+    t0 = time.time()
+    snap = refresh_pending_snapshot(banks)
+    if not snap:
+        print("✗ pending pass wrote nothing — the previous snapshot still "
+              "serves", flush=True)
+        return 1
+    pending = sum(1 for r in snap["deals"] if r.get("status") == "pending")
+    print(f"✓ pending pass: {pending} pending deals spliced into the "
+          f"{snap['deals_total']}-deal snapshot in {time.time() - t0:.0f}s "
+          f"({len(snap.get('pending_banks_failed') or [])} banks kept their "
+          "previous pending rows)", flush=True)
+    return 0
+
+
+def main() -> int:
+    from data.deal_comps import build_comps_snapshot
+    from data.ma_history import get_ma_history
+
+    banks = _universe_banks()
     print(f"▶ Warming deal history for {len(banks)} banks", flush=True)
 
     t0 = time.time()
@@ -76,4 +104,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main_pending() if "pending" in sys.argv[1:] else main())

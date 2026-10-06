@@ -222,6 +222,86 @@ def _branch_purchases(rows: list[dict], own_cert: int) -> list[dict]:
     return deals
 
 
+def pending_deal_rows(cik: int | None, ticker: str | None,
+                      subject_name: str,
+                      settled: list[dict]) -> tuple[list[dict], bool]:
+    """
+    The pending leg on its own: still-open announced deals for one filer
+    (data/ma_pending, each gated by the SEC open-status check) as ma_history
+    rows, netted against ``settled`` — that filer's completed/terminated
+    rows ({status, completion_date, counterparty: {name}}): a pending row
+    whose counterparty matches a completed row on/after its announce date,
+    or any terminated row, is owned by that leg and dropped (the FDIC
+    structure record is the authoritative completion source and catches
+    closes the SEC net misses: Prosperity/American Bank closed 2026-01-01
+    with no 2.01 anywhere). Matching: brand token when one exists, else the
+    leading two words (case-folded); a false positive hides an open deal
+    (safe), never shows a closed one.
+
+    get_ma_history calls this with the bank's freshly built rows; the
+    pending fast pass (data/deal_comps.refresh_pending_snapshot) calls it
+    with the served snapshot's settled rows so pending deals refresh in
+    minutes instead of the full EDGAR walk. Returns (rows, ok) — ok=False
+    when a lookup failed (never cache that result).
+    """
+    from data.ma_announcements import brand_token, token_in
+    from data.ma_pending import find_pending_deals
+    pending, ok = find_pending_deals(cik, subject_name, ticker=ticker)
+
+    def _lead_words(name: str) -> str:
+        return " ".join(re.findall(r"[a-z0-9&']+", (name or "").lower())[:2])
+
+    def _same_counterparty(pending_name: str, deal_name: str) -> bool:
+        tok = brand_token(pending_name or "")
+        if tok:
+            return token_in(tok, (deal_name or "").lower())
+        lead = _lead_words(pending_name)
+        return bool(lead) and lead == _lead_words(deal_name)
+
+    rows: list[dict] = []
+    for pr in pending:
+        owned = False
+        for d in settled:
+            nm = (d.get("counterparty") or {}).get("name") or ""
+            if not _same_counterparty(pr["counterparty_name"], nm):
+                continue
+            if d["status"] == "terminated":
+                owned = True
+                break
+            if (d.get("completion_date") or "") >= pr["announce_date"]:
+                owned = True
+                break
+        if owned:
+            continue
+        assets, repdte, a_ok = (
+            _assets_before(pr["counterparty_cert"], pr["announce_date"])
+            if pr["direction"] == "acquisition" else (None, None, True))
+        ok = ok and a_ok
+        rows.append({
+            "completion_date": None,
+            "deal_kind": "whole_company",
+            "direction": pr["direction"],
+            "counterparty": {"name": pr["counterparty_name"],
+                             "cert": pr["counterparty_cert"]},
+            "branch_count": None,
+            "event_code": None,
+            "event_desc": "Announced — pending",
+            "target_assets": assets,
+            "target_assets_repdte": repdte,
+            "announce_date": pr["announce_date"],
+            "value_usd": pr["value_usd"],
+            "value_basis": pr["value_basis"],
+            "value_note": pr["value_note"],
+            "target_cik": pr["target_cik"],
+            "announce_url": pr["announce_url"],
+            "terms": pr.get("terms"),
+            "milestones": pr.get("milestones"),
+            "status": "pending",
+            "termination_date": None,
+        })
+    return rows, ok
+
+
 def get_ma_history(cert: int, cik: int | None = None,
                    name: str | None = None,
                    ticker: str | None = None) -> list[dict]:
@@ -478,61 +558,9 @@ def get_ma_history(cert: int, cik: int | None = None,
     # Company" vs FDIC's "American Bank, National Association"); a false
     # positive here hides an open deal (safe), never shows a closed one.
     if cik or ticker:
-        from data.ma_announcements import brand_token, token_in
-        from data.ma_pending import find_pending_deals
-        pending, pd_ok = find_pending_deals(cik, subject_name, ticker=ticker)
+        pending_rows, pd_ok = pending_deal_rows(cik, ticker, subject_name, deals)
         cache_ok = cache_ok and pd_ok
-
-        def _lead_words(name: str) -> str:
-            return " ".join(re.findall(r"[a-z0-9&']+", (name or "").lower())[:2])
-
-        def _same_counterparty(pending_name: str, deal_name: str) -> bool:
-            tok = brand_token(pending_name or "")
-            if tok:
-                return token_in(tok, (deal_name or "").lower())
-            lead = _lead_words(pending_name)
-            return bool(lead) and lead == _lead_words(deal_name)
-
-        for pr in pending:
-            owned = False
-            for d in deals:
-                nm = (d.get("counterparty") or {}).get("name") or ""
-                if not _same_counterparty(pr["counterparty_name"], nm):
-                    continue
-                if d["status"] == "terminated":
-                    owned = True
-                    break
-                if (d.get("completion_date") or "") >= pr["announce_date"]:
-                    owned = True
-                    break
-            if owned:
-                continue
-            assets, repdte, a_ok = (
-                _assets_before(pr["counterparty_cert"], pr["announce_date"])
-                if pr["direction"] == "acquisition" else (None, None, True))
-            cache_ok = cache_ok and a_ok
-            deals.append({
-                "completion_date": None,
-                "deal_kind": "whole_company",
-                "direction": pr["direction"],
-                "counterparty": {"name": pr["counterparty_name"],
-                                 "cert": pr["counterparty_cert"]},
-                "branch_count": None,
-                "event_code": None,
-                "event_desc": "Announced — pending",
-                "target_assets": assets,
-                "target_assets_repdte": repdte,
-                "announce_date": pr["announce_date"],
-                "value_usd": pr["value_usd"],
-                "value_basis": pr["value_basis"],
-                "value_note": pr["value_note"],
-                "target_cik": pr["target_cik"],
-                "announce_url": pr["announce_url"],
-                "terms": pr.get("terms"),
-                "milestones": pr.get("milestones"),
-                "status": "pending",
-                "termination_date": None,
-            })
+        deals.extend(pending_rows)
 
     deals.sort(key=lambda x: (x["completion_date"] or x["termination_date"]
                               or x.get("announce_date") or ""),

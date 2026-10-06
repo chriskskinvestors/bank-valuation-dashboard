@@ -168,9 +168,12 @@ def _render_recent_deals():
         return
     today = date.today()
     rows = _pending_rows(snap["deals"])
+    # The pending fast pass stamps pending_built_at (minutes-old); the
+    # full walk's built_at is the fallback.
+    stamp = str(snap.get("pending_built_at") or snap.get("built_at") or "")
     pill_row([
         stat_pill("PENDING", f"{len(rows):,}"),
-        stat_pill("SNAPSHOT", _h.escape(str(snap.get("built_at", ""))[:10])),
+        stat_pill("PENDING AS OF", _h.escape(stamp[:16].replace("T", " "))),
     ], margin="2px 0 12px")
     if not rows:
         from ui.states import empty_state

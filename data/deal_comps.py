@@ -342,27 +342,7 @@ def build_comps_snapshot(banks: list[dict],
                     continue
             mult, m_ok = compute_multiples(d)
             lookups_ok = lookups_ok and m_ok
-            by_key[k] = ({
-                "buyer_ticker": b.get("ticker"),
-                "buyer_name": b.get("name") or b.get("ticker"),
-                "buyer_cert": cert,
-                "target_name": (d.get("counterparty") or {}).get("name"),
-                "target_cert": (d.get("counterparty") or {}).get("cert"),
-                "status": d.get("status"),
-                "announce_date": d.get("announce_date"),
-                "completion_date": d.get("completion_date"),
-                "termination_date": d.get("termination_date"),
-                "value_usd": d.get("value_usd"),
-                "value_basis": d.get("value_basis"),
-                "value_note": d.get("value_note"),
-                "announce_url": d.get("announce_url"),
-                "target_assets": d.get("target_assets"),
-                "target_assets_repdte": d.get("target_assets_repdte"),
-                "target_ticker": (d.get("terms") or {}).get("tgt_ticker"),
-                "terms": d.get("terms"),
-                "milestones": d.get("milestones"),
-                **mult,
-            })
+            by_key[k] = _snapshot_row(b, cert, d, mult)
     rows = list(by_key.values())
     if not lookups_ok:
         print("[deal_comps] lookups failed during build — snapshot NOT cached")
@@ -380,6 +360,123 @@ def build_comps_snapshot(banks: list[dict],
     snapshot = {
         "built_at": datetime.now().isoformat(),
         "banks_covered": covered,
+        "deals_total": len(rows),
+        "deals_priced": sum(1 for r in rows if r.get("p_tbv")),
+        "deals": rows,
+    }
+    cache.put(SNAPSHOT_KEY, snapshot)
+    return snapshot
+
+
+def _snapshot_row(b: dict, cert, d: dict, mult: dict) -> dict:
+    return {
+        "buyer_ticker": b.get("ticker"),
+        "buyer_name": b.get("name") or b.get("ticker"),
+        "buyer_cert": cert,
+        "target_name": (d.get("counterparty") or {}).get("name"),
+        "target_cert": (d.get("counterparty") or {}).get("cert"),
+        "status": d.get("status"),
+        "announce_date": d.get("announce_date"),
+        "completion_date": d.get("completion_date"),
+        "termination_date": d.get("termination_date"),
+        "value_usd": d.get("value_usd"),
+        "value_basis": d.get("value_basis"),
+        "value_note": d.get("value_note"),
+        "announce_url": d.get("announce_url"),
+        "target_assets": d.get("target_assets"),
+        "target_assets_repdte": d.get("target_assets_repdte"),
+        "target_ticker": (d.get("terms") or {}).get("tgt_ticker"),
+        "terms": d.get("terms"),
+        "milestones": d.get("milestones"),
+        **mult,
+    }
+
+
+def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
+    """
+    Pending fast pass (owner 2026-10-06: "pending deals with arbs live
+    ASAP"): re-run ONLY the pending leg for every bank and splice the fresh
+    pending rows into the served snapshot, keeping its completed and
+    terminated rows untouched. Minutes instead of the full EDGAR walk, so
+    a same-day announcement reaches the board the same day.
+
+    The FDIC second net uses the served snapshot's own settled rows for the
+    buyer (the authoritative completion record as of that build). A bank
+    whose pending leg fails (EDGAR/FDIC lookup) keeps its OLD pending rows
+    — a failure never erases a deal and never refuses the whole pass; the
+    pass is refused (nothing written) only when no bank could be walked or
+    there is no snapshot to splice into. ``pending_built_at`` stamps the
+    result; ``built_at`` stays the full walk's.
+    """
+    from data import cache
+    from data.ma_history import pending_deal_rows
+
+    snap = get_comps_snapshot()
+    if not snap:
+        print("[deal_comps] no snapshot to splice pending rows into — run "
+              "the full walk first")
+        return None
+    settled: dict = {}
+    for r in snap["deals"]:
+        if r.get("status") in ("completed", "terminated"):
+            settled.setdefault(r.get("buyer_cert"), []).append({
+                "status": r["status"],
+                "completion_date": r.get("completion_date"),
+                "counterparty": {"name": r.get("target_name")}})
+
+    by_key: dict[tuple, dict] = {}
+    failed: set = set()
+    walked = 0
+    for b in banks:
+        cert, cik, ticker = b.get("cert"), b.get("cik"), b.get("ticker")
+        if not cert or not (cik or ticker):
+            continue
+        try:
+            rows, ok = pending_deal_rows(cik, ticker, b.get("name") or ticker,
+                                         settled.get(cert, []))
+        except Exception as e:
+            print(f"[deal_comps] pending {ticker}: {type(e).__name__}: {e} "
+                  "— previous pending rows kept")
+            failed.add(cert)
+            continue
+        if not ok:
+            failed.add(cert)
+            continue
+        walked += 1
+        fresh: dict[tuple, dict] = {}
+        for d in rows:
+            if d.get("direction") == "sale":
+                continue              # the acquirer's row carries the deal
+            k = _dedupe_key(d, cert)
+            prev = fresh.get(k)
+            if prev is not None and (d.get("target_assets") or 0) <= (
+                    prev.get("target_assets") or 0):
+                continue
+            mult, m_ok = compute_multiples(d)
+            if not m_ok:
+                ok = False
+                break
+            fresh[k] = _snapshot_row(b, cert, d, mult)
+        if not ok:
+            failed.add(cert)
+            walked -= 1
+            continue
+        by_key.update(fresh)
+    if not walked:
+        print("[deal_comps] pending pass walked no bank — snapshot NOT written")
+        return None
+
+    kept = [r for r in snap["deals"]
+            if r.get("status") != "pending" or r.get("buyer_cert") in failed]
+    rows = kept + list(by_key.values())
+    rows.sort(key=lambda r: (r.get("announce_date")
+                             or r.get("completion_date")
+                             or r.get("termination_date") or ""),
+              reverse=True)
+    snapshot = {
+        **snap,
+        "pending_built_at": datetime.now().isoformat(),
+        "pending_banks_failed": sorted(str(c) for c in failed),
         "deals_total": len(rows),
         "deals_priced": sum(1 for r in rows if r.get("p_tbv")),
         "deals": rows,
