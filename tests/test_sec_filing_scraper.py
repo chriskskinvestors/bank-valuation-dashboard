@@ -1948,6 +1948,8 @@ class TestHoldcoCapitalMultiyear(unittest.TestCase):
     _list_10k_filings, the per-filing extract, _fdic_cet1 and _fye_month_for are
     stubbed."""
 
+    html_tables: dict = {}       # accession -> extract_untagged_capital_tables
+
     def _meta(self, date, acc, form):
         return {"accession": acc, "doc": f"d-{acc}.htm", "date": date,
                 "cik": 99, "form": form}
@@ -1972,7 +1974,9 @@ class TestHoldcoCapitalMultiyear(unittest.TestCase):
                                side_effect=lambda cik, limit: tenk_list[:limit]), \
              mock.patch.object(S, "_fye_month_for", return_value=fye), \
              mock.patch.object(S, "_holdco_capital_extract_cached",
-                               side_effect=lambda m, anchor: extracts[m["accession"]]):
+                               side_effect=lambda m, anchor: extracts[m["accession"]]), \
+             mock.patch.object(S, "_untagged_capital_cached",
+                               side_effect=lambda m: self.html_tables.get(m["accession"], {})):
             return S.holdco_capital_for(99)
 
     def test_stitches_five_fiscal_years_from_10ks(self):
@@ -2095,11 +2099,250 @@ class TestHoldcoCapitalMultiyear(unittest.TestCase):
              mock.patch.object(SS, "_recent_filing_metas",
                                side_effect=lambda cik, forms, n: metas), \
              mock.patch.object(S, "_holdco_capital_extract_cached",
-                               side_effect=lambda m, anchor: extracts[m["accession"]]):
+                               side_effect=lambda m, anchor: extracts[m["accession"]]), \
+             mock.patch.object(S, "_untagged_capital_cached", return_value={}):
             res = S.holdco_capital_quarterly_for(99)
         self.assertEqual(res["meta"]["accession"], "K25")
         self.assertEqual(res["untagged"]["accession"], "Q2")
         self.assertEqual(list(res["capital"]), ["2025-12-31"])
+
+
+class TestUntaggedTenQCapitalTable(unittest.TestCase):
+    """Owner decision 2026-10-06: a 10-Q whose capital table is untagged HTML
+    (ONB / C Q2-2026) contributes its quarter ONLY from the column dated the
+    period end — never a minimum / well-capitalized / required column — and
+    only when the same table's prior-year-end column reproduces the 10-K's
+    extracted figures to 0.01pt, CET1 ≤ Tier 1 ≤ Total, and CET1 sits in the
+    FDIC anchor band. Otherwise n/a, as before. Fixtures are the real 10-Q
+    tables (tests/fixtures_untagged_capital.py); no network."""
+
+    # FY2025 as extract_holdco_capital returns it from each bank's 10-K (ONB:
+    # tagged ratios; C: Tier 1 / Total re-derived Standardized = capital / RWA).
+    ONB_FY25 = {"cet1_ratio": 0.1108, "t1_ratio": 0.1153, "total_ratio": 0.1285,
+                "lev_ratio": 0.089, "_confidence": "default"}
+    C_FY25 = {"cet1_ratio": 0.1318, "t1_ratio": 179_675 / 1_192_174,
+              "total_ratio": 216_468 / 1_192_174, "lev_ratio": 0.0669}
+    ONB_ANCHOR, C_ANCHOR = 11.34, 13.79          # FDIC bank-sub CET1 (IDT1CER)
+
+    @classmethod
+    def setUpClass(cls):
+        from data.sec_filing_scraper import extract_untagged_capital_tables
+        from tests.fixtures_untagged_capital import ONB_Q2_2026, C_Q2_2026
+        cls.onb = extract_untagged_capital_tables(ONB_Q2_2026.encode("utf-8"))
+        cls.c = extract_untagged_capital_tables(C_Q2_2026.encode("utf-8"))
+
+    def _gate(self, parsed, fy, anchor, fy_period="2025-12-31"):
+        from data.sec_filing_scraper import _untagged_quarter
+        return _untagged_quarter(parsed, {fy_period: dict(fy)}, anchor)
+
+    def test_onb_reads_the_june_column_never_the_minimum(self):
+        self.assertEqual(self.onb["period"], "2026-06-30")
+        q, why = self._gate(self.onb, self.ONB_FY25, self.ONB_ANCHOR)
+        self.assertEqual(why, "ok")
+        # "Common equity Tier 1 capital to risk-weighted total assets
+        #  | 7.00 | N/A | 11.09 | 11.08" — the 11.09 June 30, 2026 column.
+        self.assertAlmostEqual(q["cet1_ratio"], 0.1109)
+        self.assertAlmostEqual(q["t1_ratio"], 0.1153)
+        self.assertAlmostEqual(q["total_ratio"], 0.1365)
+        self.assertAlmostEqual(q["lev_ratio"], 0.0895)
+        self.assertNotAlmostEqual(q["cet1_ratio"], 0.07)       # the minimum
+        self.assertTrue(q["_untagged_table"])
+        self.assertFalse(q["_cblr"])
+        self.assertNotIn("cet1_cap", q)                       # ratios only
+
+    def test_onb_selected_data_table_is_not_a_capital_table(self):
+        # The five-quarter highlights table ("Tier 1 common equity | 11.09 |
+        # 11.11 | ..." under split "June 30," / "2026" header rows) carries no
+        # ratio wording on CET1 and no whole-cell dates: never parsed as one.
+        self.assertEqual(len(self.onb["tables"]), 2)          # holdco + bank
+
+    def test_onb_bank_subsidiary_table_alone_is_rejected(self):
+        bank_only = {"period": "2026-06-30", "tables": [self.onb["tables"][1]]}
+        q, why = self._gate(bank_only, self.ONB_FY25, self.ONB_ANCHOR)
+        self.assertIsNone(q)                    # Dec 11.05 ≠ 10-K holdco 11.08
+        self.assertIn("does not match the 10-K", why)
+
+    def test_dec_column_disagreeing_with_the_10k_is_na(self):
+        fy = dict(self.ONB_FY25, cet1_ratio=0.1100)   # 10-K says 11.00, table 11.08
+        q, why = self._gate(self.onb, fy, self.ONB_ANCHOR)
+        self.assertIsNone(q)
+        self.assertIn("cet1_ratio 2025-12-31: table 11.08 vs 10-K 11.00", why)
+
+    def test_no_10k_comparative_is_na(self):
+        q, why = self._gate(self.onb, self.ONB_FY25, self.ONB_ANCHOR,
+                            fy_period="2024-12-31")
+        self.assertIsNone(q)
+        self.assertIn("no comparative column", why)
+
+    def test_citi_standardized_column_of_the_june_block(self):
+        # One table, a "June 30, 2026" block then a "December 31, 2025" block,
+        # columns Required Ratios | Standardized | Required Ratios | Advanced.
+        # "CET1 Capital ratio | 11.6 | 12.78 | 10.5 | 11.85" → 12.78.
+        self.assertEqual(self.c["period"], "2026-06-30")
+        q, why = self._gate(self.c, self.C_FY25, self.C_ANCHOR)
+        self.assertEqual(why, "ok")
+        self.assertAlmostEqual(q["cet1_ratio"], 0.1278)
+        self.assertAlmostEqual(q["t1_ratio"], 0.1468)
+        self.assertAlmostEqual(q["total_ratio"], 0.1766)
+        self.assertAlmostEqual(q["lev_ratio"], 0.0624)
+        for wrong in (0.1185, 0.116, 0.105):    # Advanced, required, required
+            self.assertNotAlmostEqual(q["cet1_ratio"], wrong)
+
+    def test_citibank_tables_and_requirement_table_never_used(self):
+        # Citibank's June table (CET1 14.68%) has no December column; its
+        # December table has no June column; the buffer table's "CET1 Capital
+        # ratio requirement 11.6" is a threshold row.
+        bank = {"period": "2026-06-30", "tables": self.c["tables"][1:]}
+        q, why = self._gate(bank, self.C_FY25, self.C_ANCHOR)
+        self.assertIsNone(q)
+        from data.sec_filing_scraper import _ut_line
+        self.assertIsNone(_ut_line("CET1 Capital ratio requirement"))
+        self.assertIsNone(_ut_line("Supplementary Leverage ratio(6)"))
+        self.assertIsNone(_ut_line("Common Equity Tier 1 Capital"))   # $ amount
+        self.assertEqual(_ut_line("CET1 Capital ratio(1)"), "cet1_ratio")
+
+    def test_zion_summary_table(self):
+        # "Total risk-based ratio | 14.0 % | 13.8 % | 13.4 %" (no "capital"
+        # wording) is the Total line; "Average equity to average assets" is
+        # NOT leverage (it made the leverage line ambiguous before).
+        from data.sec_filing_scraper import extract_untagged_capital_tables
+        from tests.fixtures_untagged_capital import ZION_Q2_2026
+        parsed = extract_untagged_capital_tables(ZION_Q2_2026.encode("utf-8"))
+        fy = {"cet1_ratio": 0.115, "t1_ratio": 0.116, "total_ratio": 0.138,
+              "lev_ratio": 0.090}                    # ZION FY2025 10-K
+        q, why = self._gate(parsed, fy, 10.9)
+        self.assertEqual(why, "ok")
+        self.assertAlmostEqual(q["cet1_ratio"], 0.118)
+        self.assertAlmostEqual(q["t1_ratio"], 0.119)
+        self.assertAlmostEqual(q["total_ratio"], 0.140)
+        self.assertAlmostEqual(q["lev_ratio"], 0.094)
+
+    def test_row_labels_from_the_universe_diff(self):
+        from data.sec_filing_scraper import _ut_line
+        # EBC Q2-2026 selected-data table
+        self.assertEqual(_ut_line("Tier 1 capital (to average assets) leverage"), "lev_ratio")
+        self.assertIsNone(_ut_line("Average equity to average assets (1)"))
+        self.assertEqual(_ut_line("Total regulatory capital (to risk-weighted assets)"),
+                         "total_ratio")
+        # CCNE / ZION wording
+        self.assertEqual(_ut_line("Common equity tier 1 ratio"), "cet1_ratio")
+        self.assertEqual(_ut_line("Tier 1 risk-based ratio"), "t1_ratio")
+        self.assertEqual(_ut_line("Total risk-based ratio (1)"), "total_ratio")
+        self.assertIsNone(_ut_line("Total risk-weighted assets"))
+
+    def test_threshold_only_dated_column_is_na(self):
+        from data.sec_filing_scraper import extract_untagged_capital_tables
+        html = ("<p><ix:nonNumeric name='dei:DocumentPeriodEndDate'>June 30, 2026"
+                "</ix:nonNumeric></p><table>"
+                "<tr><td></td><td>Minimum required at June 30, 2026</td>"
+                "<td>December 31, 2025</td></tr>"
+                "<tr><td>CET1 capital ratio</td><td>7.00</td><td>11.08</td></tr>"
+                "<tr><td>Tier 1 capital ratio</td><td>8.50</td><td>11.53</td></tr>"
+                "<tr><td>Total capital ratio</td><td>10.50</td><td>12.85</td></tr>"
+                "</table>")
+        parsed = extract_untagged_capital_tables(html.encode())
+        self.assertNotIn("2026-06-30", parsed["tables"][0])
+        q, why = self._gate(parsed, self.ONB_FY25, self.ONB_ANCHOR)
+        self.assertIsNone(q)
+        self.assertIn("no CET1 in a column dated the period end", why)
+
+    def test_date_split_across_header_rows_joins_only_same_span_cells(self):
+        # AUB Q2-2026: "​ | June 30, | December 31, | June 30," over
+        # "​ | 2026 | 2025 | 2025" (U+200B padding), one grid column each.
+        from data.sec_filing_scraper import extract_untagged_capital_tables
+        head = ("<p><ix:nonNumeric name='dei:DocumentPeriodEndDate'>June 30, 2026"
+                "</ix:nonNumeric></p><table>")
+        same = (head + "<tr><td>​</td><td>June 30,</td><td>December 31,</td></tr>"
+                "<tr><td>​</td><td>2026</td><td>2025</td></tr>"
+                "<tr><td>Capital ratios:</td><td>​</td><td>​</td></tr>"
+                "<tr><td>CET1 capital ratio</td><td>11.09%</td><td>11.08%</td></tr>"
+                "</table>")
+        self.assertEqual(extract_untagged_capital_tables(same.encode())["tables"],
+                         [{"2026-06-30": {"cet1_ratio": 11.09},
+                           "2025-12-31": {"cet1_ratio": 11.08}}])
+        # Different widths (a misaligned year row) are never stitched.
+        skew = (head + "<tr><td></td><td colspan='2'>June 30,</td>"
+                "<td colspan='2'>December 31,</td></tr>"
+                "<tr><td></td><td>2026</td><td>2025</td><td>2025</td><td></td></tr>"
+                "<tr><td>CET1 capital ratio</td><td>11.09</td><td></td>"
+                "<td>11.08</td><td></td></tr></table>")
+        self.assertEqual(extract_untagged_capital_tables(skew.encode())["tables"], [])
+
+    def test_stack_and_anchor_gates(self):
+        import copy
+        broken = copy.deepcopy(self.onb)
+        broken["tables"][0]["2026-06-30"]["t1_ratio"] = 11.00   # < CET1 11.09
+        q, why = self._gate(broken, self.ONB_FY25, self.ONB_ANCHOR)
+        self.assertIsNone(q)
+        self.assertIn("capital stack broken", why)
+        q, why = self._gate(self.onb, self.ONB_FY25, 4.0)     # 11.09 vs 4.0 > 6pt
+        self.assertIsNone(q)
+        self.assertIn("anchor band", why)
+
+    def test_leverage_absent_still_accepted(self):
+        import copy
+        nolev = copy.deepcopy(self.onb)
+        for d in nolev["tables"][0].values():
+            d.pop("lev_ratio")
+        q, why = self._gate(nolev, self.ONB_FY25, self.ONB_ANCHOR)
+        self.assertEqual(why, "ok")
+        self.assertNotIn("lev_ratio", q)
+        self.assertAlmostEqual(q["cet1_ratio"], 0.1109)
+
+    # ── wired through holdco_capital_for / holdco_capital_quarterly_for ──
+    def _meta(self, date, acc, form):
+        return {"accession": acc, "doc": f"d-{acc}.htm", "date": date,
+                "cik": 707179, "form": form}
+
+    def _annual(self, fy25):
+        import data.sec_filing_scraper as S
+        q = self._meta("2026-07-29", "Q2", "10-Q")
+        k = self._meta("2026-02-19", "K25", "10-K")
+        extracts = {"Q2": {}, "K25": {"2025-12-31": dict(fy25)}}
+        with mock.patch.object(S, "_fdic_cet1", return_value=self.ONB_ANCHOR), \
+             mock.patch.object(S, "latest_filing",
+                               side_effect=lambda cik, forms: q if forms == ("10-Q",) else k), \
+             mock.patch.object(S, "_list_10k_filings", side_effect=lambda cik, n: [k]), \
+             mock.patch.object(S, "_fye_month_for", return_value="12"), \
+             mock.patch.object(S, "_holdco_capital_extract_cached",
+                               side_effect=lambda m, anchor: extracts[m["accession"]]), \
+             mock.patch.object(S, "_untagged_capital_cached",
+                               side_effect=lambda m: self.onb if m["accession"] == "Q2" else {}):
+            return S.holdco_capital_for(707179, 3832)
+
+    def test_annual_fills_the_quarter_and_names_the_table(self):
+        res = self._annual(self.ONB_FY25)
+        self.assertEqual(sorted(res["capital"]), ["2025-12-31", "2026-06-30"])
+        self.assertAlmostEqual(res["capital"]["2026-06-30"]["cet1_ratio"], 0.1109)
+        self.assertEqual(res["meta"]["accession"], "K25")       # tagged source
+        self.assertIsNone(res["untagged"])                      # quarter now shown
+        self.assertEqual([(m["accession"], m["period"]) for m in res["untagged_table"]],
+                         [("Q2", "2026-06-30")])
+
+    def test_annual_unverified_table_keeps_todays_na(self):
+        res = self._annual(dict(self.ONB_FY25, cet1_ratio=0.1100))
+        self.assertEqual(sorted(res["capital"]), ["2025-12-31"])
+        self.assertEqual(res["untagged"]["accession"], "Q2")    # labeled n/a
+        self.assertEqual(res["untagged_table"], [])
+
+    def test_quarterly_fills_verified_quarters_only(self):
+        import data.sec_filing_scraper as S
+        import data.sec_statements as SS
+        metas = [self._meta("2026-07-29", "Q2", "10-Q"),
+                 self._meta("2026-04-29", "Q1", "10-Q"),
+                 self._meta("2026-02-19", "K25", "10-K")]
+        extracts = {"Q2": {}, "Q1": {}, "K25": {"2025-12-31": dict(self.ONB_FY25)}}
+        with mock.patch.object(S, "_fdic_cet1", return_value=self.ONB_ANCHOR), \
+             mock.patch.object(SS, "_recent_filing_metas",
+                               side_effect=lambda cik, forms, n: metas), \
+             mock.patch.object(S, "_holdco_capital_extract_cached",
+                               side_effect=lambda m, anchor: extracts[m["accession"]]), \
+             mock.patch.object(S, "_untagged_capital_cached",
+                               side_effect=lambda m: self.onb if m["accession"] == "Q2" else {}):
+            res = S.holdco_capital_quarterly_for(707179, 3832)
+        self.assertEqual(sorted(res["capital"]), ["2025-12-31", "2026-06-30"])
+        self.assertEqual(res["untagged"]["accession"], "Q1")    # still n/a, named
+        self.assertEqual([m["accession"] for m in res["untagged_table"]], ["Q2"])
 
 
 class TestAssetQualityNimWindow(unittest.TestCase):
