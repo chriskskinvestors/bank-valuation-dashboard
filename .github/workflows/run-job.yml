@@ -11,6 +11,9 @@ on:
         required: true
         type: choice
         options:
+          # Every job the deploy's job-sync step manages (keep in step with
+          # deploy.yml). refresh-home-snapshot was missing on 2026-10-06, so a
+          # post-deploy metrics rebuild could not be triggered from here.
           - refresh-universe
           - refresh-sod
           - refresh-ffiec
@@ -19,6 +22,19 @@ on:
           - refresh-prices
           - verify-metrics
           - backfill-fdic-history
+          - refresh-home-snapshot
+          - refresh-13f
+          - refresh-avg-volume
+          - refresh-capital
+          - refresh-company-financials
+          - refresh-cr-quarterly
+          - refresh-deal-comps
+          - refresh-insider
+          - refresh-live-yields
+          - refresh-macro
+          - refresh-premarket
+          - refresh-trends
+          - nic-mirror-verify
           - refresh-13f
           - refresh-deal-comps
       args:
