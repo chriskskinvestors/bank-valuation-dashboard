@@ -281,6 +281,13 @@ def _no_recent_earnings_8k(ticker: str, max_age_days: int = 200) -> bool:
         return False
 
 
+# OTC EPS-history backfills per run (owner spec 2026-10-06): each is a
+# one-time, ≤4-document pass per bank (data/otc_release.backfill_eps_history),
+# so the ~100 no-XBRL banks finish within a few 30-min runs without one run
+# spending an hour in prior-release fetches.
+_EPS_BACKFILL_PER_RUN = 25
+
+
 def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
     """Warm the otc_release envelopes for every bank the valuation resolvers
     would consult them for: the no-XBRL set (`sec` is this run's loaded
@@ -317,6 +324,24 @@ def _warm_otc_releases(tickers: list[str], sec: dict) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] otc releases warmed: {warmed} banks"
           f"{f', {failed} failed' if failed else ''} "
           f"in {_t.time() - t0:.0f}s", flush=True)
+    # OTC composite TTM EPS needs four discrete quarters per bank; the
+    # envelope holds one release. Backfill each no-XBRL bank's quarter
+    # history from its prior releases ONCE (bounded per bank and per run) —
+    # here, after the warm, where nothing waits on it; renders only read.
+    from data.otc_release import backfill_eps_history
+    t1, ran = _t.time(), 0
+    for t in targets:
+        if ran >= _EPS_BACKFILL_PER_RUN:
+            break
+        try:
+            if backfill_eps_history(t):
+                ran += 1
+        except Exception as e:
+            print(f"[home-snap] otc eps-history backfill failed for {t}: "
+                  f"{type(e).__name__}: {e}", flush=True)
+    if ran:
+        print(f"[{time.strftime('%H:%M:%S')}] otc eps histories backfilled: "
+              f"{ran} banks in {_t.time() - t1:.0f}s", flush=True)
 
 
 def _warm_rates_bundle() -> None:

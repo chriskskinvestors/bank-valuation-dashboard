@@ -270,3 +270,83 @@ def _assemble(cik_i: int, rm: dict, expected: str | None):
         "quarter_sources": sources,
     }
     return value, qend, components
+
+
+# ── Non-SEC filers (owner spec 2026-10-06) ──────────────────────────────────
+# ~100 universe banks file nothing with EDGAR: no XBRL TTM, no Company-
+# Reported statements. Their quarterly release is the ONLY earnings source,
+# so the composite below is the SAME A21 rule with every component drawn
+# from the bank's own releases: the latest release's quarter (the envelope's
+# headline figure) + the three prior discrete quarters from the per-ticker
+# quarter history data/otc_release keeps (five-quarter table columns, prior
+# releases, the bounded backfill) — ALL FOUR or (None, None, None). A
+# fiscal-Q4 built from a FY figure is permitted ONLY as FY − 9M on the
+# bank's own stated figures (the same-start YTD construction); that path is
+# not built here — a bank whose history lacks a discrete quarter is n/a,
+# never a guessed split.
+
+_OTC_STALE_DAYS = 200     # as analysis/valuation._otc_release_ps
+
+
+def otc_composite_ttm_eps(ticker, today=None) -> tuple[float | None, str | None, dict | None]:
+    """(TTM diluted EPS from the bank's own releases, quarter-end it runs
+    through, components) for a NON-SEC filer, or (None, None, None).
+    `today` pins the staleness clock (tests); default = date.today().
+
+    Anchor = the latest release envelope (serve-only read — never a fetch:
+    this runs inside the 600-bank snapshot build and on Company-page
+    renders; jobs/refresh_home_snapshot warms the envelope and the history).
+    The anchor quarter must be a real calendar quarter-end no older than
+    _OTC_STALE_DAYS (the bank stopped publishing otherwise — pricing today's
+    quote against it drifts), and the three quarters before it must each be
+    in the history, unconflicted. A history entry for the anchor quarter
+    that disagrees with the envelope's headline figure refuses too.
+
+    components = {"release": {qend, eps, url},
+                  "quarters": {ISO qend: EPS},
+                  "quarter_sources": {ISO qend: {via, url}}}
+    — per-component provenance (table column vs prior-release URL)."""
+    if not ticker:
+        return None, None, None
+    from datetime import date
+
+    from data.otc_release import (_is_quarter_end, get_eps_history,
+                                  otc_release_metrics)
+    from data.release_metrics import _prior_quarter_end
+
+    env = otc_release_metrics(ticker, allow_fetch=False) or {}
+    qend = env.get("qend")
+    anchor = (env.get("metrics") or {}).get("eps_diluted")
+    if anchor is None or not _is_quarter_end(qend):
+        return None, None, None
+    try:
+        age_days = ((today or date.today()) - date.fromisoformat(qend)).days
+    except ValueError:
+        return None, None, None
+    if age_days > _OTC_STALE_DAYS:
+        return None, None, None
+
+    hist = (get_eps_history(ticker) or {}).get("quarters") or {}
+    own = hist.get(qend)
+    if own and (own.get("conflict")
+                or (own.get("eps_diluted") is not None
+                    and abs(own["eps_diluted"] - anchor) > 0.011)):
+        return None, None, None
+
+    quarters: dict[str, float] = {qend: float(anchor)}
+    sources: dict[str, dict] = {qend: {"via": "release", "url": env.get("url")}}
+    q = qend
+    for _ in range(3):
+        q = _prior_quarter_end(q)
+        e = hist.get(q) if q else None
+        if not e or e.get("conflict") or e.get("eps_diluted") is None:
+            # A21 discipline: fewer than four quarters is NOT a TTM.
+            return None, None, None
+        quarters[q] = float(e["eps_diluted"])
+        sources[q] = {"via": e.get("via"), "url": e.get("url")}
+    value = round(sum(quarters.values()), 4)
+    return value, qend, {
+        "release": {"qend": qend, "eps": anchor, "url": env.get("url")},
+        "quarters": quarters,
+        "quarter_sources": sources,
+    }

@@ -257,6 +257,7 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
     _src = {"reported_8k": "company-reported (earnings release, 8-K)",
             "company_release": "company-reported (wire earnings release)",
             "release_ttm": "company-reported quarters (earnings releases), TTM",
+            "release_ttm_otc": "company-reported quarters (earnings releases), TTM",
             "reconstructed_company_shares": "SEC tangible common equity ÷ the "
                                             "company's share basis (earnings release)"}
     EPS = {"label": "Base EPS (TTM, $)", "val": dol(seed["base_eps"]), "doc": eps_doc,
