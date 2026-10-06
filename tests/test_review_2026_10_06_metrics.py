@@ -61,6 +61,22 @@ def _window(ticker, sec, pts, bank_goodwill_k=None):
         return val.holdco_tce_window(ticker, sec, bank_goodwill_k)
 
 
+
+# compute_all_valuations → deposit dynamics → a live FRED Fed-funds lookup;
+# a warm local cache.db hid it (CI has none). Stub the seam module-wide.
+_FED = None
+
+
+def setUpModule():
+    global _FED
+    from unittest import mock as _m
+    _FED = _m.patch("analysis.deposit_dynamics._get_fed_funds", new=lambda _d: None)
+    _FED.start()
+
+
+def tearDownModule():
+    _FED.stop()
+
 class TestP1HoldcoRoatceAverageTce(unittest.TestCase):
     def test_onb_average_of_five_quarter_ends(self):
         w = _window("ONB", ONB_SEC, ONB_TCE)
@@ -448,3 +464,71 @@ class TestP2(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TestValuationModelSeedsEngineRoatce(unittest.TestCase):
+    """The Valuation Model seeds the same average-TCE holdco ROATCE and the
+    same merger n/a as the Screen (one engine call, holdco_tce_window_for)."""
+
+    # Bank-level FDIC figures that WOULD give a blend (Q2 YTD NI 200 on TCE
+    # 10,000 → 4.0%) — a merger must not fall back to them.
+    HIST = [{"REPDTE": "20260630", "NETINC": 200.0, "EQTOT": 10_000.0, "INTAN": 0.0,
+             "LNLSNET": 5_000_000},
+            {"REPDTE": "20260331", "NETINC": 100.0, "EQTOT": 10_000.0, "INTAN": 0.0,
+             "LNLSNET": 4_900_000}]
+
+    def setUp(self):
+        from tests.test_tbv_conventions import _passthrough_resolvers
+        _passthrough_resolvers(self)
+
+    def _defaults(self, window, holdco):
+        from unittest import mock as _m
+        from ui.valuation_model import _derive_defaults
+        with _m.patch("analysis.valuation.holdco_tce_window_for",
+                      lambda t, s, r: window),                 _m.patch("analysis.valuation.compute_roatce_holdco",
+                         lambda s, w=None: holdco):
+            return _derive_defaults("PNFP", self.HIST, {"cik": 1})
+
+    def test_merger_window_is_na_with_reason_no_fdic_fallback(self):
+        d = self._defaults({"avg": None, "merger": True,
+                            "reason": "merger in TTM window — TCE rose 119%"}, None)
+        self.assertIsNone(d["roatce_pct"])
+        self.assertEqual(d["roatce_basis"], "merger")
+        self.assertIn("TCE rose 119%", d["roatce_note"])
+
+    def test_resolved_window_seeds_holdco(self):
+        d = self._defaults({"avg": 9_523_000_000, "merger": False, "reason": None}, 13.1)
+        self.assertEqual(d["roatce_basis"], "holdco")
+        self.assertAlmostEqual(d["roatce_pct"], 13.1)          # no holdco NI → factor 1.0
+
+    def test_unresolved_non_merger_falls_back_to_labeled_fdic(self):
+        d = self._defaults({"avg": None, "merger": False, "reason": "start unresolved"}, None)
+        self.assertEqual(d["roatce_basis"], "fdic_blend")
+        self.assertAlmostEqual(d["roatce_pct"], 4.0, places=6)
+
+
+
+class TestGroupRecordListMarkersSurviveLatestRow(unittest.TestCase):
+    """The P1-4 group path builds the 'latest' row with a per-field isna; a
+    group record's _lead_ratio_fields list made pd.isna return an array and
+    crashed load_fdic_data (caught by tests/test_nav_renders.py)."""
+
+    def test_home_snapshot_latest_row_keeps_list_marker(self):
+        from unittest import mock as _m
+        import jobs.refresh_home_snapshot as J
+        rec = {"REPDTE": "20260630", "ASSET": 1.0, "ROA": float("nan"),
+               "_lead_ratio_fields": ["NIMY", "ROA"]}
+        with _m.patch("data.loaders.fetch_group_histories_parallel",
+                      lambda todo, limit=8: {"JPM": [rec]}), \
+                _m.patch("data.cache.get_multi", lambda keys: {}), \
+                _m.patch("data.cache.put", lambda *a, **k: None), \
+                _m.patch("data.cache.put_fdic", lambda *a, **k: None), \
+                _m.patch("data.bank_mapping.get_fdic_cert", lambda t: 628):
+            try:
+                out = J._load_fdic(["JPM"])
+            except ValueError as e:                      # pragma: no cover
+                self.fail(f"list marker crashed the latest-row build: {e}")
+        latest = out[0]["JPM"] if isinstance(out, tuple) else out.get("JPM", {})
+        self.assertEqual(latest.get("_lead_ratio_fields"), ["NIMY", "ROA"])
+        self.assertIsNone(latest.get("ROA"))

@@ -630,7 +630,11 @@ def load_fdic_data(tickers: tuple) -> tuple[dict, dict]:
             hist_results[ticker] = records
             cache.put(f"fdic_hist:{ticker}", records)
 
-            latest = {k: (None if pd.isna(v) else v) for k, v in records[0].items()}
+            # Group records carry list-valued markers (cert_group
+            # _lead_ratio_fields) — pd.isna on a list is an array.
+            latest = {k: (None if (not isinstance(v, (list, tuple, dict))
+                                   and pd.isna(v)) else v)
+                      for k, v in records[0].items()}
             cache.put_fdic(ticker, latest)
             latest_results[ticker] = latest
 

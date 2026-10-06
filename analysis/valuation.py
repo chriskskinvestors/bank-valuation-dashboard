@@ -396,6 +396,14 @@ def _holdco_tce_at(facts: dict, as_of: str) -> float | None:
     return float(eq_tup[0]) - (pfd or 0) - adj
 
 
+def holdco_tce_window_for(ticker: str | None, sec_data: dict,
+                          fdic_rec: dict | None) -> dict:
+    """holdco_tce_window with the bank-sub goodwill read from the FDIC record
+    — the ONE call the engine and the Valuation Model share, so both seed the
+    same average-TCE ROATCE and merger flag."""
+    return holdco_tce_window(ticker, sec_data, (fdic_rec or {}).get("INTANGW"))
+
+
 def holdco_tce_window(ticker: str | None, sec_data: dict,
                       bank_goodwill_k: float | None = None) -> dict:
     """Common TCE at the five quarter-ends of the TTM window ending at the
@@ -888,8 +896,7 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # window (P1-1); n/a + flag when a merger sits inside the window.
     tce_window = None
     if ticker:
-        tce_window = holdco_tce_window(ticker, sec_data,
-                                       fdic_data.get("INTANGW"))
+        tce_window = holdco_tce_window_for(ticker, sec_data, fdic_data)
     roatce_holdco = compute_roatce_holdco(sec_data, tce_window)
     holdco_merger = bool(tce_window and tce_window.get("merger"))
     if holdco_merger:

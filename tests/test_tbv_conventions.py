@@ -51,6 +51,14 @@ def _passthrough_resolvers(test):
         p = _m.patch(f"analysis.valuation.{name}", fn)
         p.start()
         test.addCleanup(p.stop)
+    # The ROATCE seed's live SEC seams (companyfacts TCE window, the capital-
+    # return NI timeline): offline → no window (period-end holdco path) and
+    # no holdco NI series (normalizer 1.0).
+    for name, fn in (("holdco_tce_window_for", lambda t, s, r: None),
+                     ("_compute_capital_return", lambda cik, mcap: {})):
+        p = _m.patch(f"analysis.valuation.{name}", fn)
+        p.start()
+        test.addCleanup(p.stop)
 
 
 class TestValuationModelTbvps(unittest.TestCase):

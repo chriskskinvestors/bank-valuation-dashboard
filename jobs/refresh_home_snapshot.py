@@ -64,7 +64,10 @@ def _load_fdic(tickers: list[str]) -> tuple[dict, dict]:
         for t, recs in fetch_group_histories_parallel(uncached, limit=8).items():
             hist[t] = recs
             cache.put(f"fdic_hist:{t}", recs)
-            row = {k: (None if pd.isna(v) else v) for k, v in recs[0].items()}
+            # list-valued group markers (_lead_ratio_fields): never pd.isna'd
+            row = {k: (None if (not isinstance(v, (list, tuple, dict))
+                                and pd.isna(v)) else v)
+                   for k, v in recs[0].items()}
             cache.put_fdic(t, row)
             latest[t] = row
     return latest, hist
