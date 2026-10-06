@@ -608,5 +608,43 @@ class TestAssemblyAndCache(_AnnPatched):
         self.assertEqual(ma_history.get_ma_history(0), [])
 
 
+class TestPendingDealRows(unittest.TestCase):
+    """The pending leg on its own (the fast pass calls it with the served
+    snapshot's settled rows): FDIC-settled counterparties net the row."""
+
+    def _pending(self, name):
+        return {"announce_date": "2026-06-01", "direction": "acquisition",
+                "counterparty_name": name, "counterparty_cert": 77,
+                "counterparty_cik": None, "value_usd": None,
+                "value_basis": None, "value_note": None, "target_cik": None,
+                "announce_url": "https://x/a/b.htm", "terms": None,
+                "milestones": None}
+
+    @patch("data.ma_history._assets_before", return_value=(500, "2026-03-31", True))
+    @patch("data.ma_pending.find_pending_deals")
+    def test_settled_rows_net_the_pending_leg(self, mock_pend, _a):
+        from data.ma_history import pending_deal_rows
+        mock_pend.return_value = ([self._pending("American Bank Holding Company"),
+                                   self._pending("Open Deal Bancorp")], True)
+        settled = [{"status": "completed", "completion_date": "2026-09-01",
+                    "counterparty": {"name": "American Bank, National Association"}}]
+        rows, ok = pending_deal_rows(10, "ACQ", "Acquirer Inc", settled)
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty"]["name"] for r in rows],
+                         ["Open Deal Bancorp"])
+        self.assertEqual(rows[0]["status"], "pending")
+        self.assertEqual(rows[0]["target_assets"], 500)
+        mock_pend.assert_called_once_with(10, "Acquirer Inc", ticker="ACQ")
+
+    @patch("data.ma_history._assets_before", return_value=(None, None, False))
+    @patch("data.ma_pending.find_pending_deals")
+    def test_assets_lookup_failure_is_not_ok(self, mock_pend, _a):
+        from data.ma_history import pending_deal_rows
+        mock_pend.return_value = ([self._pending("Open Deal Bancorp")], True)
+        rows, ok = pending_deal_rows(10, None, "Acquirer Inc", [])
+        self.assertFalse(ok)
+        self.assertEqual(len(rows), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

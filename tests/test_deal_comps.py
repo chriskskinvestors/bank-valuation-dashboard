@@ -220,5 +220,83 @@ class TestSnapshot(unittest.TestCase):
         self.assertIsNone(get_comps_snapshot())
 
 
+class TestPendingRefresh(unittest.TestCase):
+    """refresh_pending_snapshot: only pending rows change; a bank whose
+    pending leg fails keeps its previous pending rows; settled rows net."""
+
+    _MULT = {"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
+             "p_tbv": None, "price_assets": None, "core_dep_premium": None,
+             "comp_assets": None, "flagged": None, "ttm_eps": None,
+             "eps_asof": None, "p_e": None}
+
+    def _snap(self):
+        return {"built_at": "2026-10-06T13:41:46", "deals": [
+            {"buyer_cert": 1, "buyer_ticker": "A", "status": "completed",
+             "target_name": "Old Target Bank", "completion_date": "2026-09-30",
+             "announce_date": "2026-05-01"},
+            {"buyer_cert": 1, "buyer_ticker": "A", "status": "pending",
+             "target_name": "Stale Pending Bancorp", "announce_date": "2026-08-01",
+             "announce_url": "https://x/stale/y.htm"},
+            {"buyer_cert": 2, "buyer_ticker": "B", "status": "pending",
+             "target_name": "Keep Me Bancorp", "announce_date": "2026-07-01",
+             "announce_url": "https://x/keep/y.htm"},
+        ]}
+
+    @patch("data.cache.put")
+    @patch("data.deal_comps.compute_multiples")
+    @patch("data.ma_history.pending_deal_rows")
+    @patch("data.deal_comps.get_comps_snapshot")
+    def test_splice_keeps_settled_and_failed_banks(self, mock_snap, mock_pend,
+                                                   mock_cm, mock_cput):
+        from data.deal_comps import refresh_pending_snapshot
+        mock_snap.return_value = self._snap()
+        mock_cm.return_value = (dict(self._MULT), True)
+        fresh = _deal(status="pending", announce_date="2026-10-06",
+                      announce_url="https://x/fresh/y.htm",
+                      counterparty={"name": "blueharbor bank", "cert": 9})
+        fresh["completion_date"] = None
+        mock_pend.side_effect = [([fresh], True),      # bank A: fresh row
+                                 ([], False)]           # bank B: leg failed
+        snap = refresh_pending_snapshot([
+            {"ticker": "A", "name": "A Corp", "cert": 1, "cik": 10},
+            {"ticker": "B", "name": "B Corp", "cert": 2, "cik": 20}])
+        names = sorted((r["target_name"], r["status"]) for r in snap["deals"])
+        self.assertEqual(names, [("Keep Me Bancorp", "pending"),
+                                 ("Old Target Bank", "completed"),
+                                 ("blueharbor bank", "pending")])
+        self.assertEqual(snap["built_at"], "2026-10-06T13:41:46")
+        self.assertTrue(snap["pending_built_at"] > snap["built_at"])
+        self.assertEqual(snap["pending_banks_failed"], ["2"])
+        # Bank A's settled rows were handed to the leg as the FDIC net.
+        settled = mock_pend.call_args_list[0].args[3]
+        self.assertEqual([s["counterparty"]["name"] for s in settled],
+                         ["Old Target Bank"])
+        mock_cput.assert_called_once()
+
+    @patch("data.cache.put")
+    @patch("data.ma_history.pending_deal_rows", return_value=([], False))
+    @patch("data.deal_comps.get_comps_snapshot")
+    def test_nothing_walked_writes_nothing(self, mock_snap, _p, mock_cput):
+        from data.deal_comps import refresh_pending_snapshot
+        mock_snap.return_value = self._snap()
+        self.assertIsNone(refresh_pending_snapshot(
+            [{"ticker": "A", "name": "A", "cert": 1, "cik": 10}]))
+        mock_cput.assert_not_called()
+
+    @patch("data.cache.put")
+    @patch("data.deal_comps.get_comps_snapshot", return_value=None)
+    def test_no_snapshot_to_splice(self, _s, mock_cput):
+        from data.deal_comps import refresh_pending_snapshot
+        self.assertIsNone(refresh_pending_snapshot(
+            [{"ticker": "A", "name": "A", "cert": 1, "cik": 10}]))
+        mock_cput.assert_not_called()
+
+    def test_job_has_the_pending_mode(self):
+        from pathlib import Path
+        src = (Path(__file__).resolve().parent.parent
+               / "jobs/refresh_deal_comps.py").read_text(encoding="utf-8")
+        self.assertIn('main_pending() if "pending" in sys.argv[1:]', src)
+
+
 if __name__ == "__main__":
     unittest.main()
