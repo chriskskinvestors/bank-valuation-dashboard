@@ -91,7 +91,7 @@ _HIGHLIGHTS = [
     ("Highest NIM", "nim", "max"),
     ("Strongest CET1", "cet1_ratio", "max"),
     ("Cleanest credit", "npl_ratio", "min"),
-    ("Fastest TBV growth", "tbv_cagr_1y", "max"),
+    ("Fastest organic TBV growth", "tbv_cagr_1y", "max"),
 ]
 
 # Column-ordering choices for the side-by-side table (metric_key, label).
@@ -392,8 +392,12 @@ def _render_highlights(peers: list[dict]):
         m_def = METRICS_BY_KEY.get(mkey)
         if not m_def:
             continue
+        # A value the engine flagged (_notes: an acquisition inside the TBV
+        # growth window, a merger, a basis mismatch) can't win a best-in-
+        # class chip — PNFP's Synovus-driven 111.6% TBV "growth" topped it.
         cand = [(p["ticker"], p.get(mkey)) for p in peers
-                if isinstance(p.get(mkey), (int, float))]
+                if isinstance(p.get(mkey), (int, float))
+                and not (p.get("_notes") or {}).get(mkey)]
         if not cand:
             continue
         tk, val = (min if mode == "min" else max)(cand, key=lambda x: x[1])
