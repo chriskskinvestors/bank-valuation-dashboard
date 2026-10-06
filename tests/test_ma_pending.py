@@ -106,6 +106,8 @@ class _Harness(unittest.TestCase):
              patch("data.ma_pending._close_before", return_value=price), \
              patch("data.ma_pending.find_open_announcements",
                    return_value=cash_rows), \
+             patch("data.ma_pending.fdic_cert_for_name",
+                   return_value=(None, None, True)), \
              patch("data.bank_universe.get_universe",
                    return_value=universe or UNIVERSE), \
              patch("data.ma_pending.time.sleep", lambda *_: None), \
