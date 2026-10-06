@@ -35,7 +35,7 @@ COLUMBIA = 33826
 # EFTS leg resolves them — patched out in these tests unless stated).
 ANN_NONE = {"announce_date": None, "value_usd": None, "value_basis": None,
             "value_note": None, "target_cik": None, "announce_url": None,
-            "terms": None, "milestones": None,
+            "terms": None, "milestones": None, "internal": False,
             "status": "completed", "termination_date": None}
 
 
@@ -43,6 +43,11 @@ class _AnnPatched(unittest.TestCase):
     """Base: announcement/termination/pending legs patched to cacheable n/a."""
 
     def setUp(self):
+        # The holding-company lookup is a cached FDIC call; these suites pin
+        # cache.put counts, so it is stubbed to "different holders".
+        self._hc = patch("data.ma_history._same_holdco", return_value=False)
+        self._hc.start()
+        self.addCleanup(self._hc.stop)
         self._ann = patch("data.ma_announcements.resolve_announcement",
                           return_value=(None, True))
         self.mock_ann = self._ann.start()
@@ -170,7 +175,7 @@ class TestWholeCompanyDeals(_AnnPatched):
         self.assertEqual(fin_call[0][1]["limit"], 1)
         # Cached under the documented key.
         key, payload = mock_cput.call_args[0]
-        self.assertEqual(key, f"ma_history:v14:{UMPQUA}:0")
+        self.assertEqual(key, f"ma_history:v15:{UMPQUA}:0")
         self.assertEqual(payload["deals"], deals)
 
     @patch("data.cache.put")
@@ -364,7 +369,8 @@ class TestAnnouncementEnrichment(_AnnPatched):
         self.assertEqual(deals[0]["announce_url"], "https://sec.gov/x")
         # Called with the names AT DEAL TIME from the structure row.
         self.mock_ann.assert_called_once_with(
-            "Columbia State Bank", "Umpqua Bank", "2023-03-01")
+            "Columbia State Bank", "Umpqua Bank", "2023-03-01",
+            acquirer_ticker=None)
         mock_cput.assert_called_once()
 
     @patch("data.cache.put")
@@ -445,7 +451,7 @@ class TestTerminatedDeals(_AnnPatched):
         self.assertEqual(self.mock_term.call_args[0][1], "Umpqua Bank")
         # CIK-scoped cache key.
         self.assertEqual(mock_cput.call_args[0][0],
-                         f"ma_history:v14:{UMPQUA}:36966")
+                         f"ma_history:v15:{UMPQUA}:36966")
 
     @patch("data.cache.put")
     @patch("data.cache.get", return_value=None)

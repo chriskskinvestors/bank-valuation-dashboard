@@ -50,10 +50,15 @@ import time
 from datetime import date, timedelta
 
 from data.ma_announcements import (
+    _ACQUIRE_OBJ_RE,
+    _ANNOUNCE_RE,
     _COMPLETED_RE,
     _accession_text,
+    _clean_company_name,
     _close_before,
     _shares_outstanding_asof,
+    _wire_releases,
+    _wire_story_text,
     brand_token,
     build_terms,
     extract_exchange_ratio,
@@ -429,7 +434,94 @@ def _merge_milestones(a: dict, b: dict) -> dict:
     return {"votes": votes, "regulatory_approval": reg}
 
 
-def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
+# ── Wire pending leg (acquirers EDGAR cannot reach) ───────────────────────
+_WIRE_DEAL_TITLE_RE = re.compile(
+    r"(?i)\b(?:to\s+acquire|agreement\s+to\s+acquire|acquisition\s+of|definitive\s+"
+    r"(?:merger\s+)?agreement|merger\s+agreement|to\s+merge|strategic\s+merger|"
+    r"business\s+combination|to\s+combine|announce\w*\s+merger)\b")
+_WIRE_DONE_TITLE_RE = re.compile(
+    r"(?i)\b(?:complet(?:es|ed|ion)|closes?|closing\s+of|terminat(?:es|ed|ion)|"
+    r"receives?\s+(?:all\s+)?(?:regulatory|shareholder|stockholder)|final\s+exchange)")
+_WIRE_PENDING_SCAN = 4
+
+
+def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]:
+    """Live announced deals from the ACQUIRER's own wire releases — the only
+    detection route for FDIC-registered / OTC acquirers (TowneBank announced
+    blueharbor bank on the wire 2026-10-06 and files nothing on EDGAR).
+    Deal-titled releases in the last 540 days, subject-guarded, story
+    fetched and gated like the EDGAR legs; counterparty = the acquire-verb
+    object (title first). Open status: no LATER release by the same filer
+    with completion/termination wording that names the counterparty (the
+    FDIC completion dedupe in ma_history is the second net). Same row schema
+    as _find_pending_425 plus source='wire'."""
+    prs = _wire_releases(ticker)
+    if prs is None:
+        return [], False
+    from data.events.fmp_news import _is_subject
+    floor = (date.today() - timedelta(days=_PENDING_MAX_AGE_DAYS)).isoformat()
+    self_tok = brand_token(subject_name or "")
+    obj_re = re.compile(_ACQUIRE_OBJ_RE.pattern, re.IGNORECASE)
+    deals = []
+    for p in prs:
+        d = (p.get("published_at") or "")[:10]
+        title = p.get("title") or ""
+        if d < floor or not _WIRE_DEAL_TITLE_RE.search(title) \
+                or _WIRE_DONE_TITLE_RE.search(title):
+            continue
+        if not _is_subject(ticker, f"{title} {p.get('text') or ''}"):
+            continue
+        deals.append((d, p))
+    rows, fetch_failed, seen = [], False, set()
+    for d, p in sorted(deals, key=lambda x: x[0], reverse=True)[:_WIRE_PENDING_SCAN]:
+        time.sleep(_PAUSE_S)
+        text = _wire_story_text(p.get("url") or "")
+        if not text:
+            fetch_failed = True
+            continue
+        if _COMPLETED_RE.search(text) or not _ANNOUNCE_RE.search(text):
+            continue
+        title = p.get("title") or ""
+        best: dict[str, str] = {}
+        for m in obj_re.finditer(title + ". " + text):
+            cand = _clean_company_name(m.group(1))
+            t = brand_token(cand)
+            if not t or t == self_tok or re.search(r"\d", cand) or len(cand.split()) > 8:
+                continue
+            if len(cand) > len(best.get(t, "")):
+                best[t] = cand
+        # The title's object settles a multi-name body.
+        title_toks = {brand_token(_clean_company_name(m.group(1)))
+                      for m in obj_re.finditer(title + ". ")}
+        pick = [t for t in best if t in title_toks] or list(best)
+        if len(pick) != 1 or pick[0] in seen:
+            continue
+        ct = pick[0]
+        counterparty = best[ct]
+        later = [q for q in prs
+                 if (q.get("published_at") or "")[:10] > d
+                 and _WIRE_DONE_TITLE_RE.search(q.get("title") or "")
+                 and token_in(ct, f"{q.get('title') or ''} {q.get('text') or ''}".lower())]
+        if later:
+            continue              # closed, terminated or otherwise resolved
+        seen.add(ct)
+        cp_tick, cp_cert, cp_cik = _universe_match(counterparty)
+        terms, t_ok = build_terms(text, d, acq_tick=ticker, tgt_tick=cp_tick)
+        fetch_failed = fetch_failed or not t_ok
+        value = extract_stated_value(text)
+        rows.append({"announce_date": d, "direction": "acquisition",
+                     "counterparty_name": counterparty,
+                     "counterparty_ticker": cp_tick, "counterparty_cert": cp_cert,
+                     "counterparty_cik": cp_cik,
+                     "value_usd": value, "value_basis": "stated" if value else None,
+                     "value_note": None, "target_cik": cp_cik,
+                     "announce_url": p.get("url"), "terms": terms,
+                     "source": "wire"})
+    return rows, not fetch_failed
+
+
+def find_pending_deals(cik, subject_name: str,
+                       ticker: str | None = None) -> tuple[list[dict], bool]:
     """
     Live, STILL-OPEN announced deals for a holdco CIK: 425-episode (stock)
     rows plus cash-deal rows from find_open_announcements, deduped by
@@ -449,9 +541,18 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
             continue
         seen.add(tok)
         cp_tick, cp_cert, cp_cik = _universe_match(c["counterparty_name"])
+        # A universe-matched counterparty shows under its universe name and
+        # ticker (the acquire-verb capture was "Capital" for Capital
+        # Bancorp, live 2026-09-30).
+        cp_name = c["counterparty_name"]
+        if cp_tick:
+            from data.bank_mapping import get_name
+            cp_name = get_name(cp_tick) or cp_name
+            if isinstance(c.get("terms"), dict) and not c["terms"].get("tgt_ticker"):
+                c["terms"]["tgt_ticker"] = cp_tick
         merged.append({"announce_date": c["announce_date"],
                        "direction": c["direction"],
-                       "counterparty_name": c["counterparty_name"],
+                       "counterparty_name": cp_name,
                        "counterparty_ticker": cp_tick,
                        "counterparty_cert": cp_cert,
                        "counterparty_cik": cp_cik,
@@ -462,6 +563,15 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
                        if c["direction"] == "sale" else c["target_cik"],
                        "announce_url": c["announce_url"],
                        "terms": c.get("terms")})
+    ok3 = True
+    if ticker:
+        wire, ok3 = find_pending_wire(ticker, subject_name)
+        for w in wire:
+            tok = brand_token(w["counterparty_name"] or "")
+            if tok and tok in seen:
+                continue
+            seen.add(tok)
+            merged.append(w)
 
     # Open-status gate. Fetch the filer's own submissions ONCE (also the
     # authoritative completion source when we are the acquirer); a sale-side
@@ -470,9 +580,15 @@ def find_pending_deals(cik, subject_name: str) -> tuple[list[dict], bool]:
     # row too — unprovable open status is never shown.
     subj_filings, sf_ok = (iter_submission_filings(int(cik)) if cik
                            else ([], True))
-    ok = ok1 and ok2 and sf_ok
+    ok = ok1 and ok2 and ok3 and sf_ok
     out = []
     for r in merged:
+        if r.get("source") == "wire" and not cik:
+            # No EDGAR to consult: the wire completion check above and the
+            # FDIC completion dedupe in ma_history are this row's gates.
+            r["milestones"] = {"votes": [], "regulatory_approval": None}
+            out.append(r)
+            continue
         resolved, vok = _resolved_after(cik, r["counterparty_name"],
                                         r["announce_date"], filings=subj_filings)
         if not vok:

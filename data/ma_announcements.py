@@ -205,6 +205,26 @@ _RATIO_PARVALUE_RE = re.compile(
     r"to\s+receive\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)\s*"
     r"(?:\(the\s+[\"“”']?Exchange\s+Ratio[\"“”']?\)\s*)?of\s+common\s+stock"
     r"(?:,\s+par\s+value\s+\$[\d.]+\s+per\s+share,?)?\s+of\s+([A-Z][\w.&'\-]{1,30})\b")
+# "will receive a fixed exchange ratio of 2.63 shares of Esquire common stock
+# for each share of Signature common stock" (Esquire/Signature wire release
+# 2026-03-12).
+_RATIO_FIXED_OF_RE = re.compile(
+    r"exchange\s+ratio\s+of\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)"
+    r"\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+for\s+each\s+share"
+    r"\s+of\s+([A-Za-z][\w.,&'\- ]{1,60}?)\s+(?:common\s+stock|shares?|stock)")
+# "based on the exchange ratio of 3.40x" (Richmond Mutual/Farmers Bancorp
+# wire release 2025-11-12) — the sides are not named in the sentence.
+_RATIO_OF_BARE_RE = re.compile(
+    r"exchange\s+ratio\s+of\s+(\d{1,2}(?:\.\d{1,4})?)(?![\d.])x?\b"
+    r"(?!\s+(?:of\s+a\s+share|shares?))")
+# "$12.70 in cash and 1.0534 shares of TowneBank common stock for each share
+# of blueharbor outstanding common stock" (TowneBank/blueharbor wire release
+# 2026-10-06; lowercase brand on the target side).
+_RATIO_CASH_AND_SHARES_RE = re.compile(
+    r"\$\s?[\d,]+(?:\.\d+)?\s+in\s+cash\s+and\s+(\d{1,2}(?:\.\d{1,4})?)\s+shares?"
+    r"\s+of\s+([A-Z][\w.&'\-]{1,30})\s+(?:common\s+)?stock\s+for\s+each\s+share"
+    r"\s+of\s+([A-Za-z][\w.&'\- ]{1,40}?)\s+(?:outstanding\s+)?(?:common\s+)?"
+    r"(?:stock|shares?)")
 # Cash-first mixed form with a comma share count: "converted into the right
 # to receive $69,850 in cash and approximately 2,869 Civista common shares"
 # (live-verified CIVB 8-K 2025-07-11; the target is a 500-share bank). The
@@ -264,9 +284,16 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(1).replace(",", "")), m.group(2).strip(), ""))
     for m in _RATIO_PARVALUE_RE.finditer(text):
         found.append((float(m.group(2)), m.group(3).strip(), m.group(1).strip()))
+    for m in _RATIO_FIXED_OF_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
+    for m in _RATIO_CASH_AND_SHARES_RE.finditer(text):
+        found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
+    for m in _RATIO_OF_BARE_RE.finditer(text):
+        found.append((float(m.group(1)), "", ""))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
-    return found[0]
+    # Several forms agreeing on one ratio: prefer the one that names sides.
+    return max(found, key=lambda f: (bool(f[1]), bool(f[2])))
 
 
 def _pr_ticker_pairs(text: str) -> list[tuple[str, str]]:
@@ -515,8 +542,8 @@ _CASH_PER_SHARE_RE = re.compile(
     r"|each\s+share[^.]{0,160}?converted\s+(?:at\s+closing\s+)?into\s+the\s+"
     r"right\s+to\s+receive\s+(?:\(i\)\s+)?\$\s?" + _NUM + r"\s+in\s+cash\b"
     # "$11.36 in cash and 0.3803 PB common shares for each STEL common share"
-    r"|\$\s?" + _NUM + r"\s+in\s+cash\s+and\s+[^$;]{0,60}?shares?\s+for\s+each\s+"
-    r"(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
+    r"|\$\s?" + _NUM + r"\s+in\s+cash\s+and\s+[^$;]{0,80}?for\s+each\s+"
+    r"(?:\w+\s+){0,4}?share\b", re.IGNORECASE)
 _CASH_CONSID_RE = re.compile(
     r"cash\s+consideration\s+of\s+\$\s?" + _NUM + r"\s+per\s+share",
     re.IGNORECASE)
@@ -533,8 +560,8 @@ _IMPLIED_PRICE_RE = re.compile(
     r"(?:approximately\s+|about\s+)?\$\s?" + _NUM +
     r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
 _IMPLIED_PRICE_DECK_RE = re.compile(
-    r"per\s+share\s+(?:deal\s+|transaction\s+)?value\s+of\s+\$\s?" + _NUM,
-    re.IGNORECASE)
+    r"per\s+share\s+(?:deal\s+|transaction\s+)?value\s+(?:of|equates\s+to|is)\s+"
+    r"\$\s?" + _NUM, re.IGNORECASE)
 
 # Premium as STATED: "a premium of approximately 28% to ..." / "a 28%
 # premium to the closing price". Window-gated to PRICE context (closing /
@@ -1007,8 +1034,14 @@ def _completed_for(text: str, tgt_tok: str | None) -> bool:
     return False
 
 
-def _named_in_deal_context(text: str, target_query: str) -> bool:
+def _named_in_deal_context(text: str, target_query: str,
+                           tgt_tok: str | None = None) -> bool:
     tq = re.escape(target_query)
+    if tgt_tok and target_query.lower() not in text.lower():
+        # The release names the holdco ("The Farmers Bancorp"), the FDIC row
+        # the charter ("Farmers Bank, Frankfort, Indiana"): the brand token
+        # is the common ground.
+        tq = r"\b" + re.escape(tgt_tok) + r"\b"
     # A 250-char window that does not cross a sentence boundary (". " + a
     # capital), so a peer list in one sentence cannot borrow the "definitive
     # agreement" of the next — while "Inc." mid-name does not end the window
@@ -1062,7 +1095,8 @@ def _fetch_doc_text(cik, adsh: str, doc: str) -> tuple[str | None, bool]:
 
 
 def resolve_announcement(target_name: str, acquirer_name: str,
-                         completion_date: str) -> tuple[dict | None, bool]:
+                         completion_date: str,
+                         acquirer_ticker: str | None = None) -> tuple[dict | None, bool]:
     """
     The announcement 8-K for a completed whole-company deal.
 
@@ -1108,7 +1142,7 @@ def resolve_announcement(target_name: str, acquirer_name: str,
                     and (not acq_tok or token_in(acq_tok, low))
                     and not _completed_for(txt, tgt_tok)
                     and _ANNOUNCE_RE.search(txt) is not None
-                    and _named_in_deal_context(txt, tq))
+                    and _named_in_deal_context(txt, tq, tgt_tok))
 
         full = None
         if not _gates(text):
@@ -1155,11 +1189,111 @@ def resolve_announcement(target_name: str, acquirer_name: str,
         f_ok = True
         if full is None:
             full, f_ok = _accession_text(cand["cik"], cand["adsh"], cand["doc"])
-        terms, t_ok = build_terms(full or text, cand["file_date"])
+        terms, t_ok = build_terms(full or text, cand["file_date"],
+                                  acq_tick=acquirer_ticker)
         result["terms"] = terms
         return result, ok and t_ok and f_ok
     # Nothing classified as the announcement. Only claim a cacheable n/a if
     # every candidate was actually readable.
+    return None, not fetch_failed
+
+
+# ── Wire-feed announcement (acquirers EDGAR cannot reach) ─────────────────
+#
+# TowneBank (FDIC-registered, no SEC filings), Merchants & Marine, Ballston
+# Spa and other OTC acquirers announce deals only on the wire and their own
+# site; Richmond Mutual and Esquire ARE filers but EDGAR's quoted-name search
+# could not reach their announcements. Owner 2026-10-06: "no SEC filings is
+# not an excuse to not have data." FMP's press-release index is the
+# TRANSPORT only (the content is the bank's own release, same provenance
+# decision as data/otc_release); the subject guard (data/events/fmp_news
+# ._is_subject) rejects the polluted-symbol stories; the full story is
+# fetched from the wire URL and run through the SAME gates and extractors
+# as the EDGAR path.
+
+_WIRE_LIMIT = 250
+
+
+def _wire_releases(ticker: str) -> list[dict] | None:
+    """The acquirer's press-release index, newest first; None when the
+    feed is unavailable (no key / transport error — caller must not cache)."""
+    from data.fmp_client import _has_key, get_press_releases
+    if not ticker or not _has_key():
+        return None
+    try:
+        return get_press_releases(ticker, limit=_WIRE_LIMIT) or []
+    except Exception as e:
+        print(f"[ma_announce] wire {ticker}: {type(e).__name__}: {e}")
+        return None
+
+
+def _wire_story_text(url: str) -> str | None:
+    from data.otc_release import _fetch_story
+    html = _fetch_story(url)
+    return _strip_html(html) if html else None
+
+
+def resolve_announcement_wire(acquirer_ticker: str, target_name: str,
+                              acquirer_name: str,
+                              completion_date: str) -> tuple[dict | None, bool]:
+    """The deal's announcement from the ACQUIRER's own wire releases, same
+    result shape as resolve_announcement (plus source='wire'). Strict:
+    the release must name the target in deal context, name the acquirer,
+    carry announcement wording and no completed tense. (result, ok): ok=False
+    when the feed or a story fetch failed."""
+    if not acquirer_ticker or not target_name or not completion_date:
+        return None, True
+    prs = _wire_releases(acquirer_ticker)
+    if prs is None:
+        return None, False
+    try:
+        comp = date.fromisoformat(completion_date)
+    except ValueError:
+        return None, True
+    floor = (comp - timedelta(days=_WINDOW_DAYS)).isoformat()
+    tq, tgt_tok, acq_tok = (query_name(target_name), brand_token(target_name),
+                            brand_token(acquirer_name))
+    from data.events.fmp_news import _is_subject
+
+    def _names_target(low: str) -> bool:
+        return tq.lower() in low or bool(tgt_tok and token_in(tgt_tok, low))
+
+    cands = []
+    for p in prs:
+        d = (p.get("published_at") or "")[:10]
+        if not (floor <= d <= completion_date):
+            continue
+        blob = f"{p.get('title') or ''} {p.get('text') or ''}"
+        if not _names_target(blob.lower()) or not _is_subject(acquirer_ticker, blob):
+            continue
+        cands.append((d, p))
+    fetch_failed = False
+    for d, p in sorted(cands, key=lambda x: x[0]):
+        time.sleep(_PAUSE_S)
+        text = _wire_story_text(p.get("url") or "")
+        if not text:
+            fetch_failed = True
+            continue
+        low = text.lower()
+        if not _names_target(low) or (acq_tok and not token_in(acq_tok, low)):
+            continue
+        if _completed_for(text, tgt_tok) or not _ANNOUNCE_RE.search(text):
+            continue
+        if not _named_in_deal_context(text, tq, tgt_tok):
+            continue
+        terms, t_ok = build_terms(text, d, acq_tick=acquirer_ticker)
+        value = extract_stated_value(text)
+        return {
+            "announce_date": d,
+            "value_usd": value,
+            "value_basis": "stated" if value else None,
+            "value_note": None,
+            "target_cik": None,
+            "url": p.get("url"),
+            "accession": None,
+            "terms": terms,
+            "source": "wire",
+        }, (not fetch_failed) and t_ok
     return None, not fetch_failed
 
 
@@ -1220,6 +1354,16 @@ _ACQUIRE_OBJ_RE = re.compile(
     r"(?:agreement\s+to\s+acquire|will\s+acquire|to\s+acquire|"
     r"acquisition\s+of|acquire\s+100%\s+of\s+the\s+stock\s+of)\s+"
     r"([A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s)")
+
+# The agreement sentence names THIS filing's counterparty — an acquirer with
+# two live deals cites both targets ("TC Bancshares" and "First Reliance" in
+# Colony's 2026-06-24 8-K, live), and the single-candidate rule then yielded
+# nothing. "entered into an Agreement and Plan of Merger (the "Merger
+# Agreement") with First Reliance Bancshares, Inc." settles it.
+_MERGER_WITH_RE = re.compile(
+    r"Agreement\s+and\s+Plan\s+of\s+(?:Merger|Reorganization)[^.]{0,160}?\bwith\s+"
+    r"([A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|,\s+(?:a|an|the)\s|\.\s|\s+and\s|\s+pursuant|"
+    r"\s+under)")
 
 # A captured company phrase is often a run-on across an "About X. X" PR
 # footer (live: HOPE's TBNK pair captured "About Territorial Bancorp Inc.
@@ -1333,6 +1477,12 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                     best[t] = cand
             if len(best) == 1:
                 counterparty = next(iter(best.values()))
+            elif len(best) > 1:
+                with_toks = {brand_token(_clean_company_name(m.group(1)))
+                             for m in _MERGER_WITH_RE.finditer(text)}
+                pick = [t for t in best if t in with_toks]
+                if len(pick) == 1:
+                    counterparty = best[pick[0]]
         if not counterparty or _is_self(counterparty):
             continue
         # A capture that is not a company name — a dateline run-on
