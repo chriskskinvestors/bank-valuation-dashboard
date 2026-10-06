@@ -566,7 +566,8 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
         ticker, reconstructed_tbvps, reconstructed_bvps,
-        sec_as_of=sec_data.get("sec_as_of"))
+        sec_as_of=sec_data.get("sec_as_of"),
+        shares=sec_data.get("shares_outstanding"))
     bvps, bvps_source, bvps_conflict = _resolve_bvps(
         ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"))
     dps = sec_data.get("dividends_per_share")
@@ -820,6 +821,7 @@ def _resolve_tbvps(
     reconstructed: float | None,
     bvps: float | None,
     sec_as_of: str | None = None,
+    shares: float | None = None,
 ) -> tuple[float | None, str | None]:
     """(Tangible book value per common share, source), preferring the bank's
     OWN reported figure (earnings-release non-GAAP line) over our
@@ -833,7 +835,12 @@ def _resolve_tbvps(
     no reconstruction at all — their wire earnings release is the primary
     disclosure and the only per-share source (owner decision 2026-07-16);
     the guarded data/otc_release extraction supplies it, staleness-gated.
-    Sources: "reported_8k" | "reconstructed" | "company_release" | None.
+    Sources: "reported_8k" | "reconstructed" | "company_release" |
+    "reconstructed_company_shares" | None. The last is the reconstruction
+    restated onto the company's own share basis (GS "Basic shares" incl.
+    vested RSUs — owner decision 2026-10-06), served only when the release
+    proves our common equity ÷ its BVPS reproduces a share count it prints
+    (data.sec_earnings_8k.reported_share_basis); needs `shares`.
 
     Returns (tbvps, source, conflict). conflict=True means the release's own
     clean TBVPS figure and the reconstruction disagree ≥15% (the extractor's
@@ -891,6 +898,17 @@ def _resolve_tbvps(
                     return otc, "company_release", False
         except Exception as e:
             print(f"[valuation] otc tbvps lookup failed for {ticker}: "
+                  f"{type(e).__name__}: {e}")
+    # Company share basis: same equity, the company's own denominator.
+    if cik and reconstructed and bvps and shares and not conflict:
+        try:
+            from data.sec_earnings_8k import reported_share_basis
+            basis = reported_share_basis(cik, bvps * shares)
+            if basis and abs(basis - shares) / shares > 0.001:
+                return (reconstructed * shares / basis,
+                        "reconstructed_company_shares", False)
+        except Exception as e:
+            print(f"[valuation] share-basis lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
     return (reconstructed,
             "reconstructed" if reconstructed is not None else None,

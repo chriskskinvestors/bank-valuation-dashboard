@@ -46,7 +46,7 @@ def _passthrough_resolvers(test):
     from unittest import mock as _m
     for name, fn in (
             ("_resolve_eps", lambda t, r, a=None: (r, "reconstructed" if r is not None else None, False)),
-            ("_resolve_tbvps", lambda t, r, b=None, sec_as_of=None:
+            ("_resolve_tbvps", lambda t, r, b=None, sec_as_of=None, shares=None:
                 (r, "reconstructed" if r is not None else None, False))):
         p = _m.patch(f"analysis.valuation.{name}", fn)
         p.start()
@@ -94,7 +94,7 @@ class TestValuationModelTbvps(unittest.TestCase):
         from unittest import mock
         from ui.valuation_model import _derive_defaults
         with mock.patch("analysis.valuation._resolve_tbvps",
-                        lambda t, r, b=None, sec_as_of=None: (113.35, "reported_8k", False)):
+                        lambda t, r, b=None, sec_as_of=None, shares=None: (113.35, "reported_8k", False)):
             seed = _derive_defaults(
                 "JPM", self._hist(1_000_000, 300_000, 200_000),
                 {"shares_outstanding": 10_000_000, "eps": 5.0,

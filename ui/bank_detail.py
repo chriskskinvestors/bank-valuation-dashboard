@@ -169,6 +169,8 @@ def _ps_label(row, base, src_key):
     must never read as current (2026-09-22)."""
     if row.get(src_key) in ("company_release", "reported_8k"):
         return f"{base} (co. release)"
+    if row.get(src_key) == "reconstructed_company_shares":
+        return f"{base} (co. share basis)"
     form = _overlay_form(row)
     if form:
         return f"{base} (co. {form})"
