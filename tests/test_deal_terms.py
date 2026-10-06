@@ -2,7 +2,7 @@
 Tests for the structured deal terms behind the Transactions › Recent Deals
 tab (owner directive 2026-10-05): data/ma_announcements term extractors +
 build_terms, data/deal_comps.merger_arb and _ttm_eps_at (P/E at announce),
-and ui/transactions._recent_rows. All network mocked.
+and ui/transactions._pending_rows. All network mocked.
 
 Every fixture sentence is VERBATIM from the live filing it names (hand-read
 2026-10-05) and every expected number is hand-computed:
@@ -467,27 +467,24 @@ class TestPEAtAnnounce(unittest.TestCase):
         self.assertIsNone(out["p_e"])
 
 
-class TestRecentRowsFilter(unittest.TestCase):
+class TestPendingRowsFilter(unittest.TestCase):
 
-    def test_pending_plus_24_months(self):
-        from ui.transactions import _recent_rows
+    def test_pending_only_newest_first(self):
+        # Owner 2026-10-06: "I only need to see deals that aren't closed on
+        # the arb page" — a deal closed last week is OFF the board.
+        from ui.transactions import _pending_rows
         deals = [
-            {"status": "completed", "announce_date": "2024-09-01",
-             "completion_date": "2025-01-15"},               # announced 25 months
-                                                             # ago, CLOSED inside: in
-            {"status": "completed", "announce_date": "2024-06-01",
-             "completion_date": "2024-09-30"},               # both outside: out
-            {"status": "completed", "announce_date": "2024-11-01",
-             "completion_date": "2025-03-01"},               # in window
+            {"status": "completed", "announce_date": "2026-05-01",
+             "completion_date": "2026-09-30"},
             {"status": "pending", "announce_date": "2026-07-13"},
             {"status": "terminated", "announce_date": "2025-02-01",
              "termination_date": "2025-09-01"},
             {"status": "pending", "announce_date": "2024-01-01"},  # stale but pending
+            {"status": "pending", "announce_date": "2026-10-06"},
         ]
-        rows = _recent_rows(deals, date(2026, 10, 5))
+        rows = _pending_rows(deals)
         self.assertEqual([r["announce_date"] for r in rows],
-                         ["2026-07-13", "2025-02-01", "2024-11-01", "2024-09-01",
-                          "2024-01-01"])
+                         ["2026-10-06", "2026-07-13", "2024-01-01"])
 
 
 # ── Second pass (owner: "there is missing data??", 2026-10-05) ────────────
@@ -779,13 +776,13 @@ class TestHotfixGuards(unittest.TestCase):
                          "2027-03-31")
 
     def test_self_deal_rows_never_render(self):
-        from ui.transactions import _recent_rows
-        rows = _recent_rows([
+        from ui.transactions import _pending_rows
+        rows = _pending_rows([
             {"status": "pending", "announce_date": "2026-09-08",
              "buyer_ticker": "EFSI", "target_ticker": "EFSI"},
             {"status": "pending", "announce_date": "2026-09-08",
              "buyer_ticker": "JMSB", "target_ticker": "EFSI"},
-        ], date(2026, 10, 5))
+        ])
         self.assertEqual([r["buyer_ticker"] for r in rows], ["JMSB"])
 
 

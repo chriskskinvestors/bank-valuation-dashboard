@@ -6,7 +6,8 @@ and asserts the owner-decided structure renders: the lazy_tabs pill bar
 with the built sub-tabs (Recent Deals first — universe-wide, reads only
 the deal-comps snapshot; By Bank; Detailed M&A History; Detailed Offerings;
 and the kept Insider Activity). The default pane is Recent Deals, which
-renders its empty-snapshot notice on the isolated store (no network); the
+renders its empty-snapshot notice on the isolated store (no network) and,
+seeded with a snapshot, lists ONLY the pending deals (owner 2026-10-06); the
 By Bank pane is then selected to assert the shared bank picker in its
 no-selection state (index=None — no network fan-out happens until a bank
 is picked, so this test never touches FDIC/EDGAR).
@@ -94,6 +95,33 @@ class TestTransactionsSection(unittest.TestCase):
         # No-selection state renders the pick-a-bank prompt, not a table.
         self.assertTrue(any("Pick a bank" in str(i.value) for i in at.info),
                         [str(i.value) for i in at.info])
+
+    def test_recent_deals_lists_only_pending(self):
+        # Owner 2026-10-06: closed deals are off the arb board. Seed the
+        # isolated store with one pending and one completed deal.
+        from data import cache
+        from data.deal_comps import SNAPSHOT_KEY
+        cache.put(SNAPSHOT_KEY, {"built_at": "2026-10-06T12:00:00", "deals": [
+            {"status": "pending", "announce_date": "2026-10-06",
+             "target_name": "blueharbor bank", "target_ticker": "BLHK",
+             "buyer_name": "TowneBank", "buyer_ticker": "TOWN",
+             "terms": {"exchange_ratio": 1.0534, "cash_per_share": 12.70}},
+            {"status": "completed", "announce_date": "2026-05-01",
+             "completion_date": "2026-09-30",
+             "target_name": "Closed Target Bancorp", "target_ticker": "CLSD",
+             "buyer_name": "Buyer Bancorp", "buyer_ticker": "BUYR"},
+        ]})
+        try:
+            at = self._open_transactions()
+        except ModuleNotFoundError as e:
+            self.skipTest(f"AppTest unavailable: {e}")
+        html = "\n".join(str(m.value) for m in at.markdown)
+        self.assertIn("blueharbor bank", html)
+        self.assertIn("1.0534", html)
+        self.assertNotIn("Closed Target Bancorp", html)
+        self.assertNotIn("CLSD", html)
+        self.assertFalse(any("snapshot has not been compiled" in str(i.value)
+                             for i in at.info))
 
 
 if __name__ == "__main__":
