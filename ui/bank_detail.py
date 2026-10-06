@@ -305,34 +305,29 @@ def _render_valuation_performance_tables(row, fdic_rec=None, quote=None):
         ("Dividend Yield", disp("dividend_yield")),
     ]
 
-    # ROATCE: prefer the engine's blended figure; fall back to an annualized
-    # figure computed straight from the live FDIC record.
-    roatce_v = disp("roatce_blended")
-    if roatce_v is None and fdic_rec:
-        ni = _num(fdic_rec.get("NETINC")); eq = _num(fdic_rec.get("EQTOT"))
-        # INTAN = total intangibles — the house TCE convention (P2 #24, matches
-        # analysis/valuation.compute_roatce). Never INTANGW (goodwill only).
-        intan = _num(fdic_rec.get("INTAN")) or 0
-        mo = 12
-        try:
-            mo = pd.to_datetime(fdic_rec.get("REPDTE")).month or 12
-        except Exception:
-            pass
-        tce = (eq - intan) if eq is not None else None
-        if ni is not None and tce and tce > 0:
-            roatce_v = f"{ni * (12.0 / mo) / tce * 100:.2f}%"
+    # ROATCE: ONE definition — the holding company's TTM (what the stock
+    # represents); only when that's unavailable the bank-level FDIC blend,
+    # labeled as such. The old inline fallback (bank YTD NETINC annualized ÷
+    # period-end TCE, INTAN "or 0") was a third definition that changed
+    # silently by bank (REVIEW 2026-09-24 P1-5: WTFC 18.50% vs company 14.91%).
+    if disp("roatce_holdco") is not None:
+        roatce_row = ("ROATCE (HoldCo, TTM)", disp("roatce_holdco"))
+    else:
+        roatce_row = ("ROATCE (Bank, FDIC)", disp("roatce_blended"))
 
+    # Every FDIC row is the BANK SUBSIDIARY's call report, not the holding
+    # company (JPM bank CET1 15.03% vs holdco 14.2%) — labeled per row.
     performance = [
-        ("ROATCE", roatce_v),
-        ("ROAA", _fd_pct("ROA")),
-        ("Net Interest Margin", _fd_pct("NIMY")),
-        ("Efficiency Ratio", _fd_pct("EEFFR")),
+        roatce_row,
+        ("ROAA (Bank)", _fd_pct("ROA")),
+        ("NIM (Bank)", _fd_pct("NIMY")),
+        ("Efficiency (Bank)", _fd_pct("EEFFR")),
         # The bank's own released holdco efficiency — ALONGSIDE the FDIC
         # bank-sub row, never replacing it (different bases, often FTE;
         # owner decision 2026-08-19). _kv_table drops the row when absent.
         ("Efficiency (co. release)", disp("efficiency_release")),
-        ("CET1 Ratio", _fd_pct("IDT1CER")),
-        ("NPL Ratio", _fd_pct("NCLNLSR")),
+        ("CET1 (Bank)", _fd_pct("IDT1CER")),
+        ("NPL (Bank)", _fd_pct("NCLNLSR")),
     ]
     return _kv_table("Valuation", valuation), _kv_table("Performance", performance)
 
