@@ -1284,7 +1284,8 @@ def get_latest_fundamentals(cik: int) -> dict:
         result["common_equity"] = common_equity
         result["book_value_per_share"] = common_equity / shares
         result["tangible_book_value_per_share"] = (
-            common_equity - intangible_adjustment) / shares
+            (common_equity - intangible_adjustment) / shares
+            if intangible_adjustment is not None else None)
     else:
         result["common_equity"] = None
         result["book_value_per_share"] = None
@@ -1299,7 +1300,8 @@ def get_latest_fundamentals(cik: int) -> dict:
     # Goodwill tagged only at fiscal year-end (ZION, WAL … 21 banks) is used
     # as last reported, and FLAGGED (owner decision) via tce_goodwill_prior.
     tce = None
-    if equity is not None and not preferred_unresolved:
+    if (equity is not None and not preferred_unresolved
+            and intangible_adjustment is not None):
         tce = equity - (preferred_stock or 0) - intangible_adjustment
     result["tce_holdco"] = tce
     aoci_tup = (_instant_at(facts, "AccumulatedOtherComprehensiveIncomeLossNetOfTax",
@@ -1485,7 +1487,7 @@ def _latest_dei_share_count(facts: dict) -> tuple[float | None, str | None]:
     return top.get("val"), top.get("end", "")
 
 
-def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
+def _resolve_intangible_adjustment(facts: dict, result: dict) -> float | None:
     """
     Return the total goodwill + other-intangibles to subtract from common
     equity for tangible book value, following the standard non-GAAP TCE
@@ -1508,10 +1510,15 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
          a bank tags only in the combined figure. A combined tag STALER than
          goodwill is ignored (its pre-acquisition sum would understate).
       3. adjustment = Goodwill + other-intangibles (goodwill current), else the
-         combined tag, else just the other-intangibles (or 0).
+         combined tag, else just the other-intangibles, else 0 — or None
+         (unknown) when the filer's goodwill tag lapsed recently
+         (_goodwill_tag_lapsed, the CFR class).
 
     Updates result["goodwill"], result["intangibles"], result["mortgage_srv_rights"],
-    and stores result["intangible_adjustment"] for traceability.
+    and stores result["intangible_adjustment"] for traceability, plus
+    result["intangibles_untagged"]: True when no intangible concept is tagged
+    at or near the balance sheet, so the 0 is an inference callers with the
+    bank-sub's FDIC goodwill should cross-check.
     """
     goodwill = result.get("goodwill")  # plain `Goodwill`, current only
     _, gw_end = _val_end(facts, "Goodwill")
@@ -1589,10 +1596,52 @@ def _resolve_intangible_adjustment(facts: dict, result: dict) -> float:
     elif intangibles is not None:
         adjustment = intangibles_s
     else:
-        adjustment = 0.0
+        # Nothing tagged at or near the balance sheet. Usually a small bank
+        # with no intangibles (no balance-sheet line, so no tag), but the
+        # filer's own history can prove otherwise: CFR tagged Goodwill
+        # $655.0M through 2023-06-30, then folded it into other assets
+        # (the 2026-06-30 10-Q has no goodwill line; Frost Bank's FDIC
+        # INTANGW is $652.7M). Goodwill does not amortize, so a recent
+        # nonzero balance that stops being tagged is unknown, not 0 →
+        # None, and tangible book / TCE render n/a. Otherwise 0.0, with
+        # intangibles_untagged set so a caller holding the bank-sub's FDIC
+        # goodwill can tell "none" from "untagged" (analysis/valuation).
+        adjustment = None if _goodwill_tag_lapsed(facts) else 0.0
 
     result["intangible_adjustment"] = adjustment
+    result["intangibles_untagged"] = (
+        goodwill is None and incl is None and intangibles is None)
     return adjustment
+
+
+# A Goodwill tag that lapsed within this many years of the balance sheet
+# still describes the filer (goodwill does not amortize). Older lapses are
+# uninformative either way — UWHR's 2012 $1.0M is gone (its 2026 10-Q never
+# mentions goodwill; FDIC INTANGW 0) while TFSL's 2012 $4.8M is still on
+# Third Federal's books (FDIC INTANGW $4,848K) — so they keep 0.0 and the
+# intangibles_untagged flag for the FDIC cross-check.
+_GOODWILL_LAPSE_YEARS = 5
+
+
+def _goodwill_tag_lapsed(facts: dict) -> bool:
+    """True when the filer's newest 10-K/10-Q goodwill-bearing fact
+    (Goodwill, else the goodwill-inclusive rollup) is NONZERO and dated
+    within _GOODWILL_LAPSE_YEARS of the balance sheet — goodwill it once
+    tagged and has stopped tagging. An explicit 0 as the newest fact (or no
+    such fact ever) is False."""
+    bs = _balance_sheet_date(facts)
+    if not bs:
+        return False
+    floor = f"{int(bs[:4]) - _GOODWILL_LAPSE_YEARS}{bs[4:]}"
+    ug = facts.get("facts", {}).get("us-gaap", {})
+    for concept in ("Goodwill", "IntangibleAssetsNetIncludingGoodwill"):
+        rows = [e for e in ug.get(concept, {}).get("units", {}).get("USD", [])
+                if e.get("form") in ("10-K", "10-Q") and e.get("end")
+                and e.get("val") is not None]
+        if rows:
+            top = max(rows, key=lambda e: (e["end"], e.get("filed") or ""))
+            return top["val"] > 0 and top["end"] >= floor
+    return False
 
 
 def _usd_at(facts: dict, concept: str, as_of: str) -> float | None:
@@ -2430,7 +2479,8 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
 
     if equity and shares and shares > 0 and not preferred_unresolved:
         common_equity = equity - (preferred_stock or 0)
-        tbvps = (common_equity - intangible_adjustment) / shares
+        tbvps = ((common_equity - intangible_adjustment) / shares
+                 if intangible_adjustment is not None else None)
         bvps = common_equity / shares
         # Provenance of a computed value: combine the parents
         parents = (
@@ -2452,7 +2502,9 @@ def get_fundamentals_with_provenance(cik: int) -> dict:
             "source": Source(
                 origin="COMPUTED", concept="tangible_book_value_per_share",
                 derived_from=parents,
-                notes="= (StockholdersEquity − Preferred − resolved Goodwill&Intangibles) / SharesOutstanding",
+                notes=("= (StockholdersEquity − Preferred − resolved Goodwill&Intangibles) / SharesOutstanding"
+                       if tbvps is not None else
+                       "Goodwill tag lapsed — intangibles unknown, so n/a"),
             ),
         }
     else:
