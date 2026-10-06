@@ -173,7 +173,7 @@ def get_structure_events(cert: int) -> list[dict]:
     from data import cache
 
     key = f"fdic_structure:{cert}"
-    cached = cache.get(key)
+    cached = cache.get(key, max_age_s=None)   # the 7-day stamp governs
     if _is_fresh(cached) and isinstance(cached.get("events"), list):
         return cached["events"]
 
