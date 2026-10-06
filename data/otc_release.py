@@ -54,10 +54,12 @@ def _ir_checked_within(cached: dict | None, ttl_s: float) -> bool:
         return False
 
 
-def _latest_earnings_pr(ticker: str) -> dict | None:
-    """The newest press release whose TITLE passes the earnings-headline
-    gate (shared with the 9.01-fallback finder) AND whose title+blurb name
-    the bank as SUBJECT: {title, url, published_at} or None.
+def _earnings_prs(ticker: str) -> list[dict]:
+    """Every press release in the wire index whose TITLE passes the
+    earnings-headline gate (shared with the 9.01-fallback finder) AND whose
+    title+blurb name the bank as SUBJECT — newest first, [] on failure.
+    `_latest_earnings_pr` serves the head; the EPS-history backfill walks
+    the tail (prior quarters' releases, same two gates).
 
     The subject guard is non-negotiable: FMP's symbol index is polluted for
     short tickers (the news adapter's founding bug — symbols=CMA returned
@@ -71,15 +73,20 @@ def _latest_earnings_pr(ticker: str) -> dict | None:
     try:
         prs = get_press_releases(ticker, limit=25) or []
     except Exception:
-        return None
+        return []
     hits = [p for p in prs
             if _is_earnings_headline(p.get("title") or "")
             and p.get("url") and p.get("published_at")
             and _is_subject(ticker, f"{p.get('title') or ''} "
                                     f"{p.get('text') or ''}")]
-    if not hits:
-        return None
-    return max(hits, key=lambda p: p["published_at"])
+    return sorted(hits, key=lambda p: p["published_at"], reverse=True)
+
+
+def _latest_earnings_pr(ticker: str) -> dict | None:
+    """The newest gated earnings release: {title, url, published_at} or
+    None (see _earnings_prs for the gates)."""
+    hits = _earnings_prs(ticker)
+    return hits[0] if hits else None
 
 
 def _release_qend(title: str, filed_date: str) -> str | None:
@@ -179,14 +186,15 @@ def _bank_webaddr(ticker: str) -> str | None:
         return None
 
 
-def _latest_ir_release(ticker: str) -> dict | None:
-    """The newest earnings release posted on the bank's own site:
-    {url, title, qend, kind} or None. Two-hop crawl (static news paths +
-    homepage nav links that hint investor/news pages — banks bury the list
-    one click deep); candidate links must pass the IR link gate AND state
-    their period; the newest stated period wins, and one older than ~200
-    days means the bank doesn't keep current releases here → None."""
-    from datetime import date, timedelta
+def _ir_release_candidates(ticker: str) -> list[dict]:
+    """Every earnings release linked from the bank's own site, newest stated
+    period first: [{url, title, qend, kind}]. Two-hop crawl (static news
+    paths + homepage nav links that hint investor/news pages — banks bury
+    the list one click deep); the FIRST page carrying any candidate is the
+    list (same stop rule as the single-pick locator always had); candidate
+    links must pass the IR link gate AND state their period. The head is
+    the bank's latest release (_latest_ir_release); the tail is the prior
+    quarters' releases the EPS-history backfill reads."""
     from urllib.parse import urljoin, urlparse
 
     from data.events.ir_site import _domain_root, _extract_links, _fetch
@@ -194,26 +202,26 @@ def _latest_ir_release(ticker: str) -> dict | None:
 
     webaddr = _bank_webaddr(ticker)
     if not webaddr:
-        return None
+        return []
     root = _domain_root(webaddr)      # bare host, no scheme ("hamlinbank.com")
     if not root:
-        return None
+        return []
 
-    def _scan(html: str, page: str, best: dict | None) -> dict | None:
+    def _scan(html: str, page: str, best: list) -> list:
         for href, text in _extract_links(html, page):
             if not text or not _is_ir_release_link(text):
                 continue
             qend = _period_qend(text)
             if not qend:
                 continue
-            if best is None or qend > best["qend"]:
-                kind = "pdf" if href.lower().split("?")[0].endswith(".pdf") \
-                    else "html"
-                best = {"url": href, "title": text, "qend": qend, "kind": kind}
+            kind = "pdf" if href.lower().split("?")[0].endswith(".pdf") \
+                else "html"
+            best.append({"url": href, "title": text, "qend": qend,
+                         "kind": kind})
         return best
 
     hosts = [f"https://{root}", f"https://www.{root}"]
-    best, home_html, home_url = None, None, None
+    best, home_html, home_url = [], None, None
     for path in _NEWS_PATHS:
         html, page = None, None
         for host in hosts:
@@ -231,7 +239,7 @@ def _latest_ir_release(ticker: str) -> dict | None:
         if best:
             break                     # first page with candidates wins
     # Second hop: homepage nav links hinting at investor/news sections.
-    if best is None and home_html:
+    if not best and home_html:
         seen, hops = set(), 0
         for href, text in _extract_links(home_html, home_url):
             if hops >= 6:
@@ -249,10 +257,22 @@ def _latest_ir_release(ticker: str) -> dict | None:
                 best = _scan(sub, href, best)
                 if best:
                     break
-    if best is None:
+    # Stable sort: among equal stated periods the first link found wins —
+    # exactly the single-pick locator's "strictly newer replaces" rule.
+    return sorted(best, key=lambda c: c["qend"], reverse=True)
+
+
+def _latest_ir_release(ticker: str) -> dict | None:
+    """The newest earnings release posted on the bank's own site:
+    {url, title, qend, kind} or None — the head of _ir_release_candidates;
+    a newest stated period older than ~200 days means the bank doesn't
+    keep current releases here → None."""
+    from datetime import date, timedelta
+    cands = _ir_release_candidates(ticker)
+    if not cands:
         return None
     floor = (date.today() - timedelta(days=_IR_STALE_DAYS)).isoformat()
-    return best if best["qend"] >= floor else None
+    return cands[0] if cands[0]["qend"] >= floor else None
 
 
 def _fetch_document(url: str, kind: str) -> str | None:
@@ -280,6 +300,28 @@ def _fetch_document(url: str, kind: str) -> str | None:
         return None
 
 
+def _env_record(ticker: str) -> tuple[str, dict | None]:
+    """(cache key, raw envelope record) — the ONE place the per-ticker key
+    (version = extraction spec) is spelled, read at any age: freshness is
+    judged by the caller (15-min is_fresh + URL-match re-stamp), and the
+    default 24h read ceiling would drop the record after any >24h gap and
+    force a full re-crawl + re-extraction per bank."""
+    from data import cache as _cache
+    key = f"otc_release:v13:{ticker.upper()}"
+    try:
+        return key, _cache.get(key, max_age_s=None)
+    except Exception:
+        return key, None
+
+
+def _read_envelope(ticker: str) -> dict | None:
+    """SERVE-ONLY envelope read (the allow_fetch=False contract, without the
+    wrapper's re-stamp paths): the value dict or None."""
+    _, cached = _env_record(ticker)
+    v = (cached or {}).get("value")
+    return None if not v or v.get("empty") else v
+
+
 def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
                         ir_crawl: bool = True) -> dict | None:
     """Extracted metrics for a non-SEC bank's latest earnings release:
@@ -305,6 +347,13 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v13 (2026-10-06): OTC P/E + market cap — the envelope now carries the
+    # release's discrete-quarter diluted-EPS SERIES (release_metrics
+    # .extract_table_series) and its tied-out common share count
+    # (release_shares.extract_shares_outstanding), and every extraction
+    # appends to the per-ticker quarter history (otc_eps_history). Cached
+    # envelopes lack those keys until re-extracted → bump.
+    # v12 (2026-10-01): release_metrics v21.
     # v11 (2026-10-01): release_metrics v20 — bv_ps preferred guard (NPB).
     # v10 (2026-10-01): release_metrics v19 — deterministic bv_ps (GLBZ).
     # v9 (2026-08-20): release_metrics v18 — EPS tie-out input rows (NI
@@ -332,14 +381,7 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     # v4 subject guard + title-governed qend; v3 prose-EPS connector
     # (release_metrics v12). COUPLING: any release_metrics extraction-spec
     # bump must bump THIS version too (extractions immutable per URL).
-    key = f"otc_release:v12:{ticker.upper()}"
-    try:
-        # Freshness is judged below (15-min is_fresh + URL-match re-stamp);
-        # the default 24h read ceiling would drop `prev` after any >24h gap
-        # and force a full re-crawl + re-extraction per bank.
-        cached = _cache.get(key, max_age_s=None)
-    except Exception:
-        cached = None
+    key, cached = _env_record(ticker)
     if not allow_fetch:
         v = (cached or {}).get("value")
         return None if not v or v.get("empty") else v
@@ -437,11 +479,27 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
     from data.ir_provider import extract_capital_ratios
     from data.release_metrics import (_prior_quarter_end, _year_ago_qend,
                                       extract_release_metrics,
-                                      extract_table_metrics)
+                                      extract_table_metrics,
+                                      extract_table_series)
+    from data.release_shares import extract_shares_outstanding
     prior_qend = _prior_quarter_end(qend)
+    metrics = extract_release_metrics(html, expected_qend=qend)
+    # OTC P/E + market cap inputs (owner spec 2026-10-06). eps_series: the
+    # release's own discrete-quarter diluted EPS by quarter-end (five-quarter
+    # tables), period-proven column by column — the composite TTM's
+    # components. shares_outstanding: common shares at qend, served only
+    # when BV/share × shares reproduces the release's own equity (±1%);
+    # shares_tie_out records the proof or the refusal.
+    series = extract_table_series(html, "eps_diluted")
+    shares = extract_shares_outstanding(html, qend, metrics)
+    _append_eps_history(ticker, url=url, qend=qend,
+                        eps=metrics.get("eps_diluted"), series=series)
     val = {
         "qend": qend,
-        "metrics": extract_release_metrics(html, expected_qend=qend),
+        "metrics": metrics,
+        "eps_series": series,
+        "shares_outstanding": shares["shares"],
+        "shares_tie_out": shares["tie"],
         "prior_metrics": (extract_table_metrics(html, prior_qend)
                           if prior_qend else {}),
         "prior_qend": prior_qend,
@@ -456,3 +514,147 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
         "transport": transport,
     }
     return _stamp(val)
+
+
+# ── Per-ticker quarter history (OTC composite TTM EPS, owner spec 2026-10-06)
+# The envelope above is ONE release per ticker (latest URL). A TTM needs
+# four discrete quarters, so every extraction also APPENDS its quarter(s) to
+# a small per-ticker history: {qend: {eps_diluted, url, extracted_at, via}}
+# — the release's own quarter ("release") and every column of its
+# five-quarter table ("table"). Entries are write-once: a later value that
+# agrees re-affirms, a later value that DISAGREES marks the quarter
+# `conflict` (the composite refuses it — one of the two is wrong, and a
+# restatement is indistinguishable from a mis-read here) — never overwrites.
+# After a year every OTC bank has four quarters even without a table; the
+# bounded one-time backfill below (≤4 prior releases, wire index then IR
+# crawl) fills the first year.
+
+_HIST_V = 1
+_BACKFILL_MAX_RELEASES = 4
+_HIST_AGREE = 0.011      # cent agreement, as release_metrics
+
+
+def _hist_key(ticker: str) -> str:
+    key = f"otc_eps_history:v{_HIST_V}:{ticker.upper()}"
+    return key
+
+
+def get_eps_history(ticker: str) -> dict:
+    """SERVE-ONLY read of the ticker's quarter history at any age:
+    {"quarters": {qend: {...}}, "backfill": {...} | None}; {} when none."""
+    from data import cache as _cache
+    key = _hist_key(ticker)
+    try:
+        cached = _cache.get(key, max_age_s=None)
+    except Exception:
+        return {}
+    return (cached or {}).get("value") or {}
+
+
+def _is_quarter_end(qend: str | None) -> bool:
+    try:
+        y, m, d = (int(x) for x in str(qend).split("-"))
+    except (TypeError, ValueError):
+        return False
+    return {3: 31, 6: 30, 9: 30, 12: 31}.get(m) == d and 2000 <= y <= 2100
+
+
+def _append_eps_history(ticker: str, *, url: str, qend: str | None,
+                        eps: float | None, series: dict | None) -> dict:
+    """Merge one release's quarter(s) into the ticker's history (write-once
+    per quarter; disagreement → conflict flag, never an overwrite). The
+    release's own quarter is recorded via "release" and OUTRANKS a "table"
+    entry for the same quarter when they agree (provenance upgrade only).
+    Returns the stored history."""
+    from data import cache as _cache
+    hist = get_eps_history(ticker)
+    quarters = dict(hist.get("quarters") or {})
+    now = datetime.now().isoformat(timespec="seconds")
+    incoming: list[tuple[str, float, str]] = []
+    if qend and eps is not None and _is_quarter_end(qend):
+        incoming.append((qend, float(eps), "release"))
+    for q, v in (series or {}).items():
+        if v is not None and _is_quarter_end(q):
+            incoming.append((q, float(v), "table"))
+    for q, v, via in incoming:
+        cur = quarters.get(q)
+        if cur is None:
+            quarters[q] = {"eps_diluted": v, "url": url, "extracted_at": now,
+                           "via": via}
+            continue
+        if cur.get("eps_diluted") is None:
+            continue
+        if abs(cur["eps_diluted"] - v) <= _HIST_AGREE:
+            if via == "release" and cur.get("via") == "table":
+                quarters[q] = {**cur, "url": url, "via": via,
+                               "reaffirmed_at": now}
+            continue
+        if not cur.get("conflict"):
+            quarters[q] = {**cur, "conflict": True,
+                           "alt": {"eps_diluted": v, "url": url, "via": via,
+                                   "seen_at": now}}
+    hist = {**hist, "quarters": quarters}
+    try:
+        _cache.put(_hist_key(ticker), {"cached_at": now, "value": hist})
+    except Exception:
+        pass
+    return hist
+
+
+def backfill_eps_history(ticker: str,
+                         max_releases: int = _BACKFILL_MAX_RELEASES) -> bool:
+    """ONE-TIME bounded backfill of a ticker's quarter history from its
+    prior releases: up to `max_releases` older releases (the wire index
+    first — cheap, already fetched by the warm; the bank's own site only
+    when the wire has nothing), each run through the same guarded
+    extractors and appended. Runs only for a ticker whose envelope exists
+    (its latest release was already extracted) and only once — the
+    `backfill` marker is written even when nothing was found, so a bank
+    with no prior releases costs one attempt, ever. Returns True when a
+    backfill RAN (the caller budgets runs), False when skipped.
+
+    Called from jobs/refresh_home_snapshot's warm pass — never from a
+    render or the snapshot build (the serve-only contract above)."""
+    from data import cache as _cache
+    from data.release_metrics import (extract_release_metrics,
+                                      extract_table_series)
+    env = _read_envelope(ticker)
+    if not env or not env.get("url"):
+        return False
+    hist = get_eps_history(ticker)
+    if hist.get("backfill"):
+        return False
+    latest_url = env["url"]
+    docs: list[tuple[str, str | None, str | None, str]] = []
+    for pr in _earnings_prs(ticker):
+        if pr["url"] == latest_url:
+            continue
+        qend = _release_qend(pr.get("title") or "",
+                             (pr["published_at"] or "")[:10])
+        docs.append((pr["url"], pr.get("title"), qend, "html"))
+    if not docs:
+        for c in _ir_release_candidates(ticker):
+            if c["url"] == latest_url:
+                continue
+            docs.append((c["url"], c.get("title"), c["qend"], c["kind"]))
+    tried: list[str] = []
+    for url, title, qend, kind in docs[:max_releases]:
+        tried.append(url)
+        if not qend or not _is_quarter_end(qend):
+            continue                  # period unprovable → never extracted
+        text = _fetch_document(url, kind)
+        if not text:
+            continue
+        metrics = extract_release_metrics(text, expected_qend=qend)
+        series = extract_table_series(text, "eps_diluted")
+        _append_eps_history(ticker, url=url, qend=qend,
+                            eps=metrics.get("eps_diluted"), series=series)
+    hist = get_eps_history(ticker)
+    hist["backfill"] = {"done_at": datetime.now().isoformat(timespec="seconds"),
+                        "urls": tried}
+    try:
+        _cache.put(_hist_key(ticker),
+                   {"cached_at": datetime.now().isoformat(), "value": hist})
+    except Exception:
+        pass
+    return True

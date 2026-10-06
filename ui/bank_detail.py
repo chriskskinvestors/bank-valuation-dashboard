@@ -195,11 +195,25 @@ def _eps_label(row):
     as the book values (Citi: two quarters behind, 2026-09-22)."""
     if row.get("eps_source") == "release_ttm":
         return "EPS (TTM, co. release)"
+    if row.get("eps_source") == "release_ttm_otc":
+        # Non-SEC filer: four discrete quarters, each from one of the
+        # bank's own releases (plural — no single release is the source).
+        return "EPS (TTM, co. releases)"
     form = _overlay_form(row)
     if form:
         return f"EPS (TTM, co. {form})"
     stale = _facts_as_of_label(row)
     return f"EPS (TTM, thru {stale})" if stale else "EPS (TTM)"
+
+
+def _mc_label(row, base="Market Cap"):
+    """Market Cap / Shares Outstanding labels carry the release provenance
+    when the count is a non-SEC filer's own tied-out release figure
+    (analysis/valuation market_cap_source) — the same "(co. release)"
+    convention as the per-share book values."""
+    if row.get("market_cap_source") == "company_release":
+        return f"{base} (co. release)"
+    return base
 
 
 def _mdy(d) -> str:
@@ -281,7 +295,7 @@ def _render_valuation_performance_tables(row, fdic_rec=None, quote=None):
     valuation = [
         ("Last Price", format_value(last_px, "currency", 2) if last_px is not None else None),
         ("Change", chg_html),
-        ("Market Cap", disp("market_cap")),
+        (_mc_label(row), disp("market_cap")),
         ("P/E (LTM)", disp("pe_ratio")),
         (eps_label, disp("eps")),
         ("P/TBV", disp("ptbv_ratio")),
@@ -565,8 +579,10 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
     o = _num(quote.get("open")); hi = _num(quote.get("high")); lo = _num(quote.get("low"))
     vol = _num(quote.get("volume")) or _num(row.get("volume"))
     # The count market cap is priced on (cover page when newer than the
-    # balance sheet) — Shares Outstanding sits beside Market Cap here.
-    shares = _num(fund.get("shares_for_market_cap") or fund.get("shares_outstanding"))
+    # balance sheet; a non-SEC filer's tied-out release count, from the
+    # metrics row) — Shares Outstanding sits beside Market Cap here.
+    shares = (_num(fund.get("shares_for_market_cap") or fund.get("shares_outstanding"))
+              or _num(row.get("shares_outstanding")))
     dy = _num(row.get("dividend_yield"))
     mcap = _num(row.get("market_cap"))
 
@@ -589,10 +605,11 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
         ("Avg Volume (3M)", f"{avg_vol:,.0f}" if avg_vol else None),
         # Same METRICS-driven format as the Valuation table below (and the
         # Screen) — one page must not show "$829.30B" beside "$829.3B" (UX-P2-14).
-        ("Market Cap", format_value(mcap, _MC_FMT.get("format", "billions"),
-                                    _MC_FMT.get("decimals", 1))
+        (_mc_label(row), format_value(mcap, _MC_FMT.get("format", "billions"),
+                                      _MC_FMT.get("decimals", 1))
          if mcap is not None else None),
-        ("Shares Outstanding", f"{shares:,.0f}" if shares else None),
+        (_mc_label(row, "Shares Outstanding"),
+         f"{shares:,.0f}" if shares else None),
         ("Dividend Yield", f"{dy:.2f}%" if dy is not None else None),
     ]
 
@@ -1211,7 +1228,8 @@ _CATEGORY_DESC = {
 _METRIC_DESC = {
     "change_pct": "Price change vs the prior close.",
     "volume": "Shares traded.",
-    "market_cap": "Latest reported shares outstanding (10-Q/10-K cover page) × price.",
+    "market_cap": "Latest reported shares outstanding (10-Q/10-K cover page; "
+                  "a non-SEC filer's own earnings release) × price.",
     "eps": "Trailing-12-month diluted EPS (SEC).",
     "pe_ratio": "Price ÷ TTM diluted EPS. Lower = cheaper on earnings.",
     "tbvps": "Tangible book value per share = (equity − intangibles) ÷ shares.",

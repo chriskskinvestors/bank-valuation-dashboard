@@ -204,6 +204,9 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
         # version that is SUPPOSED to be bumped (otc_release v6->v7 etc.), and
         # a version bump must not look like a regression in this pin.
         ("data/otc_release.py", r'key = f"otc_release:v\d+:'),
+        # Quarter history for the OTC composite TTM (2026-10-06): appended
+        # over a year, read at any age by the serve-only composite.
+        ("data/otc_release.py", r'key = _hist_key\(ticker\)'),
         ("data/release_metrics.py", r'key = f"release_metrics:v\d+:'),
         ("data/ma_history.py", r'key = f"ma_history:v\d+:'),
         ("data/ma_summary.py", r'key = f"ma_summary:v\d+:'),
