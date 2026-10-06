@@ -834,6 +834,14 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
     shares = _num(fund.get("shares_outstanding")); equity = _num(fund.get("book_value_total"))
     tbvps = _num(actual_metrics.get("tbvps"))
     tce = (tbvps * shares) if (tbvps is not None and shares) else None
+    # Company share basis (GS "Basic shares"): the displayed TBVPS is OUR
+    # tangible common equity over the COMPANY's denominator, so TCE comes
+    # from the reconstruction and the shown share count is that basis.
+    basis_shares = None
+    if actual_metrics.get("tbvps_source") == "reconstructed_company_shares":
+        rt = _num(fund.get("tangible_book_value_per_share"))
+        tce = (rt * shares) if (rt is not None and shares) else None
+        basis_shares = (tce / tbvps) if (tce is not None and tbvps) else None
     adj = (equity - tce) if (equity is not None and tce is not None) else None
     ni = _num(rec.get("NETINC")); eqf = _num(rec.get("EQTOT")); intanf = _num(rec.get("INTAN")) or 0
     tcef = (eqf - intanf) if eqf is not None else None
@@ -892,17 +900,27 @@ def _render_key_metrics(ticker: str, actual_metrics: dict):
                   if actual_metrics.get("tbvps_source") in ("reported_8k",
                                                  "company_release")
                   else make_calc("Tangible BV / share", fmt("tbvps"), entity=entity,
-                           source="SEC filing (10-K/10-Q)", asof=(eq_doc or {}).get("label", "latest filing"),
+                           source=("SEC filing (10-K/10-Q) ÷ company share basis (earnings release)"
+                                   if basis_shares else "SEC filing (10-K/10-Q)"),
+                           asof=(eq_doc or {}).get("label", "latest filing"),
                            unit="$ / share", ref="(equity − intangibles) ÷ shares",
-                           definition="Tangible common equity (equity − intangibles) ÷ shares outstanding.",
+                           definition=("Tangible common equity (equity − intangibles) ÷ the "
+                                       "company's own per-share share basis, as used in its "
+                                       "earnings release." if basis_shares else
+                                       "Tangible common equity (equity − intangibles) ÷ shares outstanding."),
                            terms=[{"label": "Tangible common equity",
                                    # honest '—' for missing inputs — never a fake "0 ($000)" (audit P3)
                                    "val": (_thou(tce / 1000) + " ($000)") if tce is not None else "—",
                                    "doc": eq_doc,
                                    "sub": (f"Equity {_thou(equity/1000) if equity is not None else '—'} − intangibles "
                                            f"{_thou(adj/1000) if adj is not None else '—'} ($000)")},
-                                  {"label": "Shares outstanding",
-                                   "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc}],
+                                  ({"label": "Common shares (company basis)",
+                                    "val": f"{basis_shares:,.0f}",
+                                    "sub": "the earnings release's own per-share "
+                                           "denominator (e.g. incl. vested RSUs)"}
+                                   if basis_shares else
+                                   {"label": "Shares outstanding",
+                                    "val": (f"{shares:,.0f}" if shares else "—"), "doc": sh_doc})],
                            op="Tangible common equity ÷ shares"))},
     ]
     _kpi_strip([(c["label"], c["value"], _calc_tooltip(c.get("calc")),

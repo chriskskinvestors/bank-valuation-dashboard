@@ -1811,6 +1811,85 @@ def reported_bvps_status(
               f"{type(e).__name__}: {e}")
         return None, "not_disclosed"
 
+
+# ── The company's per-share DENOMINATOR (owner decision 2026-10-06) ──────────
+# Some banks divide common equity by a share basis wider than period-end
+# shares outstanding — GS's "Basic shares" adds RSUs with no future service
+# requirement: release BVPS $367.67 = common equity $109,714M ÷ 298.4M, while
+# shares outstanding are 291.4M. Release-first served that BVPS beside our
+# reconstructed TBVPS on 291.4M — two conventions on one page. The owner chose
+# the company's basis: the reconstruction is restated onto it, but ONLY when
+# the release proves the difference is the denominator alone — our common
+# equity ÷ the release's own BVPS must reproduce a share count the release
+# prints (same equity, same date, different shares), within 0.1%. Anything
+# else → None.
+_SHARE_BASIS_LABELS: frozenset = _ENDING_SHARES_LABELS | {"basic shares"}
+_SHARE_BASIS_TIE = 0.001   # coarsest real rounding: BAC "7.02" bn = 0.07%
+
+
+def extract_share_basis_status(
+    ex991_html: bytes,
+    common_equity: float,
+) -> tuple[float | None, str]:
+    """(company share basis, status) from one release: "ok" when the first
+    explicit book-value-per-common-share row's latest value, divided into
+    `common_equity` (raw dollars), ties the first printed value of a
+    share-count row within 0.1% at ×1 / ×1e3 / ×1e6. The printed count is returned when it is a
+    raw (×1) count; a rounded thousands/millions count returns the implied
+    common_equity ÷ BVPS instead (more precise). Else (None, "not_disclosed")."""
+    if not common_equity or common_equity <= 0:
+        return None, "not_disclosed"
+    rows = _book_value_rows(ex991_html)
+    bvps = next((nums[0] for cl, nums in rows
+                 if _match_bvps_label(cl) and nums[0] is not None), None)
+    if not bvps or not (0 < bvps < 10_000):
+        return None, "not_disclosed"
+    implied = common_equity / bvps
+    for cl, nums in rows:
+        if _strip_trailing_qualifiers(cl) not in _SHARE_BASIS_LABELS:
+            continue
+        # The row's FIRST printed value is its latest period. GS's row reads
+        # [None, 298.4, None, 302.0, …] — a value column other rows use is
+        # blank here — so the first non-blank cell, not nums[0]. Never any
+        # later cell: with our equity 1% off GS's, implied 301.39M would
+        # "tie" the PRIOR quarter's 302.0.
+        v = next((x for x in nums if x is not None), None)
+        if v is None or v <= 0:
+            continue
+        for scale in (1.0, 1e3, 1e6):
+            if abs(v * scale - implied) / implied < _SHARE_BASIS_TIE:
+                return (v if scale == 1.0 else implied), "ok"
+    return None, "not_disclosed"
+
+
+def reported_share_basis(cik, common_equity: float | None) -> float | None:
+    """Cached wrapper for extract_share_basis_status over the latest earnings
+    8-K's EX-99.1 (supplements are not read). Keyed by accession + the equity
+    it was tied against; a fetch exception is never cached."""
+    if not cik or not common_equity:
+        return None
+    from data import cache
+    f8k = _latest_earnings_8k(cik)
+    if not f8k:
+        return None
+    ckey = f"reported_share_basis:v1:{f8k['accession']}:{common_equity:.0f}"
+    cached = cache.get(ckey, max_age_s=None)
+    if cached is not None:
+        return cached.get("value")
+    try:
+        value, _ = _exhibit_status(
+            f8k, lambda html, pe: (extract_share_basis_status(html, common_equity)
+                                   if pe is None else (None, "not_disclosed")))
+        try:
+            cache.put(ckey, {"value": value})
+        except Exception:
+            pass
+        return value
+    except Exception as e:
+        print(f"[sec_earnings_8k] reported_share_basis failed for cik {cik}: "
+              f"{type(e).__name__}: {e}")
+        return None
+
 # Extraction-spec version of the reported_tbvps cache key. Bump on any change
 # to the extraction/gating logic — a cached result under the old spec must not
 # serve the old answer forever.
