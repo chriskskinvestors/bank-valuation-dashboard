@@ -1401,5 +1401,155 @@ class TestWalkThrottle(unittest.TestCase):
         self.assertEqual(fetched.count("index"), 1)
 
 
+class TestWireSelfNamedCounterparty(unittest.TestCase):
+
+    def test_targets_own_index_carries_the_acquirers_release(self):
+        # FMP indexes First Financial's 2026-07-21 release under FNWD too.
+        # The body names the target with a dateline prefix; the wire leg
+        # must not turn it into FNWD acquiring "Munster-based Finward".
+        from data import ma_pending
+        prs = [{"title": "First Financial Bancorp Announces Second Quarter 2026 "
+                         "Financial Results, Quarterly Dividend Increase & "
+                         "Acquisition of Finward Bancorp",
+                "url": "https://www.prnewswire.com/ffbc", "published_at": "2026-07-21 16:30:00",
+                "text": "pending acquisition of Finward Bancorp"}]
+        story = ("First Financial Bancorp. (Nasdaq: FFBC) today announced the "
+                 "pending acquisition of Finward Bancorp (\"Finward\"). Under the "
+                 "terms of the agreement to acquire Munster-based Finward, the "
+                 "holding company for Peoples Bank, each outstanding share of "
+                 "Finward common stock will be converted into the right to "
+                 "receive 1.35 shares of First Financial common stock.")
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date(2026, 10, 6)
+        with patch("data.ma_pending._wire_releases", return_value=prs), \
+             patch("data.ma_pending._wire_story_text", return_value=story), \
+             patch("data.events.fmp_news._is_subject", return_value=True), \
+             patch("data.ma_pending._universe_match", return_value=(None, None, None)), \
+             patch("data.ma_pending.time.sleep", lambda *_: None), \
+             patch("data.ma_pending.date", _FakeDate):
+            rows, ok = ma_pending.find_pending_wire("FNWD", "Finward Bancorp")
+        self.assertTrue(ok)
+        self.assertEqual(rows, [])
+
+
+# ── Acquirer-side misses on the first fast-pass board (2026-10-06) ─────────
+# Verbatim from the HBT/Tri-County joint release (both filers' 8-Ks,
+# 2026-08-10) and Peoples' 2026-09-30 release.
+HBT_8K = ("HBT Financial, Inc. (NASDAQ: HBT) today announced the signing of a "
+          "definitive merger agreement with Tri-County Financial Group, Inc. "
+          "Under the terms of the merger agreement, Tri-County shareholders will "
+          "have the right to receive either (1) 2.4589 shares of HBT Financial\u2019s "
+          "common stock for each share of Tri-County stock, or (2) $71.01 in cash "
+          "for each share of Tri-County stock. Buyer \u25aa HBT Financial, Inc. "
+          "(NASDAQ: HBT) \u25aa Bloomington, IL Seller \u25aa Tri-County Financial "
+          "Group, Inc. (OTC: TYFG) \u25aa Mendota, IL. The transaction is expected "
+          "to close in the first quarter of 2027.")
+PEBO_PAIRS = ('MARIETTA, Ohio, and ROCKVILLE, Maryland - Peoples Bancorp Inc. '
+              '("Peoples") (NASDAQ: PEBO) and Capital Bancorp, Inc. ("Capital") '
+              '(NASDAQ: CBNK) jointly announced today the signing of an agreement '
+              'and plan of merger pursuant to which Peoples will acquire Capital '
+              'in an all-stock transaction.')
+FFBC_8K = ("Cincinnati, Ohio - July 21, 2026. First Financial Bancorp. (NASDAQ: "
+           "FFBC) today announced a definitive agreement to acquire Finward "
+           "Bancorp (NASDAQ: FNWD), the holding company for Peoples Bank. Each "
+           "share of Finward common stock will be converted into the right to "
+           "receive 1.35 shares of First Financial common stock. The transaction "
+           "is expected to close in the fourth quarter of 2026.")
+
+
+def _open_announcements(cik, display, text, subject):
+    from unittest.mock import MagicMock
+    from data import ma_announcements as ma
+    hits = [{"_id": "0001-26-9:d.htm",
+             "_source": {"adsh": "0001-26-9", "file_date": "2026-08-10",
+                         "ciks": [f"{cik:010d}"], "file_type": "8-K",
+                         "items": ["1.01", "7.01"],
+                         "display_names": [f"{display} (CIK {cik:010d})"]}}]
+    resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
+    resp.raise_for_status = MagicMock()
+    with patch("data.ma_announcements.requests.get", return_value=resp), \
+         patch("data.ma_announcements._accession_text", return_value=(text, True)), \
+         patch("data.ma_announcements.compute_stock_value", return_value=(None, True)), \
+         patch("data.ma_announcements._close_before", return_value=(None, None, True)), \
+         patch("data.ma_announcements.time.sleep", lambda *_: None):
+        return ma.find_open_announcements(cik, subject)
+
+
+class TestTickerPairForms(unittest.TestCase):
+
+    def test_defined_term_and_otc_pairs(self):
+        from data.ma_announcements import _pr_ticker_pairs
+        self.assertEqual([t for _n, t in _pr_ticker_pairs(PEBO_PAIRS)], ["PEBO", "CBNK"])
+        self.assertEqual(_pr_ticker_pairs(PEBO_PAIRS)[1][0], "Capital Bancorp, Inc.")
+        self.assertEqual([t for _n, t in _pr_ticker_pairs(HBT_8K)][-2:], ["HBT", "TYFG"])
+
+    def test_election_list_possessive_ratio(self):
+        from data.ma_announcements import extract_exchange_ratio
+        self.assertEqual(extract_exchange_ratio(HBT_8K),
+                         (2.4589, "HBT Financial", "Tri-County"))
+
+
+class TestAcquirerSideRows(unittest.TestCase):
+
+    def test_generic_name_filer_is_self_by_ticker(self):
+        # "First Financial Bancorp" has no brand token; its own dateline pair
+        # must read as self so Finward is the counterparty.
+        rows, ok = _open_announcements(708955, "FIRST FINANCIAL BANCORP /OH/ (FFBC)",
+                                       FFBC_8K, "First Financial Bank")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_name"], "Finward Bancorp")
+        self.assertEqual(rows[0]["counterparty_ticker"], "FNWD")
+        self.assertEqual(rows[0]["direction"], "acquisition")
+
+    def test_otc_seller_pair_on_the_buyers_8k(self):
+        rows, ok = _open_announcements(775215, "HBT FINANCIAL, INC. (HBT)",
+                                       HBT_8K, "Heartland Bank and Trust Company")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_name"], "Tri-County Financial Group, Inc")
+        self.assertEqual(rows[0]["counterparty_ticker"], "TYFG")
+        self.assertEqual(rows[0]["direction"], "acquisition")
+        self.assertEqual(rows[0]["terms"]["exchange_ratio"], 2.4589)
+        self.assertEqual(rows[0]["terms"]["cash_per_share"], 71.01)
+
+    def test_same_release_on_the_sellers_8k_is_a_sale(self):
+        rows, ok = _open_announcements(1725262, "TRI-COUNTY FINANCIAL GROUP, INC. (TYFG)",
+                                       HBT_8K, "First State Bank")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_ticker"], "HBT")
+        self.assertEqual(rows[0]["direction"], "sale")
+
+    def test_pair_ticker_rides_the_pending_row(self):
+        from data import ma_pending
+        cash = [{"announce_date": "2026-09-30", "direction": "acquisition",
+                 "counterparty_name": "Capital Bancorp, Inc.",
+                 "counterparty_ticker": "CBNK", "counterparty_cik": None,
+                 "value_usd": 728_100_000, "value_basis": "stated", "value_note": None,
+                 "target_cik": None, "announce_url": "u",
+                 "terms": {"exchange_ratio": 1.11, "tgt_ticker": None}}]
+        uni = {"CBNK": {"name": "Capital Bancorp", "fdic_cert": 35278, "cik": 1419536},
+               "PEBO": {"name": "Peoples Bancorp", "fdic_cert": 6826, "cik": 318300}}
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.bank_universe.get_universe", return_value=uni), \
+             patch("data.bank_mapping.get_name", return_value="Capital Bancorp"), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            rows, ok = ma_pending.find_pending_deals(318300, "Peoples Bank", ticker=None)
+        self.assertTrue(ok)
+        self.assertEqual((rows[0]["counterparty_ticker"], rows[0]["counterparty_cert"],
+                          rows[0]["counterparty_cik"]), ("CBNK", 35278, 1419536))
+        self.assertEqual(rows[0]["counterparty_name"], "Capital Bancorp")
+        self.assertEqual(rows[0]["terms"]["tgt_ticker"], "CBNK")
+
+
 if __name__ == "__main__":
     unittest.main()
