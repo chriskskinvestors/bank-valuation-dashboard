@@ -110,7 +110,10 @@ class TestCompanyPageUsesSharedConstants(unittest.TestCase):
 
     def test_page_seeds_from_holdco_first(self):
         src = (REPO / "ui/valuation_model.py").read_text(encoding="utf-8")
-        self.assertIn("compute_roatce_holdco(sec)", src)
+        # Holdco first, over the SAME average-TCE window as the engine
+        # (REVIEW 2026-10-06 P1-1).
+        self.assertIn("compute_roatce_holdco(sec, tce_window)", src)
+        self.assertIn("holdco_tce_window_for(", src)
 
 
 class TestUpsideToFairIsBounded(unittest.TestCase):

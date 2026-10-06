@@ -152,9 +152,19 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # analysis.valuation.compute_all_valuations: holdco common-basis TTM when
     # it resolves, else the sub-bank 75/25 blend; then one-time spikes are
     # winsorized out (CARE's loan-recovery quarter would otherwise seed ~71%).
-    roatce_raw = compute_roatce_holdco(sec)
+    # Average TCE over the TTM window and the merger rule — exactly the
+    # engine's (REVIEW 2026-10-06 P1-1), so this page and the Screen seed the
+    # same return. A merger inside the window is n/a with its reason; the
+    # FDIC blend mixes the same pre/post-merger periods, so no fallback.
+    from analysis.valuation import (holdco_tce_window_for, _winsorized_ttm_factor,
+                                    _compute_capital_return)
+    tce_window = holdco_tce_window_for(ticker, sec, latest) if sec else None
+    roatce_raw = compute_roatce_holdco(sec, tce_window)
     roatce_basis = "holdco" if roatce_raw is not None else None
-    if roatce_raw is None:
+    roatce_note = None
+    if roatce_raw is None and tce_window and tce_window.get("merger"):
+        roatce_basis, roatce_note = "merger", tce_window.get("reason")
+    elif roatce_raw is None:
         roatce_raw = compute_roatce_blended(compute_roatce(latest),
                                             compute_roatce_4q(hist))
         roatce_basis = "fdic_blend" if roatce_raw is not None else None
@@ -163,8 +173,14 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     # Warranted P/TBV headline — a placeholder there is a plausible-wrong
     # number (REVIEW-2026-09-24 P0-1). The input renders empty; the model
     # refuses a headline until a real (derived or typed) value exists.
-    roatce_pct = (roatce_raw * _normalized_earnings_factor(hist)
-                  if roatce_raw is not None else None)
+    # The normalizer comes from the SAME entity's earnings as the ROATCE it
+    # scales (engine rule): holdco quarterly NI for holdco, FDIC NETINC else.
+    if roatce_basis == "holdco":
+        _ni_q = _compute_capital_return(get_cik(ticker), None).get("_holdco_ni_q")
+        _factor = _winsorized_ttm_factor(_ni_q or [])
+    else:
+        _factor = _normalized_earnings_factor(hist)
+    roatce_pct = roatce_raw * _factor if roatce_raw is not None else None
     # Shares
     shares = sec.get("shares_outstanding") or 0
 
@@ -205,6 +221,7 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
         "eps_source": eps_source,
         "roatce_pct": roatce_pct,
         "roatce_basis": roatce_basis,
+        "roatce_note": roatce_note,
         "tbvps": tbvps,
         "tbvps_source": tbvps_source,
         "loan_growth_trailing_pct": loan_growth_trailing,
@@ -257,9 +274,11 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
     ROATCE = {"label": "ROATCE (TTM, >3× spike quarters clipped, %)", "val": pct(seed["roatce_pct"]),
               "doc": eps_doc if seed.get("roatce_basis") == "holdco" else cr_doc,
               "sub": ("entered input" if "roatce_pct" in edited else
-                      "SEC holding-company TTM ROATCE; only quarters >3× the "
-                      "8-quarter median are clipped — smaller one-time items "
-                      "pass through"
+                      f"n/a — {seed.get('roatce_note') or 'merger in the TTM window'}"
+                      if seed.get("roatce_basis") == "merger" else
+                      "SEC holding-company TTM ROATCE over average TCE; only "
+                      "quarters >3× the 8-quarter median are clipped — smaller "
+                      "one-time items pass through"
                       if seed.get("roatce_basis") == "holdco" else
                       "FDIC bank-subsidiary ROATCE (75% latest / 25% 4Q); only "
                       "quarters >3× the 8-quarter median are clipped")}
@@ -704,6 +723,7 @@ def render_valuation_model(ticker: str):
               "cost_of_equity": cost_of_equity, "terminal_growth": terminal_growth,
               "eps_source": defaults.get("eps_source"),
               "roatce_basis": defaults.get("roatce_basis"),
+              "roatce_note": defaults.get("roatce_note"),
               "tbvps_source": defaults.get("tbvps_source"),
               "edited": {k for k, v in (("base_eps", base_eps), ("roatce_pct", roatce_pct),
                                         ("tbvps", tbvps))

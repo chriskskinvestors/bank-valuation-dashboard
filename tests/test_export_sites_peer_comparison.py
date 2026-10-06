@@ -66,12 +66,12 @@ class TestCompareExport(unittest.TestCase):
         c = self._col("P/E")
         self.assertEqual(self.ws.cell(2, c).value, 10.2)
         self.assertEqual(self.ws.cell(2, c).number_format, '0.00"x"')
-        c = self._col("NIM")
+        c = self._col("NIM (Bank)")
         self.assertEqual(self.ws.cell(2, c).value, 3.41)
         self.assertIn('"%"', self.ws.cell(2, c).number_format)
 
     def test_missing_metric_is_na(self):
-        c = self._col("Efficiency")
+        c = self._col("Efficiency (Bank)")
         self.assertEqual(self.ws.cell(2, c).value, 61.2)
         self.assertEqual(self.ws.cell(3, c).value, "n/a")
 

@@ -39,7 +39,7 @@ def _load_fdic(tickers: list[str]) -> tuple[dict, dict]:
     """Latest + historical FDIC records — batched cache read, parallel fetch for
     misses. Mirrors app.load_fdic_data (without the @st.cache_data wrapper)."""
     import pandas as pd
-    from data import cache, fdic_client
+    from data import cache
     from data.bank_mapping import get_fdic_cert
 
     latest: dict = {}
@@ -58,14 +58,16 @@ def _load_fdic(tickers: list[str]) -> tuple[dict, dict]:
         else:
             uncached[t] = cert
     if uncached:
-        for t, df in fdic_client.fetch_multiple_banks_parallel(uncached, limit=4).items():
-            if df is None or df.empty:
-                continue
-            recs = df.to_dict("records")
+        # Charter-group seam, 8 quarters — same producer contract as the
+        # nightly (data/loaders.fetch_group_histories_parallel).
+        from data.loaders import fetch_group_histories_parallel
+        for t, recs in fetch_group_histories_parallel(uncached, limit=8).items():
             hist[t] = recs
             cache.put(f"fdic_hist:{t}", recs)
-            row = df.iloc[0].to_dict()
-            row = {k: (None if pd.isna(v) else v) for k, v in row.items()}
+            # list-valued group markers (_lead_ratio_fields): never pd.isna'd
+            row = {k: (None if (not isinstance(v, (list, tuple, dict))
+                                and pd.isna(v)) else v)
+                   for k, v in recs[0].items()}
             cache.put_fdic(t, row)
             latest[t] = row
     return latest, hist

@@ -55,6 +55,11 @@ def _aoci_metrics(fdic_data: dict, sec_data: dict, aoci_bank) -> dict:
 
     a_h, tce_h = n(sec_data, "aoci_holdco"), n(sec_data, "tce_holdco")
     ok_h = a_h is not None and tce_h is not None and tce_h > 0
+    # The HTM mark is as of the FDIC REPDTE, AOCI as of the SEC equity date:
+    # adding them needs the SAME quarter-end (REVIEW 2026-10-06 P2) — a
+    # lagging companyfacts blob or a fresher call report is n/a, never mixed.
+    same_period = _same_day((fdic_data or {}).get("REPDTE"),
+                            (sec_data or {}).get("sec_as_of"))
     eq, intan = n(fdic_data, "EQTOT"), n(fdic_data, "INTAN")
     tce_b = (eq - intan) if (eq is not None and intan is not None) else None
     a_b = n({"v": aoci_bank}, "v")
@@ -62,12 +67,28 @@ def _aoci_metrics(fdic_data: dict, sec_data: dict, aoci_bank) -> dict:
     return {
         "aoci_holdco_pct_tce": a_h / tce_h * 100 if ok_h else None,
         "aoci_htm_holdco_pct_tce": (a_h + htm_k * 1000) / tce_h * 100
-        if (ok_h and htm_k is not None) else None,
+        if (ok_h and htm_k is not None and same_period) else None,
+        "_aoci_htm_note": (
+            "period mismatch — the bank's HTM mark is as of "
+            f"{str((fdic_data or {}).get('REPDTE'))[:10]}, holdco AOCI as of "
+            f"{(sec_data or {}).get('sec_as_of')}")
+        if (ok_h and htm_k is not None and not same_period) else None,
         "aoci_gw_prior": bool((sec_data or {}).get("tce_goodwill_prior")) if ok_h else None,
         "aoci_sub_pct_tce": a_b / tce_b * 100 if ok_b else None,
         "aoci_htm_sub_pct_tce": (a_b + htm_k) / tce_b * 100
         if (ok_b and htm_k is not None) else None,
     }
+
+
+def _same_day(a, b) -> bool:
+    """True when two date-likes name the same calendar day (False if either
+    is absent or unparseable)."""
+    import pandas as pd
+    try:
+        ta, tb = pd.Timestamp(a), pd.Timestamp(b)
+    except (TypeError, ValueError):
+        return False
+    return not (pd.isna(ta) or pd.isna(tb)) and ta.normalize() == tb.normalize()
 
 
 def _bank_aoci_by_ticker(watchlist, fdic_all, rcr_aoci) -> dict:
@@ -127,6 +148,9 @@ def build_bank_metrics(
     computed["cd_rate_vs_6m_bill"] = (cd_rate - bill) if (
         cd_rate is not None and bill is not None) else None
     computed.update(_aoci_metrics(fdic_data, sec_data, aoci_bank))
+    _htm_note = computed.pop("_aoci_htm_note", None)
+    if _htm_note:
+        computed.setdefault("_notes", {})["aoci_htm_holdco_pct_tce"] = _htm_note
 
     result = {"ticker": ticker}
 
@@ -199,6 +223,13 @@ def build_bank_metrics(
     # along so the release figure's staleness is visible (increment 3 —
     # no conflict flag by design: holdco vs bank-sub are different bases).
     result["efficiency_release_qend"] = computed.get("efficiency_release_qend")
+    # Per-cell n/a reasons / caveats ({metric key: text}) the screen renders
+    # as "†" with the reason on hover (ui/generic_table), plus the two flags
+    # behind the biggest of them (REVIEW 2026-10-06 P1-1 / P2).
+    result["_notes"] = computed.get("_notes") or {}
+    result["roatce_holdco_merger"] = computed.get("roatce_holdco_merger")
+    result["ptbv_basis_mismatch"] = computed.get("ptbv_basis_mismatch")
+    result["tbv_cagr_1y_acq"] = computed.get("tbv_cagr_1y_acq")
 
     return result
 

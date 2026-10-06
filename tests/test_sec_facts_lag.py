@@ -125,6 +125,8 @@ class TestSecFactsLag(unittest.TestCase):
              patch.object(val, "_resolve_tbvps", return_value=(13.96, "reconstructed", False)), \
              patch.object(val, "_resolve_bvps", return_value=(21.43, "reconstructed", False)), \
              patch.object(val, "_resolve_release_efficiency", return_value=(None, None)), \
+             patch.object(val, "holdco_tce_window", return_value={
+                 "avg": None, "points": [], "merger": False, "reason": "stub"}), \
              patch.object(val, "_compute_capital_return_for_ticker",
                           return_value=dict(val._CAPITAL_RETURN_DEFAULTS)):
             row = val.compute_all_valuations({"price": 25.08}, sec, {}, None, "ONB")
