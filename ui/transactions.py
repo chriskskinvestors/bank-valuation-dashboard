@@ -5,14 +5,15 @@ existing universe insider feed KEPT as its own sub-tab; 2026-10-05 owner
 directive put a universe-wide deal board FIRST. Sub-tabs render as they
 are BUILT — no empty placeholders:
 
-  Recent Deals — universe-wide, no picker: every PENDING deal plus every
-      deal announced in the last 24 months (completed/terminated greyed
-      with their date), newest first, one row per deal. Columns grouped
+  Recent Deals — universe-wide, no picker: every PENDING deal (owner
+      2026-10-06: closed and terminated deals stay off this board — they
+      live in Detailed M&A History and Comparable Deal Analysis), newest
+      first, one row per deal. Columns grouped
       Deal / Terms (ratio, cash, implied $/sh at announce, value, stated
       premium) / Valuation at announce (P/TBV, P/assets, core deposit
-      premium, P/E on TTM EPS, target assets) / Merger arb (pending only:
-      target price, implied offer at the acquirer's live price, gross and
-      annualized spread to the STATED expected-close period end) /
+      premium, P/E on TTM EPS, target assets) / Merger arb (target price,
+      implied offer at the acquirer's live price, gross and annualized
+      spread to the STATED expected-close period end) /
       Agreement (termination fee, disclosed votes and approvals). Reads
       ONLY the deal-comps snapshot (terms are compiled nightly by
       jobs/refresh_deal_comps from data/ma_announcements.build_terms) plus
@@ -103,11 +104,8 @@ def render_transactions():
 
 # ── Recent Deals (first tab — owner directive 2026-10-05) ────────────────
 
-_RECENT_DAYS = 730                  # announced in the last 24 months
 _ARB_PRICE_MAX_AGE_S = 4 * 86400    # a warm quote older than a long weekend
                                     # is not a live arb input — n/a
-_PENDING_HTML = ('<span style="color:var(--warning,#d97706);font-weight:600;">'
-                 'Pending</span>')
 _PE_MAX = 100.0                     # P/E beyond this is a denominator artifact
 _FEE_MAX_SHARE = 0.25               # termination fee ÷ deal value beyond this
                                     # is an extraction artifact
@@ -133,31 +131,17 @@ def _ticker_link(ticker: str | None) -> str:
     return f'<a href="?s=Company&bank={esc}" target="_self">{esc}</a>'
 
 
-def _recent_rows(deals: list[dict], today) -> list[dict]:
-    """Every pending deal plus every deal announced OR closed/terminated in
-    the last 24 months, newest announcement first (completed/terminated
-    keep their own date as the fallback sort key). Closing counts too: a
-    deal announced 25 months ago that closed last quarter is a recent deal
-    (Busey/CrossFirst, announced 2024-08-27, closed 2025-06-21, was missing
-    from the first universe board on the announce-only rule)."""
-    from datetime import timedelta
-    floor = (today - timedelta(days=_RECENT_DAYS)).isoformat()
-
-    def _date(d):
-        return (d.get("announce_date") or d.get("completion_date")
-                or d.get("termination_date") or "")
-
-    def _recent(d):
-        return any((d.get(k) or "") >= floor
-                   for k in ("announce_date", "completion_date", "termination_date"))
+def _pending_rows(deals: list[dict]) -> list[dict]:
+    """Every pending deal, newest announcement first. Completed and
+    terminated deals are off this board (owner 2026-10-06)."""
     rows = [d for d in deals
-            if (d.get("status") == "pending" or _recent(d))
+            if d.get("status") == "pending"
             # A pending row whose target resolved to the acquirer itself is
             # a legend-parse artifact (live: EFSI "acquiring" EFSI at a 100%
             # "spread") — never shown.
             and not (d.get("target_ticker") and d.get("buyer_ticker")
                      and d["target_ticker"] == d["buyer_ticker"])]
-    rows.sort(key=_date, reverse=True)
+    rows.sort(key=lambda d: d.get("announce_date") or "", reverse=True)
     return rows
 
 
@@ -166,9 +150,9 @@ def _render_recent_deals():
     from data.deal_comps import get_comps_snapshot, merger_arb
     from data.price_cache_store import get_prices
 
-    st.caption("Every pending bank deal in the universe plus every deal "
-               "announced or closed in the last 24 months, newest first. Terms are "
-               "read verbatim from the announcement press release, Rule 425 "
+    st.caption("Every pending bank deal in the universe, newest first "
+               "(closed and terminated deals: Detailed M&A History and "
+               "Comparable Deal Analysis). Terms are read verbatim from the announcement press release, Rule 425 "
                "legend and merger-agreement 8-K (ratio, cash, mix, stated "
                "per-share value, premium, expected close, termination fee); "
                "valuation multiples come from the deal-comps engine at the "
@@ -183,25 +167,19 @@ def _render_recent_deals():
                 "manually after deploy).")
         return
     today = date.today()
-    rows = _recent_rows(snap["deals"], today)
-    pending = [d for d in rows if d.get("status") == "pending"]
-    completed = [d for d in rows if d.get("status") == "completed"]
-    terminated = [d for d in rows if d.get("status") == "terminated"]
+    rows = _pending_rows(snap["deals"])
     pill_row([
-        stat_pill("PENDING", f"{len(pending):,}"),
-        stat_pill("DEALS (24M + PENDING)", f"{len(rows):,}"),
-        stat_pill("COMPLETED", f"{len(completed):,}"),
-        stat_pill("TERMINATED", f"{len(terminated):,}"),
+        stat_pill("PENDING", f"{len(rows):,}"),
         stat_pill("SNAPSHOT", _h.escape(str(snap.get("built_at", ""))[:10])),
     ], margin="2px 0 12px")
     if not rows:
         from ui.states import empty_state
-        empty_state("No deals announced in the last 24 months and none pending")
+        empty_state("No pending bank deals in the universe")
         return
 
-    # Live prices for the pending deals' two sides (warm cache, bulk read;
-    # frozen quotes were dropped at ingest; stale rows are n/a here).
-    syms = sorted({t for d in pending
+    # Live prices for each deal's two sides (warm cache, bulk read; frozen
+    # quotes were dropped at ingest; stale rows are n/a here).
+    syms = sorted({t for d in rows
                    for t in (d.get("buyer_ticker"), d.get("target_ticker"))
                    if t})
     try:
@@ -216,9 +194,6 @@ def _render_recent_deals():
     for d in rows:
         terms = d.get("terms") or {}
         ms = d.get("milestones") or {}
-        status = d.get("status")
-        muted = status != "pending"
-        tr_style = ' style="color:var(--text-muted);"' if muted else ""
 
         # ── Deal ──
         ann = d.get("announce_date")
@@ -233,12 +208,6 @@ def _render_recent_deals():
         acq_tick = d.get("buyer_ticker")
         acq_cell = " ".join(p for p in (_ticker_link(acq_tick),
                                         _h.escape(d.get("buyer_name") or "")) if p) or "—"
-        if status == "pending":
-            status_cell = _PENDING_HTML
-        elif status == "completed":
-            status_cell = f"Completed {_h.escape(d.get('completion_date') or '')}"
-        else:
-            status_cell = f"Terminated {_h.escape(d.get('termination_date') or '')}"
         mix = terms.get("consideration")
         mix_title = None
         if terms.get("stock_pct") is not None:
@@ -289,16 +258,12 @@ def _render_recent_deals():
             pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
         assets = d.get("comp_assets") or d.get("target_assets")
 
-        # ── Merger arb (pending only) ──
-        arb = {"implied_offer": None, "offer_note": None, "gross_spread": None,
-               "days_to_close": None, "annualized_spread": None}
-        tgt_q = acq_q = None
-        if status == "pending":
-            tgt_q = warm.get((tgt_tick or "").upper()) if tgt_tick else None
-            acq_q = warm.get((acq_tick or "").upper()) if acq_tick else None
-            arb = merger_arb(terms, (acq_q or {}).get("price"),
-                             (tgt_q or {}).get("price"), today,
-                             acq_ticker=acq_tick)
+        # ── Merger arb ──
+        tgt_q = warm.get((tgt_tick or "").upper()) if tgt_tick else None
+        acq_q = warm.get((acq_tick or "").upper()) if acq_tick else None
+        arb = merger_arb(terms, (acq_q or {}).get("price"),
+                         (tgt_q or {}).get("price"), today,
+                         acq_ticker=acq_tick)
         tgt_px = (tgt_q or {}).get("price")
         tgt_px_note = (f"{tgt_tick} warm quote as of {(tgt_q or {}).get('updated_at')}"
                        if tgt_px is not None else None)
@@ -341,9 +306,9 @@ def _render_recent_deals():
         approvals_cell = " · ".join(bits) if bits else "—"
 
         body += (
-            f"<tr{tr_style}>"
+            "<tr>"
             + _td(ann_cell, "left") + _td(tgt_cell, "left") + _td(acq_cell, "left")
-            + _td(status_cell, "left") + _td(mix_cell, "left", mix_title)
+            + _td(mix_cell, "left", mix_title)
             + _td(f"{ratio:g}" if ratio else "—")
             + _td(_fmt_px(cash))
             + _td(implied_cell, title=terms.get("implied_price_note"))
@@ -367,8 +332,6 @@ def _render_recent_deals():
         export_rows.append({
             "Announced": ann, "Target": tgt_tick, "Target name": d.get("target_name"),
             "Acquirer": acq_tick, "Acquirer name": d.get("buyer_name"),
-            "Status": status, "Completed": d.get("completion_date"),
-            "Terminated": d.get("termination_date"),
             "Consideration": mix, "Stock mix (%)": terms.get("stock_pct"),
             "Cash mix (%)": terms.get("cash_pct"),
             "Exchange ratio (x)": ratio, "Cash per share ($)": cash,
@@ -406,17 +369,16 @@ def _render_recent_deals():
         })
 
     group = ('<tr>'
-             '<th colspan="5" style="text-align:left;">Deal</th>'
+             '<th colspan="4" style="text-align:left;">Deal</th>'
              '<th colspan="5" style="text-align:left;">Terms</th>'
              '<th colspan="5" style="text-align:left;">Valuation at announce</th>'
-             '<th colspan="6" style="text-align:left;">Merger arb (pending, live)</th>'
+             '<th colspan="6" style="text-align:left;">Merger arb (live)</th>'
              '<th colspan="2" style="text-align:left;">Agreement</th>'
              '</tr>')
     cols = ('<tr>'
             '<th style="text-align:left;">Announced</th>'
             '<th style="text-align:left;">Target</th>'
             '<th style="text-align:left;">Acquirer</th>'
-            '<th style="text-align:left;">Status</th>'
             '<th style="text-align:left;">Consid.</th>'
             '<th>Ratio</th><th>Cash/sh</th><th>Implied $/sh</th>'
             '<th>Deal value</th><th>Premium</th>'
@@ -431,8 +393,8 @@ def _render_recent_deals():
         '<div class="ksk-grid" style="overflow-x:auto;"><table><thead>'
         + group + cols + "</thead><tbody>" + body + "</tbody></table></div>",
         unsafe_allow_html=True)
-    st.caption(f"{len(rows):,} deals · pending first by announce date, "
-               "completed/terminated greyed · * = computed (hover for the "
+    st.caption(f"{len(rows):,} pending deals · newest announcement first "
+               "· * = computed (hover for the "
                "formula: implied \$/sh = ratio × acquirer close before announce "
                "+ cash; deal value = ratio × close × target shares) · "
                "† = outside a plausibility band (P/TBV 0.2x–8x, P/E ≤ 100x, "
@@ -452,8 +414,7 @@ def _render_recent_deals():
         built = str(snap.get("built_at", ""))[:10]
         table_export(pd.DataFrame(export_rows), f"recent_deals_{built}",
                      key="recent_deals_export",
-                     formats={"Announced": "date", "Completed": "date",
-                              "Terminated": "date", "TBV as of": "date",
+                     formats={"Announced": "date", "TBV as of": "date",
                               "EPS as of": "date", "Expected close date": "date",
                               "Regulatory approval": "date",
                               "Stock mix (%)": "pct", "Cash mix (%)": "pct",
