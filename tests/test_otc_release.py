@@ -176,6 +176,68 @@ class TestIrCandidateSelection(unittest.TestCase):
         self.assertIsNone(self.orl._latest_ir_release("EXBK"))
 
 
+    # ── Publish-date-prefixed link text (live 2026-10-06: CCNB/OAKV/FOTB
+    # envelopes carried the PUBLISH date as qend — every value mis-dated,
+    # extract_table_metrics found no period column, staleness gates
+    # anchored to a non-quarter). A candidate's qend is a quarter-end or
+    # the link is not a candidate. ──────────────────────────────────────
+    def test_publish_date_only_link_never_candidates(self):
+        # FOTB form: a date and "Press Release", no quarter anywhere.
+        from datetime import date
+        y = date.today().year
+        self._page(("/pr/jul22.pdf", f"July 22, {y} - Press Release"))
+        self.assertIsNone(self.orl._latest_ir_release("EXBK"))
+        self.assertEqual(self.orl._ir_release_candidates("EXBK"), [])
+
+    def test_publish_date_plus_quarter_word_yields_quarter_end(self):
+        from datetime import date
+        y = date.today().year
+        self._page(("/news/q2", f"July 28, {y} - Example Bancshares Announces "
+                                f"Second Quarter {y} Results"))
+        got = self.orl._latest_ir_release("EXBK")
+        self.assertEqual(got["qend"], f"{y}-06-30")
+
+    def test_yearless_quarter_word_takes_year_from_publish_date(self):
+        # OAKV form: the quarter word has no year; the publish date gives it.
+        from datetime import date
+        y = date.today().year
+        self._page(("/news/jul30", f"July 30, {y} Example Bankshares, Inc. "
+                                   f"Announces Second Quarter Earnings"))
+        got = self.orl._latest_ir_release("EXBK")
+        self.assertEqual(got["qend"], f"{y}-06-30")
+
+    def test_link_qend_forms(self):
+        lq = self.orl._link_qend
+        # Quarter token outranks a leading publish date (parser order).
+        self.assertEqual(lq("July 28, 2026 - Bank Announces Second Quarter "
+                            "2026 Results"), "2026-06-30")
+        self.assertEqual(lq("July 28, 2026 - Bank Reports 2Q26 Results"),
+                         "2026-06-30")
+        # Link-only "Q2 2026" / "Q4'25" forms the header parser doesn't read.
+        self.assertEqual(lq("Q2 2026 Earnings Release"), "2026-06-30")
+        self.assertEqual(lq("Q4'25 Earnings Release"), "2025-12-31")
+        # Yearless quarter + publish date: latest such quarter-end on or
+        # before the date — a January Q4 release belongs to the PRIOR year.
+        self.assertEqual(lq("January 28, 2027 - Bank Announces Fourth "
+                            "Quarter Results"), "2026-12-31")
+        # Live CCNB lead: yearless quarter, publish date, then a later
+        # quarter-end date in the teaser — the publish date anchors it.
+        self.assertEqual(lq("Coastal Carolina Bancshares, Inc. Announces "
+                            "Second Quarter Results Myrtle Beach, South "
+                            "Carolina - July 28, 2026 - reported net income "
+                            "for the three months ended June 30, 2026"),
+                         "2026-06-30")
+        # A bare quarter-end date is still a stated period.
+        self.assertEqual(lq("June 30, 2026 Financial Highlights"),
+                         "2026-06-30")
+        # Refusals: date only; quarter word with neither year nor date;
+        # publish date too far past the quarter-end (>100 days).
+        self.assertIsNone(lq("July 22, 2026 - Press Release"))
+        self.assertIsNone(lq("Second Quarter Results"))
+        self.assertIsNone(lq("December 1, 2026 - Bank Announces Second "
+                             "Quarter Results"))
+
+
 class TestOtcWrapper(unittest.TestCase):
     def setUp(self):
         import data.cache as dc
@@ -244,7 +306,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._fetch_story = lambda u: fetches.append(u) or "<p>x</p>"
         # Key version must track data/otc_release.py's current spec version
         # or the seed is invisible and the wrapper re-extracts.
-        self.store["otc_release:v13:PBAM"] = {
+        self.store["otc_release:v14:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",       # stale ⇒ re-check
             "value": {"url": "u1", "metrics": {"nim": 5.18}}}
         val = self.orl.otc_release_metrics("PBAM")
@@ -255,7 +317,7 @@ class TestOtcWrapper(unittest.TestCase):
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
-        self.store["otc_release:v13:PBAM"] = {
+        self.store["otc_release:v14:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
         val = self.orl.otc_release_metrics("PBAM")
