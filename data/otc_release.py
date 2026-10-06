@@ -186,19 +186,64 @@ def _bank_webaddr(ticker: str) -> str | None:
         return None
 
 
+# Link-text period forms the shared header parser (_period_qend) doesn't
+# know: "Q2 2026" / "Q2'26" (it only reads "2Q26"), and an ordinal quarter
+# with NO year ("… Announces Second Quarter Results"). Bank news lists
+# prefix each link with its PUBLISH date, which the parser's bare-date
+# fallback returned as the period — live 2026-10-06: CCNB qend 2026-07-28,
+# OAKV 2026-07-30, FOTB 2026-07-22 ("July 22, 2026 - Press Release"), every
+# extracted value mis-dated and the staleness gates anchored to a non-quarter.
+_LINK_QTOK = re.compile(r"\bQ([1-4])\s?['’]?(\d{2}|\d{4})\b", re.I)
+_LINK_QORD = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+"
+                        r"(?:quarter|qtr\.?)\b", re.I)
+_LINK_PUB_GAP_DAYS = 100  # publish date at most this far past the quarter-end
+
+
+def _link_qend(text: str) -> str | None:
+    """A link text's stated period as a calendar QUARTER-END, or None.
+    The shared parser's quarter tokens win by pattern order ("July 28, 2026
+    - … Second Quarter 2026 Results" → 2026-06-30); a full date it returns
+    that is NOT a quarter-end is the publish date, never the period. Then
+    the link-only forms: "Q2 2026"; and a yearless ordinal quarter, whose
+    year comes from that publish date — the latest such quarter-end on or
+    before it, accepted only within _LINK_PUB_GAP_DAYS (the wire path's
+    _release_qend bound). No quarter token, or no date to anchor a yearless
+    one → None: a period that can't be proven is never a candidate."""
+    from datetime import date
+    from data.release_metrics import _Q_END, _QNUM, _period_qend
+    found = _period_qend(text)
+    if found and _is_quarter_end(found):
+        return found
+    m = _LINK_QTOK.search(text)
+    if m:
+        q, y = int(m.group(1)), int(m.group(2))
+        y += 2000 if y < 100 else 0
+        mo, dy = _Q_END[q]
+        return date(y, mo, dy).isoformat()
+    m = _LINK_QORD.search(text)
+    if not (m and found):
+        return None
+    pub = date.fromisoformat(found)
+    mo, dy = _Q_END[_QNUM[m.group(1).lower()]]
+    qe = date(pub.year, mo, dy)
+    if qe > pub:
+        qe = date(pub.year - 1, mo, dy)
+    return qe.isoformat() if (pub - qe).days <= _LINK_PUB_GAP_DAYS else None
+
+
 def _ir_release_candidates(ticker: str) -> list[dict]:
     """Every earnings release linked from the bank's own site, newest stated
     period first: [{url, title, qend, kind}]. Two-hop crawl (static news
     paths + homepage nav links that hint investor/news pages — banks bury
     the list one click deep); the FIRST page carrying any candidate is the
     list (same stop rule as the single-pick locator always had); candidate
-    links must pass the IR link gate AND state their period. The head is
+    links must pass the IR link gate AND state a quarter-end period
+    (_link_qend). The head is
     the bank's latest release (_latest_ir_release); the tail is the prior
     quarters' releases the EPS-history backfill reads."""
     from urllib.parse import urljoin, urlparse
 
     from data.events.ir_site import _domain_root, _extract_links, _fetch
-    from data.release_metrics import _period_qend
 
     webaddr = _bank_webaddr(ticker)
     if not webaddr:
@@ -211,7 +256,7 @@ def _ir_release_candidates(ticker: str) -> list[dict]:
         for href, text in _extract_links(html, page):
             if not text or not _is_ir_release_link(text):
                 continue
-            qend = _period_qend(text)
+            qend = _link_qend(text)
             if not qend:
                 continue
             kind = "pdf" if href.lower().split("?")[0].endswith(".pdf") \
@@ -307,7 +352,7 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     default 24h read ceiling would drop the record after any >24h gap and
     force a full re-crawl + re-extraction per bank."""
     from data import cache as _cache
-    key = f"otc_release:v13:{ticker.upper()}"
+    key = f"otc_release:v14:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
     except Exception:

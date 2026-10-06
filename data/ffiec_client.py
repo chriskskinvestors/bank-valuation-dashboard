@@ -169,17 +169,50 @@ def latest_reporting_period(as_of: pd.Timestamp | None = None) -> str:
 # (Fractions/shares are ratios and unaffected by the scale.)
 FFIEC_DOLLAR_SCALE = 1_000
 
-# RCON codes for Schedule RC-B Memorandum 2.
+# Schedule RC-B Memorandum 2 — maturity and repricing data for debt
+# securities. Item titles verified 2026-10-06 against the Federal Reserve
+# MDRM data dictionary. The three sub-items together cover the debt-securities
+# book (nonaccrual excluded):
+#   2.a  A549–A554  Treasury / agency / muni, other non-mortgage debt, and
+#                   mortgage pass-throughs OTHER than those backed by
+#                   closed-end first-lien 1-4 family residential mortgages
+#   2.b  A555–A560  pass-throughs backed by closed-end first-lien 1-4 family
+#                   residential mortgages — the same six remaining-maturity /
+#                   next-repricing buckets, so they add in exactly
+#   2.c  A561/A562  other MBS (CMOs, REMICs, stripped MBS) — reported only as
+#                   expected average life ≤ 3y / > 3y (see the assumption below)
 # Banks with foreign offices use RCFD (consolidated) instead of RCON (domestic).
 # We try both and use the larger value (consolidated wins for global banks).
 SECURITIES_MATURITY_BUCKETS = [
-    ("le_3mo",   "A549", 0.0,  0.25,  "≤ 3 months"),
-    ("3mo_1y",   "A550", 0.25, 1.0,   "3 months – 1 year"),
-    ("1y_3y",    "A551", 1.0,  3.0,   "1 – 3 years"),
-    ("3y_5y",    "A552", 3.0,  5.0,   "3 – 5 years"),
-    ("5y_15y",   "A553", 5.0,  15.0,  "5 – 15 years"),
-    ("gt_15y",   "A554", 15.0, 30.0,  "> 15 years"),
+    # key,      [2.a code, 2.b code], lo_yr, hi_yr, label
+    ("le_3mo",  ["A549", "A555"], 0.0,  0.25,  "≤ 3 months"),
+    ("3mo_1y",  ["A550", "A556"], 0.25, 1.0,   "3 months – 1 year"),
+    ("1y_3y",   ["A551", "A557"], 1.0,  3.0,   "1 – 3 years"),
+    ("3y_5y",   ["A552", "A558"], 3.0,  5.0,   "3 – 5 years"),
+    ("5y_15y",  ["A553", "A559"], 5.0,  15.0,  "5 – 15 years"),
+    ("gt_15y",  ["A554", "A560"], 15.0, 30.0,  "> 15 years"),
 ]
+
+# STATED ASSUMPTION (owner decision 2026-10-05, review P1-14 option b).
+# Memo 2.c has no exact home in the six buckets — it reports expected average
+# life ≤ 3y (A561) / > 3y (A562) only. Placed by assumption:
+#   A561 (avg life ≤ 3y) → all in the 1–3y bucket
+#   A562 (avg life > 3y) → split evenly between the 3–5y and 5–15y buckets
+# The ladder carries the dollars placed this way ("assumed_usd") and this
+# text ("assumption") so every display can say so instead of passing the
+# placement off as reported data.
+OTHER_MBS_ASSUMED_PLACEMENT = {
+    "A561": {"1y_3y": 1.0},
+    "A562": {"3y_5y": 0.5, "5y_15y": 0.5},
+}
+OTHER_MBS_ASSUMPTION = "avg life ≤3y → 1–3y; >3y → 3–15y, split evenly 3–5y / 5–15y"
+
+# Memo 2 sub-item → display name, in schedule order.
+_LADDER_COMPONENTS = {
+    "m2a": "non-mortgage debt + non-residential pass-throughs (Memo 2.a)",
+    "m2b": "1-4 family residential pass-throughs (Memo 2.b)",
+    "m2c": "other MBS / CMOs (Memo 2.c)",
+}
 
 
 # One-shot schema log so we can see what columns ffiec-data-connect
@@ -362,8 +395,8 @@ def get_securities_maturity_ladder(
     call_report_df: pd.DataFrame | None = None,
 ) -> dict | None:
     """
-    Return the bank's securities maturity ladder as fractions of total
-    debt securities.
+    Return the bank's securities maturity ladder (RC-B Memo 2.a + 2.b + 2.c)
+    as fractions of total reported debt securities.
 
     Returns:
       {
@@ -374,7 +407,14 @@ def get_securities_maturity_ladder(
         },
         "amounts_usd": {...},      # actual USD (FFIEC thousands × 1,000)
         "total_usd": 821_000_000_000,
-        "weighted_avg_duration_years": 4.2,  # midpoint-weighted
+        # Bucket-MIDPOINT weighted maturity in years — NOT a duration. Key
+        # name kept for the stored-row / consumer contract.
+        "weighted_avg_duration_years": 4.2,
+        # USD per Memo 2 sub-item; None = the sub-item is absent from the
+        # filing (so the ladder excludes it — never read as $0).
+        "component_usd": {"m2a": ..., "m2b": ..., "m2c": ...},
+        "assumed_usd": 50_000_000,  # Memo 2.c dollars placed by assumption
+        "assumption": OTHER_MBS_ASSUMPTION,
       }
     or None if the data isn't available.
 
@@ -388,10 +428,25 @@ def get_securities_maturity_ladder(
         return None
 
     amounts: dict[str, float] = {}
-    for key, code, _, _, _ in SECURITIES_MATURITY_BUCKETS:
+    components: dict[str, float | None] = {"m2a": None, "m2b": None, "m2c": None}
+
+    def _add(component: str, key: str, v: float) -> None:
+        amounts[key] = amounts.get(key, 0.0) + v
+        components[component] = (components[component] or 0.0) + v
+
+    # 2.a and 2.b share the six buckets exactly.
+    for key, codes, _lo, _hi, _label in SECURITIES_MATURITY_BUCKETS:
+        for component, code in zip(("m2a", "m2b"), codes):
+            v = _lookup_concept(df, code)
+            if v is not None:
+                _add(component, key, v)
+
+    # 2.c placed by the stated assumption.
+    for code, placement in OTHER_MBS_ASSUMED_PLACEMENT.items():
         v = _lookup_concept(df, code)
         if v is not None:
-            amounts[key] = v
+            for key, share in placement.items():
+                _add("m2c", key, v * share)
 
     if not amounts:
         return None
@@ -402,11 +457,14 @@ def get_securities_maturity_ladder(
 
     fractions = {k: v / total for k, v in amounts.items()}
 
-    # Weighted-average duration using bucket midpoints (rough).
-    weighted_dur = 0.0
-    for key, _code, lo, hi, _label in SECURITIES_MATURITY_BUCKETS:
+    # Weighted-average MATURITY at bucket midpoints (rough; not a duration).
+    weighted_mat = 0.0
+    for key, _codes, lo, hi, _label in SECURITIES_MATURITY_BUCKETS:
         midpoint = (lo + hi) / 2
-        weighted_dur += fractions.get(key, 0.0) * midpoint
+        weighted_mat += fractions.get(key, 0.0) * midpoint
+
+    def _usd(v):
+        return None if v is None else v * FFIEC_DOLLAR_SCALE
 
     return {
         "reporting_period": reporting_period or latest_reporting_period(),
@@ -414,8 +472,38 @@ def get_securities_maturity_ladder(
         # FFIEC reports in $thousands — scale to actual USD.
         "amounts_usd": {k: v * FFIEC_DOLLAR_SCALE for k, v in amounts.items()},
         "total_usd": total * FFIEC_DOLLAR_SCALE,
-        "weighted_avg_duration_years": round(weighted_dur, 2),
+        "weighted_avg_duration_years": round(weighted_mat, 2),
+        "component_usd": {k: _usd(v) for k, v in components.items()},
+        "assumed_usd": _usd(components["m2c"]),
+        "assumption": OTHER_MBS_ASSUMPTION,
     }
+
+
+def securities_ladder_coverage_note(ladder: dict | None) -> str:
+    """
+    One-line, display-ready statement of what slice of the securities book a
+    ladder covers. A ladder without "component_usd" was stored before the
+    MBS sub-items were read (RC-B Memo 2.a only) and is labeled as such —
+    never presented as the whole book.
+    """
+    if not ladder:
+        return ""
+    comp = ladder.get("component_usd")
+    if not comp:
+        return ("RC-B Memo 2.a only — excludes 1-4 family residential "
+                "mortgage pass-throughs and other MBS/CMOs")
+    from utils.formatting import fmt_dollars
+    missing = [name for k, name in _LADDER_COMPONENTS.items()
+               if comp.get(k) is None]
+    note = "RC-B Memo 2.a + 2.b + 2.c (all accruing debt securities)"
+    if missing:
+        note = ("RC-B Memo 2 — excludes " + ", ".join(missing)
+                + " (not in this filing)")
+    assumed = ladder.get("assumed_usd")
+    if assumed:
+        note += (f"; includes {fmt_dollars(assumed)} of other MBS placed by "
+                 f"assumption ({ladder.get('assumption') or OTHER_MBS_ASSUMPTION})")
+    return note
 
 
 # Schedule RC-C Part I, Memorandum item 2 — "Loans and leases with a

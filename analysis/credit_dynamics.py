@@ -27,7 +27,10 @@ _CREDIT_FIELDS = {
     "npl_nres_re": "NCRENRER",     # NPL NonRes RE %
     "npl_ci": "IDNCCIR",           # NPL C&I %
     "npl_consumer": "IDNCCONR",    # NPL Consumer %
-    "nco_ratio": "NTLNLSR",        # Total NCO rate
+    # Single-quarter annualized NCO rate: NTLNLSR is calendar-YTD (a Q1 point
+    # covers 3 months, Q4 twelve) — plotted against quarter dates it smeared
+    # LARK Q3'25 0.83% to 0.29% (REVIEW 2026-10-06 AQ P1-1).
+    "nco_ratio": "NTLNLSQR",       # Total NCO rate (single quarter)
     "nco_re": "NTRER",             # NCO RE %
     "nco_ci": "IDNTCIR",           # NCO C&I % (was NTCOMRER = CRE)
     "reserve_to_loans": "LNATRESR",  # Reserves / loans %
@@ -229,14 +232,14 @@ def detect_credit_alerts(
             alerts.append({
                 "severity": "high",
                 "code": "under_reserved",
-                "message": f"Reserves at {reserve_cov:.0f}% of NPLs — below 100% minimum; under-reserved for current NPLs",
+                "message": f"Reserves at {reserve_cov:.0f}% of noncurrent loans — below 100% coverage",
                 "value": reserve_cov,
             })
         elif peer_reserve_coverage_median is not None and reserve_cov < peer_reserve_coverage_median * 0.75:
             alerts.append({
                 "severity": "medium",
                 "code": "thin_reserves_vs_peers",
-                "message": f"Reserves/NPL at {reserve_cov:.0f}% vs peer median {peer_reserve_coverage_median:.0f}% — thin vs peers",
+                "message": f"Reserves / noncurrent loans at {reserve_cov:.0f}% vs peer median {peer_reserve_coverage_median:.0f}% — thin vs peers",
                 "value": reserve_cov,
             })
 

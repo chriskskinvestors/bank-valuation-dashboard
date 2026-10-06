@@ -18,6 +18,7 @@ import pandas as pd
 from data.bank_mapping import get_fdic_cert, get_name
 from data.cache import get as cache_get, put as cache_put
 from data import fdic_client
+from data.ffiec_client import securities_ladder_coverage_note
 from analysis.rate_sensitivity import (
     run_curve_sensitivity, run_curve_matrix,
     run_rate_sensitivity_phased,
@@ -480,7 +481,8 @@ def _render_assumptions_panel(ticker, latest, hist, securities_ladder,
                 value=_sv("sec_duration_yrs", ladder_dur if ladder_dur else 3.0),
                 step=0.25, key=f"sec_dur_{ticker}",
                 help="Avg duration of the securities book. Pre-filled from the "
-                     "FFIEC RC-B ladder when available.",
+                     "FFIEC RC-B ladder's weighted-average maturity (bucket "
+                     "midpoints — a maturity, not a duration) when available.",
             )
         with dcol2:
             fixed_dur = st.number_input(
@@ -593,12 +595,15 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
     except Exception:
         securities_ladder = None
 
+    ladder_coverage = securities_ladder_coverage_note(securities_ladder)
     if securities_ladder:
         st.markdown(
             f":green-badge[Bank-specific FFIEC ladder] &middot; "
             f"period **{securities_ladder.get('reporting_period','—')}** &middot; "
-            f"weighted-avg duration **{securities_ladder.get('weighted_avg_duration_years',0):.1f} yrs**"
+            f"weighted-average maturity (bucket midpoints) "
+            f"**{securities_ladder.get('weighted_avg_duration_years',0):.1f} yrs**"
         )
+        st.caption("Ladder covers: " + ladder_coverage.replace("$", "\\$"))
     else:
         st.markdown(
             ":blue-badge[Generic industry assumption] &middot; "
@@ -786,7 +791,7 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
             ])
             fig_ladder = px.bar(
                 ladder_df, x="bucket", y="pct_of_securities",
-                labels={"bucket": "", "pct_of_securities": "% of total debt securities"},
+                labels={"bucket": "", "pct_of_securities": "% of ladder securities"},
             )
             apply_standard_layout(fig_ladder, height=CHART_HEIGHT_COMPACT,
                                   title="Securities maturity ladder (FFIEC RC-B)")
@@ -848,7 +853,8 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
                 "Deposit beta mode": result.get("beta_mode"),
                 "Floating-rate loan share": f"{floating_share*100:.0f}%",
                 "Securities repricing source": (
-                    f"FFIEC RC-B Memo 2 ladder ({securities_ladder.get('reporting_period', '—')})"
+                    f"FFIEC RC-B Memo 2 ladder ({securities_ladder.get('reporting_period', '—')}) "
+                    f"— {ladder_coverage}"
                     if securities_ladder else "generic industry average (~29%/yr)"),
                 "Repricing pace (cumulative)": ", ".join(
                     f"Yr{k}={v*100:.0f}%" for k, v in pace.items()),
@@ -865,7 +871,8 @@ def _render_phased_scenarios(ticker, latest, hist, mode_key, custom_beta):
         shares_str = f"{shares/1e6:,.0f}M" if shares else "missing"
         ladder_source = result.get("ladder_source", "generic")
         ladder_note = (
-            f"FFIEC RC-B Memo 2 ({securities_ladder.get('reporting_period','—')})"
+            f"FFIEC RC-B Memo 2 ({securities_ladder.get('reporting_period','—')}) "
+            "— " + ladder_coverage.replace("$", "\\$")
             if securities_ladder else "generic industry average"
         )
         st.markdown(f"""

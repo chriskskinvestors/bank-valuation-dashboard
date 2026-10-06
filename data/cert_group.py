@@ -83,6 +83,52 @@ AVERAGE_BASED_RATIOS = frozenset({
     "NOIJY", "ELNATRY", "NTRER", "NTCOMRER", "IDNTCIR",
 })
 
+# Average-based ratios a group may take from its LEAD charter when the other
+# charters provably can't move it: the group ratio is a denominator-weighted
+# mix of each charter's own ratio, so |group − lead| ≤ (siblings' share of
+# the base) × max|charter ratio − lead ratio|. Base = the period-end level
+# whose average is the ratio's denominator; ×2 covers average-vs-period-end
+# weight drift. Below _LEAD_RATIO_TOL (half a displayed 0.01pp) the lead's
+# reported ratio is shown, labeled (REVIEW 2026-09-24 P1-4: JPM's $71M
+# Dearborn charter — 0.002% of assets — blanked JPM's ROAA/ROE/NIM).
+_LEAD_RATIO_BASE = {
+    "ROA": "ASSET", "ROAQ": "ASSET", "ROAPTX": "ASSET",
+    "NONIIAY": "ASSET", "NONIIAYQ": "ASSET",
+    "NONIXAY": "ASSET", "NONIXAYQ": "ASSET",
+    "ROE": "EQTOT", "ROEQ": "EQTOT",
+    "NIMY": "ERNAST", "NIMYQ": "ERNAST", "INTINCY": "ERNAST",
+    "INTINCYQ": "ERNAST", "INTEXPY": "ERNAST", "INTEXPYQ": "ERNAST",
+    "NTLNLSR": "LNLSGR", "NTLNLSQR": "LNLSGR",
+}
+_LEAD_RATIO_TOL = 0.005   # percentage points
+
+
+def _lead_ratio(records: list[dict], field: str) -> float | None:
+    """The lead charter's `field` when the group value is provably within
+    _LEAD_RATIO_TOL of it, else None. Every charter must report the ratio
+    and its base; a non-positive base total is None."""
+    base = _LEAD_RATIO_BASE.get(field)
+    if base is None:
+        return None
+    bases = [_num(r.get(base)) for r in records]
+    if None in bases or any(b < 0 for b in bases):
+        return None
+    # A sibling with a zero base carries zero weight (Dearborn: no loans), so
+    # its own ratio — often unreported — can't move the group value.
+    keep = [i for i, b in enumerate(bases) if i == 0 or b > 0]
+    vals = [_num(records[i].get(field)) for i in keep]
+    if None in vals:
+        return None
+    if len(vals) == 1:
+        return vals[0] if bases[0] > 0 else None
+    total = sum(bases)
+    if total <= 0:
+        return None
+    sibling_share = 1 - bases[0] / total
+    gap = max(abs(v - vals[0]) for v in vals[1:])   # vals[1:] non-empty here
+    return vals[0] if 2 * sibling_share * gap < _LEAD_RATIO_TOL else None
+
+
 # Ratios that ARE a quotient of summable components, so a group's ratio is
 # exactly Σnumerator / Σdenominator × scale: {ratio: (num, den, scale)}.
 # Formulas are the FDIC risview dictionary's (x-source-mapping), each
@@ -448,10 +494,19 @@ def aggregate_records(records: list[dict]) -> dict:
         out[k] = total if seen else None
 
     # Explicitly n/a rather than absent, so a consumer reading the key gets
-    # None (render n/a) instead of a KeyError or a stale lead-charter value.
+    # None (render n/a) instead of a KeyError or a stale lead-charter value —
+    # unless the siblings provably can't move it (_lead_ratio), when the
+    # lead's reported value stands and the field is listed for labeling.
+    lead_fields = []
     for k in AVERAGE_BASED_RATIOS:
         if k in keys:
-            out[k] = None
+            out[k] = _lead_ratio(records, k)
+            if out[k] is not None:
+                lead_fields.append(k)
+    if lead_fields:
+        out["_lead_ratio_fields"] = sorted(lead_fields)
+        assets = [_num(r.get("ASSET")) or 0.0 for r in records]
+        out["_lead_asset_share"] = (assets[0] / sum(assets)) if sum(assets) > 0 else None
 
     # A charter that did not report a component (a cache/deep-store row
     # written before the field was fetched) leaves a PARTIAL sum above, and a

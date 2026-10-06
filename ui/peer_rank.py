@@ -36,7 +36,7 @@ _ALL_KEYS = [k for _, ks in RANK_GROUPS for k in ks]
 _LABELS = {
     "roaa": "ROAA", "roatce_normalized": "ROATCE", "nim": "NIM",
     "efficiency_ratio": "Efficiency", "npl_ratio": "NPL ratio",
-    "nco_ratio": "NCO ratio", "reserve_coverage_pct": "Reserve / NPL",
+    "nco_ratio": "NCO ratio", "reserve_coverage_pct": "Reserves / Noncurrent",
     "cet1_ratio": "CET1", "total_capital_ratio": "Total capital",
     "leverage_ratio": "Leverage", "nonint_dep_pct": "Non-int deposits",
     "loans_to_deposits": "Loans / deposits",
