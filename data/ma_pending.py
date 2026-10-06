@@ -61,6 +61,7 @@ from data.ma_announcements import (
     _wire_story_text,
     brand_token,
     build_terms,
+    _GENERIC as _GENERIC_WORDS,
     extract_exchange_ratio,
     extract_stated_value,
     fill_implied_price,
@@ -169,7 +170,8 @@ def _universe_match(name: str):
     try:
         from data.bank_universe import get_universe
         hits = [(t, info) for t, info in get_universe().items()
-                if token_in(tok, (info.get("name") or "").lower())]
+                if token_in(tok, (info.get("name") or "").lower())
+                and brand_token(info.get("name") or "") == tok]
     except Exception:
         return None, None, None
     if len(hits) != 1:
@@ -386,13 +388,42 @@ def _resolving_needle(other_name: str) -> str | None:
     return phrase if len(phrase.split()) >= 2 else None
 
 
+def _resolving_needles(other_name: str, extra_names=()) -> list[str]:
+    """Every needle that may name the counterparty in a resolving filing:
+    the brand token (or generic-name phrase), the collapsed two-word form
+    (an 8-K wrote "MidWest One"; Nicolet's 2026-02-20 completion says
+    "MidWestOne", which the word-boundary token never matched — live, a
+    closed deal sat as pending), and the extra names' tokens (the universe
+    name behind a known ticker)."""
+    out = []
+    n = _resolving_needle(other_name)
+    if n:
+        out.append(n)
+    words = re.findall(r"[a-z0-9]+", (other_name or "").lower())
+    if len(words) >= 2 and words[0] not in _GENERIC_WORDS:
+        joined = words[0] + words[1]
+        if joined not in out and len(joined) >= 6:
+            out.append(joined)
+    for name in extra_names or ():
+        t = brand_token(name or "")
+        if t and t not in out:
+            out.append(t)
+    return out
+
+
+def _needle_in(needle: str, low: str) -> bool:
+    if " " in needle:          # full-phrase needle (all-generic name)
+        return needle in " ".join(low.replace(",", " ").split())
+    return token_in(needle, low)
+
+
 _RESOLVE_SCAN_CAP = 12          # resolving-candidate documents fetched per
                                 # deal — plenty (a filer rarely has more than
                                 # a couple of 2.01/1.02/8.01s in the window)
 
 
 def _resolved_after(filer_cik, other_name: str, announce_date: str,
-                    filings=None) -> tuple[bool | None, bool]:
+                    filings=None, extra_names=()) -> tuple[bool | None, bool]:
     """(resolved, ok): did ``filer_cik`` file an 8-K on/after
     ``announce_date`` − slack that RESOLVES the deal with ``other_name``?
     Resolution = an Item 2.01 (Completion) or 1.02 (Termination) naming the
@@ -410,8 +441,8 @@ def _resolved_after(filer_cik, other_name: str, announce_date: str,
     neither emit the row nor cache)."""
     if not filer_cik:
         return None, True
-    needle = _resolving_needle(other_name)
-    if not needle:
+    needles = _resolving_needles(other_name, extra_names)
+    if not needles:
         return None, True
     if filings is None:
         filings, ok = iter_submission_filings(int(filer_cik))
@@ -432,17 +463,35 @@ def _resolved_after(filer_cik, other_name: str, announce_date: str,
         if not text:
             continue
         low = text.lower()
-        if " " in needle:      # full-phrase needle (all-generic name)
-            named = needle in " ".join(low.replace(",", " ").split())
-        else:                  # distinctive brand token
-            named = token_in(needle, low)
-        if not named:
+        if not any(_needle_in(n, low) for n in needles):
             continue
         if any(i in f.get("items", "") for i in _RESOLVING_ITEMS):
             return True, True          # 2.01/1.02 naming it = resolved
         if _COMPLETED_RE.search(text):
             return True, True          # 8.01 in completed tense = resolved
     return False, not fetch_failed
+
+
+def _wire_resolved(ticker: str | None, needles: list[str],
+                   announce_date: str) -> bool:
+    """Second net for an EDGAR-sourced row: a LATER release by the filer
+    on the wire whose title carries completion/termination wording and
+    names the counterparty. U.S. Bancorp completed BTIG on 2026-06-01 with
+    a press release and no 2.01 (immaterial), so the EDGAR gate alone kept
+    it pending for four months. Unavailable feed = no signal (False)."""
+    if not ticker or not needles:
+        return False
+    prs = _wire_releases(ticker)
+    for q in prs or []:
+        if (q.get("published_at") or "")[:10] <= announce_date:
+            continue
+        title = q.get("title") or ""
+        if not _WIRE_DONE_TITLE_RE.search(title):
+            continue
+        blob = f"{title} {q.get('text') or ''}".lower()
+        if any(_needle_in(n, blob) for n in needles):
+            return True
+    return False
 
 
 _VOTE_RE = re.compile(r"\bapprov", re.IGNORECASE)
@@ -700,12 +749,23 @@ def find_pending_deals(cik, subject_name: str,
             r["milestones"] = {"votes": [], "regulatory_approval": None}
             out.append(r)
             continue
+        extra = []
+        if r.get("counterparty_ticker"):
+            try:
+                from data.bank_mapping import get_name
+                extra = [get_name(r["counterparty_ticker"]) or ""]
+            except Exception:
+                extra = []
         resolved, vok = _resolved_after(cik, r["counterparty_name"],
-                                        r["announce_date"], filings=subj_filings)
+                                        r["announce_date"], filings=subj_filings,
+                                        extra_names=extra)
         if not vok:
             ok = False
             continue
         if resolved or resolved is None:
+            continue
+        if _wire_resolved(ticker, _resolving_needles(r["counterparty_name"], extra),
+                          r["announce_date"]):
             continue
         if r["direction"] == "sale" and r.get("counterparty_cik"):
             resolved2, vok2 = _resolved_after(
