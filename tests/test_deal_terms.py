@@ -1073,5 +1073,283 @@ class TestFiledBySelfIdentity(unittest.TestCase):
         self.assertEqual(rows[0]["counterparty_name"], "HBT Financial, Inc")
 
 
+# ── Wire source (owner 2026-10-06: "no SEC filings is not an excuse") ─────
+# Verbatim sentences from the wire releases (GlobeNewswire / PR Newswire).
+
+TOWN_WIRE = (
+    "TowneBank Enhances North Carolina Presence Through Agreement To Acquire "
+    "blueharbor bank. TowneBank (NASDAQ: TOWN) today announced that it has "
+    "entered into a definitive agreement to acquire blueharbor bank. Under the "
+    "terms of the agreement, shareholders of blueharbor will receive $12.70 in "
+    "cash and 1.0534 shares of TowneBank common stock for each share of "
+    "blueharbor outstanding common stock, for an implied value of $50.78 per "
+    "share based on TowneBank's 10-day volume-weighted average price. The "
+    "transaction is expected to close in the first quarter of 2027 and is "
+    "subject to customary closing conditions, including regulatory approval, "
+    "as well as the approval of blueharbor's shareholders.")
+RMBI_WIRE = (
+    "Richmond Mutual Bancorporation, Inc. (NASDAQ: RMBI) and The Farmers "
+    "Bancorp today announced that they have entered into a definitive "
+    "agreement under which Farmers Bancorp will merge with and into Richmond "
+    "Mutual in an all-stock transaction valued at approximately $82 million, "
+    "or $44.71 per share of Farmers Bancorp common stock, based on a closing "
+    "price for Richmond Mutual's common stock of $13.15 as of November 11, "
+    "2025. For Farmers Bancorp shareholders, based on the exchange ratio of "
+    "3.40x and the current dividend levels of each company, the merger will "
+    "result in dividend per share accretion of approximately 27.5%.")
+ESQ_WIRE = (
+    "Esquire Financial Holdings, Inc. (NASDAQ: ESQ) announced a definitive "
+    "agreement. Under the terms of the merger agreement, shareholders of "
+    "Signature will receive a fixed exchange ratio of 2.63 shares of Esquire "
+    "common stock for each share of Signature common stock. The per share "
+    "value equates to $260.48 for Signature shareholders based on the closing "
+    "price of Esquire common stock on March 11, 2026, or approximately $348.4 "
+    "million in aggregate transaction value.")
+CBAN_8K = (
+    "On June 24, 2026, Colony Bankcorp, Inc. (NASDAQ: CBAN), a Georgia "
+    "corporation (the \"Company\"), entered into an Agreement and Plan of "
+    "Merger (the \"Merger Agreement\") with First Reliance Bancshares, Inc. "
+    "(\"FSRL\"), pursuant to which FSRL will merge with and into the Company. "
+    "The Company's previously announced agreement to acquire TC Bancshares, "
+    "Inc. remains pending. Under the Merger Agreement, Colony will acquire "
+    "First Reliance in an all-stock transaction. The Company expects to close "
+    "the merger with TC Bancshares, Inc. in the third quarter of 2026.")
+
+
+class TestWireRatioForms(unittest.TestCase):
+
+    def test_townebank_cash_and_shares(self):
+        r = extract_exchange_ratio(TOWN_WIRE)
+        self.assertEqual((r[0], r[1], r[2]), (1.0534, "TowneBank", "blueharbor"))
+        self.assertEqual(extract_cash_per_share(TOWN_WIRE), 12.7)
+        t = extract_terms(TOWN_WIRE)
+        self.assertEqual(t["consideration"], "mixed")
+        self.assertEqual(t["implied_price_stated"], 50.78)
+        self.assertEqual(t["expected_close_date"], "2027-03-31")
+        # 1.0534 × $36.15 + $12.70 = 38.08041 + 12.70 = 50.78041 (hand) — the
+        # release's own $50.78 on its stated 10-day VWAP of $36.15.
+        v, _n = implied_offer(dict(t, consideration="mixed"), 36.15, basis_label="x")
+        self.assertEqual(v, 50.7804)
+
+    def test_richmond_mutual_bare_exchange_ratio(self):
+        from data.ma_announcements import extract_stated_value
+        self.assertEqual(extract_exchange_ratio(RMBI_WIRE), (3.4, "", ""))
+        self.assertEqual(extract_stated_value(RMBI_WIRE), 82_000_000)
+        self.assertEqual(extract_terms(RMBI_WIRE)["consideration"], "stock")
+
+    def test_esquire_fixed_exchange_ratio(self):
+        from data.ma_announcements import extract_stated_value
+        r = extract_exchange_ratio(ESQ_WIRE)
+        self.assertEqual((r[0], r[1], r[2]), (2.63, "Esquire", "Signature"))
+        self.assertEqual(extract_terms(ESQ_WIRE)["implied_price_stated"], 260.48)
+        self.assertEqual(extract_stated_value(ESQ_WIRE), 348_400_000)
+
+
+class TestCashLegMergerWith(unittest.TestCase):
+
+    def test_two_targets_in_one_8k_resolve_to_the_agreement_party(self):
+        from unittest.mock import MagicMock
+        from data import ma_announcements as ma
+        hits = [{"_id": "0001-26-7:cban.htm",
+                 "_source": {"adsh": "0001-26-7", "file_date": "2026-06-24",
+                             "ciks": ["0000711669"], "file_type": "8-K",
+                             "items": ["1.01", "8.01"],
+                             "display_names": ["COLONY BANKCORP INC  (CBAN)  "
+                                               "(CIK 0000711669)"]}}]
+        resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
+        resp.raise_for_status = MagicMock()
+        with patch("data.ma_announcements.requests.get", return_value=resp), \
+             patch("data.ma_announcements._accession_text",
+                   return_value=(CBAN_8K, True)), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(None, None, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            rows, ok = ma.find_open_announcements(711669, "Colony Bank")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["counterparty_name"], "First Reliance")
+        self.assertEqual(rows[0]["direction"], "acquisition")
+
+
+class TestWireResolver(unittest.TestCase):
+
+    def _prs(self):
+        return [
+            {"title": "Richmond Mutual Bancorporation, Inc. Announces Completion "
+                      "of Merger with The Farmers Bancorp, Frankfort, Indiana",
+             "url": "https://www.prnewswire.com/done", "published_at": "2026-07-01 09:00:00",
+             "text": "completed the merger"},
+            {"title": "RICHMOND MUTUAL AND THE FARMERS BANCORP ANNOUNCE "
+                      "TRANSFORMATIONAL STRATEGIC MERGER",
+             "url": "https://www.prnewswire.com/ann", "published_at": "2025-11-12 09:00:00",
+             "text": "Richmond Mutual Bancorporation, Inc. and The Farmers Bancorp"},
+            {"title": "Richmond Mutual Bancorporation, Inc. Announces Third Quarter Results",
+             "url": "https://www.prnewswire.com/q3", "published_at": "2025-10-24 09:00:00",
+             "text": "earnings"},
+        ]
+
+    def test_completed_deal_resolved_from_wire(self):
+        from data.ma_announcements import resolve_announcement_wire
+        with patch("data.ma_announcements._wire_releases", return_value=self._prs()), \
+             patch("data.ma_announcements._wire_story_text",
+                   side_effect=lambda u: {"https://www.prnewswire.com/ann": RMBI_WIRE}.get(u, "")), \
+             patch("data.events.fmp_news._is_subject", return_value=True), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(13.15, "2025-11-11", True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            r, ok = resolve_announcement_wire(
+                "RMBI", "The Farmers Bank, Frankfort, Indiana",
+                "First Bank Richmond", "2026-07-01")
+        self.assertTrue(ok)
+        self.assertIsNotNone(r)
+        self.assertEqual(r["announce_date"], "2025-11-12")
+        self.assertEqual(r["value_usd"], 82_000_000)
+        self.assertEqual(r["source"], "wire")
+        self.assertEqual(r["terms"]["exchange_ratio"], 3.4)
+        self.assertEqual(r["terms"]["acq_ticker"], "RMBI")
+        # 3.40 × $13.15 = $44.71 — the release's own per-share figure.
+        self.assertEqual(r["terms"]["implied_price"], 44.71)
+
+    def test_feed_unavailable_is_not_cacheable(self):
+        from data.ma_announcements import resolve_announcement_wire
+        with patch("data.ma_announcements._wire_releases", return_value=None):
+            self.assertEqual(resolve_announcement_wire("RMBI", "X Bank", "Y", "2026-07-01"),
+                             (None, False))
+
+
+class TestWirePendingLeg(unittest.TestCase):
+
+    def test_townebank_blueharbor_pending_from_wire(self):
+        from data import ma_pending
+        prs = [{"title": "TowneBank Enhances North Carolina Presence Through "
+                         "Agreement To Acquire blueharbor bank",
+                "url": "https://www.globenewswire.com/town", "published_at": "2026-10-06 08:30:00",
+                "text": "TowneBank (NASDAQ: TOWN) today announced"},
+               {"title": "TowneBank Reports Third Quarter 2026 Earnings",
+                "url": "https://www.globenewswire.com/q3", "published_at": "2026-10-02 08:30:00",
+                "text": "TowneBank"}]
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date(2026, 10, 6)
+        with patch("data.ma_pending._wire_releases", return_value=prs), \
+             patch("data.ma_pending._wire_story_text",
+                   side_effect=lambda u: TOWN_WIRE if u.endswith("/town") else ""), \
+             patch("data.events.fmp_news._is_subject", return_value=True), \
+             patch("data.ma_pending._universe_match", return_value=(None, None, None)), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(36.15, "2026-10-05", True)), \
+             patch("data.ma_pending.time.sleep", lambda *_: None), \
+             patch("data.ma_pending.date", _FakeDate):
+            rows, ok = ma_pending.find_pending_wire("TOWN", "TowneBank")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["counterparty_name"], "blueharbor bank")
+        self.assertEqual(r["announce_date"], "2026-10-06")
+        self.assertEqual(r["source"], "wire")
+        self.assertEqual(r["terms"]["consideration"], "mixed")
+        self.assertEqual(r["terms"]["implied_price"], 50.78)
+        self.assertEqual(r["terms"]["expected_close_date"], "2027-03-31")
+
+    def test_later_completion_release_closes_the_deal(self):
+        from data import ma_pending
+        prs = [{"title": "TowneBank Completes Acquisition of blueharbor bank",
+                "url": "https://www.globenewswire.com/done", "published_at": "2027-03-01 08:30:00",
+                "text": "blueharbor"},
+               {"title": "TowneBank Enhances North Carolina Presence Through "
+                         "Agreement To Acquire blueharbor bank",
+                "url": "https://www.globenewswire.com/town", "published_at": "2026-10-06 08:30:00",
+                "text": "TowneBank"}]
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date(2027, 3, 5)
+        with patch("data.ma_pending._wire_releases", return_value=prs), \
+             patch("data.ma_pending._wire_story_text", return_value=TOWN_WIRE), \
+             patch("data.events.fmp_news._is_subject", return_value=True), \
+             patch("data.ma_pending._universe_match", return_value=(None, None, None)), \
+             patch("data.ma_announcements._close_before",
+                   return_value=(36.15, "2027-03-04", True)), \
+             patch("data.ma_pending.time.sleep", lambda *_: None), \
+             patch("data.ma_pending.date", _FakeDate):
+            rows, ok = ma_pending.find_pending_wire("TOWN", "TowneBank")
+        self.assertTrue(ok)
+        self.assertEqual(rows, [])
+
+    def test_wire_rows_pass_without_edgar(self):
+        from data import ma_pending
+        row = {"announce_date": "2026-10-06", "direction": "acquisition",
+               "counterparty_name": "blueharbor bank", "counterparty_ticker": None,
+               "counterparty_cert": None, "counterparty_cik": None,
+               "value_usd": None, "value_basis": None, "value_note": None,
+               "target_cik": None, "announce_url": "u", "terms": {}, "source": "wire"}
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=([], True)), \
+             patch("data.ma_pending.find_pending_wire", return_value=([row], True)):
+            rows, ok = ma_pending.find_pending_deals(None, "TowneBank", ticker="TOWN")
+        self.assertTrue(ok)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["milestones"], {"votes": [], "regulatory_approval": None})
+
+    def test_cash_row_takes_universe_name_and_ticker(self):
+        from data import ma_pending
+        cash = [{"announce_date": "2026-09-30", "direction": "acquisition",
+                 "counterparty_name": "Capital", "counterparty_cik": None,
+                 "value_usd": 728_100_000, "value_basis": "stated", "value_note": None,
+                 "target_cik": None, "announce_url": "u",
+                 "terms": {"exchange_ratio": 1.11, "tgt_ticker": None}}]
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.ma_pending._universe_match", return_value=("CBNK", 35278, 1419536)), \
+             patch("data.bank_mapping.get_name", return_value="Capital Bancorp"), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            rows, ok = ma_pending.find_pending_deals(318300, "Peoples Bank", ticker=None)
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["counterparty_name"], "Capital Bancorp")
+        self.assertEqual(rows[0]["counterparty_ticker"], "CBNK")
+        self.assertEqual(rows[0]["terms"]["tgt_ticker"], "CBNK")
+
+
+class TestInternalConsolidation(unittest.TestCase):
+
+    def test_same_holdco_without_announcement_is_not_a_deal(self):
+        from data.deal_comps import build_comps_snapshot
+        internal = {"deal_kind": "whole_company", "direction": "acquisition",
+                    "status": "completed", "completion_date": "2025-05-01",
+                    "counterparty": {"name": "Lena State Bank", "cert": 1},
+                    "announce_date": None, "announce_url": None,
+                    "target_assets": 97_400_000, "value_usd": None, "internal": True}
+        real = dict(internal, counterparty={"name": "Bank of Idaho", "cert": 2},
+                    internal=False, target_assets=1_330_000_000)
+        with patch("data.ma_history.get_ma_history", return_value=[internal, real]), \
+             patch("data.deal_comps.compute_multiples", return_value=({}, True)), \
+             patch("data.cache.put"), \
+             patch("data.deal_comps._EMPTY_HISTORY_RETRY_WAITS", ()):
+            snap = build_comps_snapshot([{"ticker": "GBCI", "cert": 9, "cik": 1}])
+        self.assertEqual([r["target_name"] for r in snap["deals"]], ["Bank of Idaho"])
+
+    def test_same_holdco_helper(self):
+        from data.ma_history import _same_holdco
+        with patch("data.fdic_client.get_holdco_rssd_for_cert",
+                   side_effect=lambda c: {1: 777, 2: 777, 3: 888, 4: None}[c]):
+            self.assertTrue(_same_holdco(1, 2))
+            self.assertFalse(_same_holdco(1, 3))
+            self.assertFalse(_same_holdco(1, 4))
+            self.assertFalse(_same_holdco(None, 2))
+
+    def test_wire_url_dedupe_key(self):
+        from data.deal_comps import _dedupe_key
+        k = _dedupe_key({"announce_url": "https://www.globenewswire.com/news-release/2026/10/06/x.html"}, 1)
+        self.assertEqual(k, ("acc", "https://www.globenewswire.com/news-release/2026/10/06/x.html"))
+
+
 if __name__ == "__main__":
     unittest.main()

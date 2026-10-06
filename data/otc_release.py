@@ -332,7 +332,7 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     # v4 subject guard + title-governed qend; v3 prose-EPS connector
     # (release_metrics v12). COUPLING: any release_metrics extraction-spec
     # bump must bump THIS version too (extractions immutable per URL).
-    key = f"otc_release:v11:{ticker.upper()}"
+    key = f"otc_release:v12:{ticker.upper()}"
     try:
         # Freshness is judged below (15-min is_fresh + URL-match re-stamp);
         # the default 24h read ceiling would drop `prev` after any >24h gap

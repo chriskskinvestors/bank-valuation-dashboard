@@ -223,6 +223,37 @@ class TestPerShare(unittest.TestCase):
         m = x("<p>Tangible book value per share was up 8.2% from $21.67.</p>")
         self.assertIsNone(m["tbv_ps"])
 
+    # FDVA 2Q26 (2026-10-06): an OTC filer whose release is its only
+    # disclosure stated TBV three ways and we captured none → no TBV on the
+    # card. The real sentences, verbatim.
+    def test_tbv_verb_with_period_phrase_then_level(self):
+        m = x("<p>Tangible Book Value per share improved during the quarter "
+              "by $0.12 to $12.20.</p>")
+        self.assertEqual(m["tbv_ps"], 12.20)
+
+    def test_tbv_of_common_stock_was_per_share(self):
+        m = x("<p>The tangible book value of the Company's common stock on "
+              "June 30, 2026, was $12.20 per share compared to $12.08 on "
+              "March 31, 2026.</p>")
+        self.assertEqual(m["tbv_ps"], 12.20)
+        self.assertIsNone(m["bv_ps"])                      # not a BV sentence
+
+    def test_tbv_excluding_aoci_sentence_is_a_variant(self):
+        gaap = ("<p>The tangible book value of the Company's common stock on "
+                "June 30, 2026, was $12.20 per share compared to $12.08 on "
+                "March 31, 2026.</p>")
+        ex = ("<p>Excluding AOCI losses/gains 5 , the tangible book value of "
+              "the Company's common stock on June 30, 2026, was $14.29 per "
+              "share compared to $14.18 on March 31, 2026.</p>")
+        self.assertIsNone(x(ex)["tbv_ps"])                 # the variant alone
+        self.assertEqual(x(gaap + ex)["tbv_ps"], 12.20)   # GAAP wins, no clash
+
+    def test_bv_of_common_stock_was_per_share(self):
+        m = x("<p>The book value of the Company's common stock on June 30, "
+              "2026, was $14.92 per share.</p>")
+        self.assertEqual(m["bv_ps"], 14.92)
+        self.assertIsNone(m["tbv_ps"])
+
     def test_dividend_declared(self):
         m = x("<p>The Board declared a quarterly cash dividend of $0.23 per "
               "common share.</p>")
