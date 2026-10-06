@@ -114,9 +114,26 @@ def _is_fresh(cached: dict | None) -> bool:
     return is_fresh(cached, RENDER_TTL_SECONDS)
 
 
-def _fetch_form4_xml(accession: str, cik: int) -> str | None:
-    """Fetch the raw Form 4 XML file for an accession."""
+def _fetch_form4_xml(accession: str, cik: int,
+                     primary_doc: str | None = None) -> str | None:
+    """Fetch the raw Form 4 XML file for an accession.
+
+    primary_doc is the submissions feed's primaryDocument, e.g.
+    "xslF345X06/form4.xml": the xslF345X0N/ prefix is EDGAR's rendered-HTML
+    view, the bare name the raw XML (verified on ~7,700 universe Form 4s,
+    2026-10-06). Fetching it directly is 1 request instead of 2; a missing or
+    non-.xml name, or a failed/non-ownership fetch, falls back to index.json.
+    The firehose has no primaryDocument and always takes the index path."""
     acc_no_hyphens = accession.replace("-", "")
+    xml_name = re.sub(r"^xslF345X\d+/", "", primary_doc or "")
+    if xml_name.lower().endswith(".xml") and "/" not in xml_name:
+        try:
+            text = _sec_get(f"https://www.sec.gov/Archives/edgar/data/"
+                            f"{cik}/{acc_no_hyphens}/{xml_name}").text
+            if "<ownershipDocument" in text:
+                return text
+        except Exception:
+            pass
     # The Form 4 XML is typically the primary document, named like wf-form4_NNNN.xml
     # Listing the directory to find it
     index_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK={cik}&type=4"
@@ -376,6 +393,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
     filing_dates = recent.get("filingDate", [])
     report_dates = recent.get("reportDate", [])
     acceptances = recent.get("acceptanceDateTime", [])
+    primary_docs = recent.get("primaryDocument", [])
 
     cutoff_date = (datetime.now() - timedelta(days=30 * months_back)).date()
 
@@ -396,6 +414,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
             "report_date": report_dates[i] if i < len(report_dates) else None,
             "filed_at": _acceptance_to_utc_iso(
                 acceptances[i] if i < len(acceptances) else None),
+            "primary_doc": primary_docs[i] if i < len(primary_docs) else None,
         })
 
     # Walk newest-first until _MAX_OWN_FILINGS issuer filings, the window
@@ -406,7 +425,7 @@ def fetch_insider_trades(cik: int, months_back: int = 12, *,
     for entry in form4_accessions[:_MAX_XML_FETCHES]:
         if n_own >= _MAX_OWN_FILINGS:
             break
-        xml = _fetch_form4_xml(entry["accession"], cik)
+        xml = _fetch_form4_xml(entry["accession"], cik, entry["primary_doc"])
         if not xml or not _issuer_matches(xml, cik):
             continue  # missing, or the bank is the reporting owner elsewhere
         n_own += 1
