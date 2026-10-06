@@ -15,8 +15,10 @@ Tables:
     report_date         DATE NOT NULL    — quarter-end of the report
     total_securities    BIGINT           — total debt securities (sum of buckets)
     buckets_json        TEXT             — {bucket_key: fraction} JSON
-    amounts_json        TEXT             — {bucket_key: usd_amount} JSON
-    weighted_dur_yrs    DOUBLE PRECISION — midpoint-weighted duration
+    amounts_json        TEXT             — {bucket_key: usd_amount} JSON, plus a
+                                           reserved "_composition" key (Memo 2
+                                           sub-item coverage; absent = 2.a only)
+    weighted_dur_yrs    DOUBLE PRECISION — bucket-midpoint weighted MATURITY (yrs)
     floating_loan_share DOUBLE PRECISION — if available from RC-K
     source              VARCHAR(20)      — 'ffiec' or 'estimated'
     ingested_at         TIMESTAMP
@@ -249,6 +251,10 @@ def _parse_period(period_str: str) -> str:
     return s
 
 
+_COMPOSITION_KEY = "_composition"
+_COMPOSITION_FIELDS = ("component_usd", "assumed_usd", "assumption")
+
+
 def upsert_securities_ladder(
     cert: int,
     rssd_id: int,
@@ -270,13 +276,21 @@ def upsert_securities_ladder(
         return 0
 
     eng = _get_engine()
+    # RC-B Memo 2 composition (which sub-items the ladder covers + the other-
+    # MBS dollars placed by assumption) rides in amounts_json under a reserved
+    # key — no migration; get_latest_ladder lifts it back out. Rows written
+    # before it existed have no such key and read back as Memo 2.a-only.
+    amounts = dict(ladder.get("amounts_usd", {}))
+    if ladder.get("component_usd"):
+        amounts[_COMPOSITION_KEY] = {
+            k: ladder.get(k) for k in _COMPOSITION_FIELDS}
     row = {
         "cert": int(cert),
         "rssd_id": int(rssd_id),
         "report_date": report_date,
         "total_securities": int(ladder.get("total_usd") or 0),
         "buckets_json": json.dumps(ladder.get("buckets", {})),
-        "amounts_json": json.dumps(ladder.get("amounts_usd", {})),
+        "amounts_json": json.dumps(amounts),
         "weighted_dur_yrs": float(ladder.get("weighted_avg_duration_years") or 0.0),
         "floating_loan_share": (
             float(floating_loan_share) if floating_loan_share is not None else None
@@ -350,6 +364,7 @@ def get_latest_ladder(cert: int) -> dict | None:
         print(f"[call_report_store] corrupted ladder JSON for cert {cert}: "
               f"{type(e).__name__}: {e}")
         buckets, amounts = {}, {}
+    composition = amounts.pop(_COMPOSITION_KEY, None) or {}
 
     report_date = row.report_date
     if hasattr(report_date, "strftime"):
@@ -374,6 +389,9 @@ def get_latest_ladder(cert: int) -> dict | None:
         ),
         "source": row.source or "ffiec",
         "rssd_id": int(row.rssd_id or 0),
+        # Absent on pre-MBS rows → securities_ladder_coverage_note labels
+        # the ladder Memo 2.a-only.
+        **{k: composition[k] for k in _COMPOSITION_FIELDS if k in composition},
     }
 
 

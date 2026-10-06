@@ -256,7 +256,7 @@ class TestDataQualityAbsentIsNa(unittest.TestCase):
              mock.patch.object(ex, "st", fake_export):
             dq._render_ffiec_status(28489, "BANR")
         rows = {r["Field"]: r["Value"] for r in shown[0].to_dict("records")}
-        self.assertEqual(rows["Securities duration (wtd-avg)"], "— (not reported)")   # was "0.00 yrs"
+        self.assertEqual(rows["Securities maturity (wtd-avg, bucket midpoints)"], "— (not reported)")   # was "0.00 yrs"
         self.assertEqual(rows["Floating-loan share (RC-C Memo 2)"], "— (not reported)")
 
 
