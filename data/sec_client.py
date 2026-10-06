@@ -497,6 +497,7 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             if 80 <= _gap_days(e2, e1) <= 100:
                 quarters[e1] = d1["val"] - d2["val"]
                 break
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
 
     # Same-END pairs give the EARLIER quarter: a YTD minus the direct quarter
     # that closes it (H1 − Q2 = Q1; only a ~3-month remainder counts). This
@@ -561,6 +562,30 @@ def _extract_ttm_value(facts: dict, concept: str, max_age_years: int = 2) -> flo
             return float(annual[0]["val"])
 
     return None
+
+
+def _fill_q4_from_fy_minus_quarters(durations: dict, quarters: dict, gap_days) -> None:
+    """Q4 = FY − (Q1 + Q2 + Q3) for a filer that tags the full year and three
+    discrete quarters but NO year-to-date cumulatives — the same-start
+    derivation above needs a 9M fact and has none. BANC and ACNB tag exactly
+    this shape (FY $0.40 beside Q1–Q3 $0.10 each, no 9M), so Q4 was
+    underivable and the whole TTM dividend went None: 175 SEC filers showed
+    no dividend yield on 2026-10-06, many of them obvious payers. Declared
+    per-share dividends and dollar flows sum exactly within a fiscal year;
+    for per-share EPS it is the same approximation the FY − 9M rule already
+    accepts. Direct and same-start-derived quarters always win; the three
+    quarters must start at the FY start and be consecutive, with Q4 landing
+    one quarter after Q3 at the FY end — anything else is left alone."""
+    direct_start = {end: start for (start, end), d in durations.items()
+                    if 80 <= d["span"] <= 100}
+    for (s_fy, e_fy), d_fy in durations.items():
+        if not (350 <= d_fy["span"] <= 380) or e_fy in quarters:
+            continue
+        inner = sorted(e for e, s in direct_start.items() if s_fy <= s and s < e < e_fy)
+        if (len(inner) == 3 and direct_start[inner[0]] == s_fy
+                and all(80 <= gap_days(a, b) <= 100 for a, b in zip(inner, inner[1:]))
+                and 80 <= gap_days(inner[-1], e_fy) <= 100):
+            quarters[e_fy] = d_fy["val"] - sum(quarters[e] for e in inner)
 
 
 def _extract_ttm_dividend(
@@ -654,6 +679,7 @@ def _extract_ttm_dividend(
                 quarters[e1] = d1["val"] - d2["val"]
                 break
 
+    _fill_q4_from_fy_minus_quarters(durations, quarters, _gap_days)
     if E not in quarters:
         return None  # the anchor quarter itself is not a single quarter → unknown
     ends = sorted(q for q in quarters if q <= E)[-4:]
