@@ -577,6 +577,11 @@ _IMPLIED_PRICE_RE = re.compile(
 _IMPLIED_PRICE_DECK_RE = re.compile(
     r"per\s+share\s+(?:deal\s+|transaction\s+)?value\s+(?:of|equates\s+to|is)\s+"
     r"\$\s?" + _NUM, re.IGNORECASE)
+# "the aggregate transaction value is approximately $728.1 million, or
+# $43.75 per share" (Peoples/Capital 2026-09-30).
+_IMPLIED_PRICE_OR_RE = re.compile(
+    r"(?:million|billion),?\s+or\s+(?:approximately\s+|about\s+)?\$\s?" + _NUM
+    + r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
 
 # Premium as STATED: "a premium of approximately 28% to ..." / "a 28%
 # premium to the closing price". Window-gated to PRICE context (closing /
@@ -709,7 +714,7 @@ def _cash_with_unparsed_stock_leg(text: str) -> bool:
 def extract_implied_price(text: str) -> float | None:
     """Per-share offer value as STATED in the text, or None."""
     found = [round(_num(m.group(1)), 4)
-             for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE)
+             for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE, _IMPLIED_PRICE_OR_RE)
              for m in rx.finditer(text)]
     return _single(found)
 
@@ -934,14 +939,30 @@ def build_terms(text: str, announce_date: str, acq_tick: str | None = None,
                 acq_tick = _universe_match(t["acq_side"])[0]
             if not tgt_tick and t["tgt_side"]:
                 tgt_tick = _universe_match(t["tgt_side"])[0]
+    ok = fill_implied_price(t, announce_date, acq_tick=acq_tick, tgt_tick=tgt_tick,
+                            close_lookup=close_lookup)
+    return t, ok
+
+
+def fill_implied_price(t: dict, announce_date: str, acq_tick: str | None = None,
+                       tgt_tick: str | None = None, close_lookup=None) -> bool:
+    """Complete the tickers, the acquirer's close before announce and the
+    implied per-share price on a terms dict — the tail of build_terms as
+    its own seam, so a leg that built terms WITHOUT the acquirer's ticker
+    (the 425 and announcement-8-K legs know only the filer's CIK; live
+    2026-10-06 the board showed Peoples/Capital's 1.11 ratio with no
+    implied price) can finish the row once the filer's ticker is known.
+    Returns ok — False only when the price lookup FAILED."""
+    acq_tick = acq_tick or t.get("acq_ticker")
+    tgt_tick = tgt_tick or t.get("tgt_ticker")
     t["acq_ticker"] = acq_tick
     t["tgt_ticker"] = tgt_tick
     close, close_date, ok = None, None, True
-    if t["exchange_ratio"] and acq_tick and announce_date:
+    if t.get("exchange_ratio") and acq_tick and announce_date:
         close, close_date, ok = (close_lookup or _close_before)(acq_tick, announce_date)
     t["acq_close_at_announce"] = close
     t["acq_close_date"] = close_date
-    if t["implied_price_stated"] is not None:
+    if t.get("implied_price_stated") is not None:
         t["implied_price"] = t["implied_price_stated"]
         t["implied_price_basis"] = "stated"
         t["implied_price_note"] = "per-share value as stated in the announcement"
@@ -950,7 +971,7 @@ def build_terms(text: str, announce_date: str, acq_tick: str | None = None,
         t["implied_price"] = v
         t["implied_price_basis"] = "computed" if v is not None else None
         t["implied_price_note"] = f"computed: {note}" if note else None
-    return t, ok
+    return ok
 
 
 def _get_429_aware(url: str, params: dict | None = None):
