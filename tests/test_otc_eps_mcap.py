@@ -319,7 +319,7 @@ class TestQuarterHistory(_StoreBase):
                          FDVA_SERIES)
         self.assertEqual(hist["2026-06-30"]["via"], "release")
         self.assertEqual(hist["2026-03-31"]["via"], "table")
-        self.assertIn("otc_release:v14:FDVA", self.store)
+        self.assertIn("otc_release:v15:FDVA", self.store)
 
         # Composite: four discrete quarters from the bank's own releases.
         from analysis.release_eps import otc_composite_ttm_eps
@@ -336,7 +336,7 @@ class TestQuarterHistory(_StoreBase):
 
 
 def _seed_envelope(store, ticker, qend, eps, **extra):
-    store[f"otc_release:v14:{ticker}"] = {
+    store[f"otc_release:v15:{ticker}"] = {
         "cached_at": "2026-01-01T00:00:00",
         "value": {"qend": qend, "url": "latest", "metrics": {"eps_diluted": eps},
                   **extra}}

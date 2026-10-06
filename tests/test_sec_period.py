@@ -55,7 +55,9 @@ class TestFundamentalsForPeriod(unittest.TestCase):
         })
         a = sp.fundamentals_for_period(123, "2026Q2")
         self.assertEqual(a["net_income"], 150e6)          # 250 − 100
-        self.assertAlmostEqual(a["eps"], 3.10)            # 5.10 − 2.00
+        # Per-share is NOT additive (review 2026-10-06 P1-2): only a
+        # directly-tagged 3-month EPS is the quarter's — never 5.10 − 2.00.
+        self.assertNotIn("eps", a)
         self.assertEqual(a["total_assets"], 12.5e9)       # instant at 6/30
 
     def test_q4_is_fy_minus_9m(self):
@@ -191,7 +193,7 @@ class TestFundamentalsForPeriod(unittest.TestCase):
         # cached facts wouldn't contain it (the silent-n/a trap the slim hash guards).
         needed = set()
         for chain in (sp._NET_INCOME, sp._NONINT_INCOME, sp._NONINT_EXPENSE,
-                      sp._PROVISION, sp._EPS, sp._NII_DIRECT, sp._INT_INCOME,
+                      sp._PROVISION, sp._EPS_DILUTED, sp._EPS_BASIC, sp._NII_DIRECT, sp._INT_INCOME,
                       sp._INT_EXPENSE, *sp._INSTANT.values()):
             needed.update(chain)
         missing = needed - sec_client.SLIM_USGAAP_CONCEPTS

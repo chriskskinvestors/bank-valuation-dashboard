@@ -158,8 +158,8 @@ class TestCacheVersionsStayCoupled(unittest.TestCase):
     def test_both_versions_bumped_together(self):
         rm = (REPO / "data/release_metrics.py").read_text(encoding="utf-8")
         otc = (REPO / "data/otc_release.py").read_text(encoding="utf-8")
-        self.assertIn('key = f"release_metrics:v21:', rm)
-        self.assertIn('key = f"otc_release:v14:', otc)
+        self.assertIn('key = f"release_metrics:v22:', rm)
+        self.assertIn('key = f"otc_release:v15:', otc)
 
 
 if __name__ == "__main__":

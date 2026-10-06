@@ -165,7 +165,8 @@ class TestSurpriseHistory(_ExportSite):
         self.assertEqual(kw["file_name"], "earnings_surprises_BANR.xlsx")
         self.assertEqual(kw["key"], "exp_earnings_surprises_BANR")
         g = self._grid(ws)
-        self.assertEqual(g[0], ["Date", "EPS Est ($)", "EPS Act adj. ($)", "Surprise (%)"])
+        self.assertEqual(g[0], ["Date", "EPS Est ($)", "EPS Act provider basis ($)",
+                                "Surprise (%)"])
         self.assertEqual(g[1], [dt.datetime(2026, 7, 15), 1.2, 1.26, 5.0])
         self.assertEqual(g[2][:2], [dt.datetime(2026, 10, 15), 1.3])
         self._assert_na(ws, "C3")
@@ -178,10 +179,12 @@ class TestSurpriseHistory(_ExportSite):
         self.assertEqual(src["Ticker"], "BANR")
         self.assertIn("Surprise History", src["Page"])
         self.assertIn("Yahoo Finance", src["Source"])
-        # Review P2-4: the actual is the provider's ADJUSTED EPS, not GAAP.
-        self.assertIn("ADJUSTED", src["EPS Act basis"])
+        # Review 2026-10-06 P2-1: the actual is on the PROVIDER'S basis —
+        # usually adjusted, sometimes GAAP (JPM 4Q25 $4.63) — never claimed
+        # as adjusted.
+        self.assertIn("PROVIDER'S basis", src["EPS Act basis"])
         self.assertIn("Yahoo Finance", src["EPS Act basis"])
-        self.assertIn("not the GAAP", src["EPS Act basis"])
+        self.assertIn("GAAP figure", src["EPS Act basis"])
 
 
 class _RecSt(_StubSt):
@@ -225,16 +228,16 @@ class TestSurpriseHistoryLabelsAndAxis(_ExportSite):
     def test_header_and_caption_say_adjusted_and_name_source(self):
         self._render(self.MANY)
         grid = next(m for m in self.rec.md if "<th" in m)
-        self.assertIn(">EPS Act (adj.)</th>", grid)
-        self.assertNotIn(">EPS Act</th>", grid)
+        self.assertIn(">EPS Act (provider basis)</th>", grid)
+        self.assertNotIn(">EPS Act (adj.)</th>", grid)
         cap = " ".join(self.rec.captions)
-        self.assertIn("ADJUSTED", cap)
+        self.assertIn("PROVIDER'S basis", cap)
         self.assertIn("Yahoo Finance", cap)
-        self.assertIn("not the GAAP", cap)
+        self.assertIn("mix bases", cap)
 
     def test_chart_series_labeled_adjusted_values_unchanged(self):
         fig = self._render(self.MANY)
-        self.assertEqual(fig.data[0].name, "Actual EPS (adj.)")
+        self.assertEqual(fig.data[0].name, "Actual EPS (provider basis)")
         self.assertEqual(list(fig.data[0].y), [1.1, 1.1, 1.1])   # not replaced
         self.assertEqual(list(fig.data[1].y), [1.0, 1.0, 1.0])
 
@@ -567,6 +570,7 @@ class TestResultsBoard(_ExportSite):
             "ticker": "AAA", "date": "2026-07-15", "when": "Before open",
             "period_ending": "2026-06-30", "eps_act": 1.26, "eps_est": 1.20,
             "eps_surprise": 5.0, "eps_act_src": "release, adj.",
+            "eps_basis": "adjusted",
             "rev_act": 150_000_000.0, "rev_est": 148_000_000.0,
             "rev_surprise": 1.35, "reaction_session": "2026-07-15",
             "pr_headline": "AAA reports Q2", "pr_url": "https://ir.example/q2",
@@ -589,18 +593,19 @@ class TestResultsBoard(_ExportSite):
         self.assertEqual(kw["key"], "exp_earnings_results")
         g = self._grid(ws)
         hdr = g[0]
-        self.assertEqual(hdr[:20], [
+        self.assertEqual(hdr[:21], [
             "Ticker", "Bank", "Reported", "When", "Period Ending", "Status",
             "EPS Act ($)", "EPS Act Source", "EPS Est ($)", "EPS Surprise (%)",
+            "EPS Basis",
             "Rev Act ($)", "Rev Act Source", "Rev Est ($)", "Rev Surprise (%)",
             "Px React (%)", "Px React Live", "Reaction Session", "Release URL",
             "Release Headline", "Release Period End"])
         # One column per _REL_METRICS entry, unit in the header ($M → $).
-        self.assertEqual(hdr[20:23], ["Release EPS adj ($)", "Release EPS GAAP ($)",
+        self.assertEqual(hdr[21:24], ["Release EPS adj ($)", "Release EPS GAAP ($)",
                                       "Release Revenue ($)"])
         self.assertIn("Release NIM (%)", hdr)
         self.assertIn("Release TBV/sh ($)", hdr)
-        self.assertEqual(len(hdr), 20 + len(self.E._REL_METRICS))
+        self.assertEqual(len(hdr), 21 + len(self.E._REL_METRICS))
         a = dict(zip(hdr, g[1]))
         self.assertEqual(a["Ticker"], "AAA")
         self.assertEqual(a["Reported"], dt.datetime(2026, 7, 15))
@@ -609,6 +614,7 @@ class TestResultsBoard(_ExportSite):
         self.assertEqual(a["EPS Act ($)"], 1.26)
         self.assertEqual(a["EPS Act Source"], "release, adj.")
         self.assertEqual(a["EPS Surprise (%)"], 5.0)
+        self.assertEqual(a["EPS Basis"], "adjusted")
         self.assertEqual(a["Rev Act ($)"], 150_000_000.0)   # unscaled
         self.assertEqual(a["Rev Act Source"], "FMP")
         self.assertEqual(a["Rev Est ($)"], 148_000_000.0)

@@ -15,7 +15,8 @@ Two traps this module is built around:
     scored against a half-year actual (the +284%-"beat" class of error). We take
     the standalone quarter by DIFFERENCING the cumulative legs: Q = YTD(q) −
     YTD(q−1). This is also the only way to get Q4, which companies never tag
-    directly — it is FY − 9M.
+    directly — it is FY − 9M. Flows only: per-share EPS is NOT additive, so
+    a quarter's EPS is the directly-tagged 3-month figure or n/a.
 
   * **Not filed yet.** If the cumulative legs for the period aren't on file, the
     metric is absent; if nothing is, the whole period returns None and the UI
@@ -36,7 +37,8 @@ _NONINT_EXPENSE = ("NoninterestExpense",)
 _PROVISION = ("ProvisionForCreditLosses", "ProvisionForLoanAndLeaseLosses",
               "ProvisionForLoanLeaseAndOtherLosses",
               "ProvisionForCreditLossExpenseReversal")
-_EPS = ("EarningsPerShareDiluted", "EarningsPerShareBasic")
+_EPS_DILUTED = ("EarningsPerShareDiluted",)
+_EPS_BASIC = ("EarningsPerShareBasic",)
 _NII_DIRECT = ("InterestIncomeExpenseNet",)
 _INT_INCOME = ("InterestAndDividendIncomeOperating", "InterestIncome")
 _INT_EXPENSE = ("InterestExpense",)
@@ -179,16 +181,21 @@ def _flow_for(facts, concepts, kind, year, q, unit_types=("USD",)):
 
 
 def _eps_for(facts, kind, year, q):
-    """Period diluted EPS. For a quarter, prefer the company's directly-tagged
-    standalone EPS (Q1–Q3); Q4 / untagged falls back to FY − 9M differencing —
-    the conventional back-out. For a year, the FY EPS."""
+    """(EPS, basis) for the period — basis 'diluted' or 'basic'; (None, None)
+    when absent. For a quarter ONLY the company's directly-tagged 3-month
+    figure: per-share amounts are not additive (share counts move), so FY −
+    9M is not the reported Q4 (review 2026-10-06 P1-2: JPM 20.02 − 15.38 =
+    4.64 vs reported 4.63; ONB 1.79 − 1.23 = 0.56 vs 0.55 scored a false
+    "+1.8% Beat") — the Company Reported page's rule. For a year, the FY
+    EPS. Basic EPS is used only when the filer tags no diluted figure for
+    the period (P2-6: some small filers tag only basic), and is LABELED."""
     ut = ("USD/shares",)
-    if kind == "Y":
-        return _ytd(facts, _EPS, year, 4, ut)
-    v = _standalone_quarter(facts, _EPS, year, q, ut)
-    if v is None:
-        v = _quarter_by_diff(facts, _EPS, year, q, ut)
-    return v
+    for concepts, basis in ((_EPS_DILUTED, "diluted"), (_EPS_BASIC, "basic")):
+        v = (_ytd(facts, concepts, year, 4, ut) if kind == "Y"
+             else _standalone_quarter(facts, concepts, year, q, ut))
+        if v is not None:
+            return v, basis
+    return None, None
 
 
 def _net_interest_income(facts, kind, year, q):
@@ -283,9 +290,11 @@ def fundamentals_for_period(cik, period: str) -> dict | None:
     nii = _net_interest_income(facts, kind, year, q)
     if nii is not None:
         out["net_interest_income"] = nii
-    eps = _eps_for(facts, kind, year, q)
+    eps, eps_basis = _eps_for(facts, kind, year, q)
     if eps is not None:
         out["eps"] = eps
+        if eps_basis == "basic":
+            out["eps_basis"] = "basic"      # labeled in the comparison table
     for key, concepts in _INSTANT.items():
         v = _instant(facts, concepts, end_target)
         if v is not None:

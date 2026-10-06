@@ -1305,22 +1305,31 @@ def compare_consensus_to_actual(
         actual_disp = actual_raw / disp_scale
 
         delta = actual_disp - consensus_disp
-        delta_pct = (delta / abs(consensus_disp) * 100) if consensus_disp else 0
+        # A zero consensus has no percent base: Δ% is undefined, not 0 —
+        # scoring it "inline" fabricated a verdict (review 2026-10-06 P2-4).
+        delta_pct = (delta / abs(consensus_disp) * 100) if consensus_disp else None
 
         # Higher = beat for most; for cost/risk metrics lower = beat. Provision and
         # noninterest expense are costs — a higher actual than expected is a miss.
         lower_is_better = key in ("efficiency_ratio", "npl_ratio", "nco_ratio",
                                   "nonix", "cost_of_deposits", "provision")
 
-        if abs(delta_pct) <= 1.0:
+        if delta_pct is None:
+            beat_miss = "n/a"
+        elif abs(delta_pct) <= 1.0:
             beat_miss = "inline"
         elif lower_is_better:
             beat_miss = "beat" if delta < 0 else "miss"
         else:
             beat_miss = "beat" if delta > 0 else "miss"
 
+        disp_name = METRIC_DISPLAY.get(key, name)
+        if actual_key == "eps" and actual_metrics.get("eps_basis") == "basic":
+            # The filer tags no diluted EPS for the period — the actual is
+            # BASIC EPS and says so (data/sec_period._eps_for, P2-6).
+            disp_name += " (basic)"
         results.append({
-            "metric_name": METRIC_DISPLAY.get(key, name),
+            "metric_name": disp_name,
             "key": key,
             "consensus": consensus_disp,
             "actual": actual_disp,

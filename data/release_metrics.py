@@ -390,6 +390,93 @@ _EPS_PATS = [
 ]
 _EPS_BAND = (0.01, 60.0)
 
+# ADJUSTED / ex-items EPS — the basis street consensus is quoted on, so the
+# Results board can only score a surprise once the feed's actual is proven to
+# BE this figure (2026-10-06 review P0-1). Prose label forms, each verified
+# against the bank's real 2Q26 EX-99.1 text:
+#   HBAN "adjusted EPS 1 was $0.39"      (footnote digit before the verb)
+#   ONB  "record adjusted EPS 1 of $0.65"
+#   AUB  "adjusted diluted operating earnings per common share (1) of $0.94"
+#   ISTR "Core diluted earnings per common share were $0.75 for the quarter"
+#   FITB "adjusted EPS (a) of $1.02"
+#   ZION "diluted EPS of $3.05 (or $1.74 excluding notable items)"
+#   JPM  "NET INCOME EXCLUDING SIGNIFICANT ITEMS OF $16.9 BILLION ($6.14 PER
+#        SHARE)"
+_ADJ_EPS_PATS = [
+    re.compile(r"\b(?:adjusted|core)(?: diluted)?(?: operating)?(?: diluted)? "
+               r"(?:eps\b|earnings per (?:diluted |common )?share)"
+               r"(?:\s*[-–—,]\s*diluted)?\s*(?:\(\w\)\s*|\d\s+)?"
+               r"(?:\(non-?gaap\)\s*)?"
+               r"(?::|\b(?:of|was|were))\s*\$\s?(\d{1,2}\.\d{2})", re.I),
+    re.compile(r"\(or \$\s?(\d{1,2}\.\d{2}) excluding (?:notable|significant) "
+               r"items\)", re.I),
+    re.compile(r"excluding (?:notable|significant) items of \$\s?[\d,.]+ "
+               r"(?:billion|million)\s*\(\s*\$\s?(\d{1,2}\.\d{2}) per "
+               r"(?:diluted )?(?:common )?share\)", re.I),
+]
+# A comparison in the same sentence before the candidate marks a PRIOR
+# period's figure (ZION: "compared with 2Q25 Net Earnings of $243 million,
+# diluted EPS of $1.63 (or $1.58 excluding notable items)"), as does "from"
+# right before the label or a prior-period phrase right after the value (WAL:
+# "rose 6.3% from an adjusted EPS 2 of $2.22 in the prior quarter").
+_ADJ_EPS_PRIOR = re.compile(
+    r"compared (?:with|to)|versus|\bvs\b|prior[- ](?:year|quarter)|"
+    r"year[- ]ago|linked[- ]quarter", re.I)
+_ADJ_EPS_FROM = re.compile(r"\bfrom\s+(?:an?\s+|the\s+)?$", re.I)
+# Immediately after the value only: HBAN's "adjusted EPS 1 was $0.39, higher
+# by $0.02 from the prior quarter" is the CURRENT figure plus a change.
+_ADJ_EPS_PRIOR_AFTER = re.compile(
+    r"^\s*(?:in|for|during) the (?:prior|previous|preceding|linked|"
+    r"year[- ]ago)\b", re.I)
+# "… of $2.45 and $4.69 for the three and six months …, respectively" — a
+# value pair maps by ORDER, which only the period words disambiguate; the
+# table path (column-proven) owns these, prose refuses them.
+_ADJ_EPS_PAIR = re.compile(r"^\s*and \$", re.I)
+# Sentence-bounded span: a period only continues it inside a decimal ($3.05).
+_SPAN = r"(?:[^.;]|\.(?=\d))"
+# ANY mention of a non-GAAP / ex-items EPS — broader than _ADJ_EPS_PATS on
+# purpose: NTRS 2Q26 says "Excluding notable items in the period, earnings per
+# share increased 40%" and states no figure. A release with such a mention
+# but no extractable value leaves the board's basis UNCONFIRMED (n/a), never
+# "no adjusted figure exists".
+_ADJ_EPS_MARK = re.compile(
+    r"\b(?:adjusted|operating|core|non-?gaap)\s+(?:diluted\s+)?(?:eps\b|"
+    r"(?:net )?earnings per (?:diluted |common )?share|net income (?:and|&) "
+    r"eps\b)"
+    r"|\bexcluding\b" + _SPAN + r"{0,100}?(?:\beps\b|earnings per (?:diluted |"
+    r"common )?share|\(\s*\$\s?\d{1,2}\.\d{2} per (?:diluted )?share\))"
+    r"|(?:\beps\b|earnings per (?:diluted |common )?share)" + _SPAN +
+    r"{0,60}?\bexcluding\b", re.I)
+
+
+def _adj_eps_metric(text: str) -> float | None:
+    """The release's adjusted / ex-items diluted EPS from prose, or None.
+    Every clean candidate must agree to the cent (a release narrating two
+    quarters' adjusted EPS without a comparison cue disagrees → None)."""
+    vals = []
+    for pat in _ADJ_EPS_PATS:
+        for m in pat.finditer(text):
+            before = text[max(0, m.start() - 90):m.start()].rsplit(". ", 1)[-1]
+            after = text[m.end():m.end() + 60]
+            if (_ADJ_EPS_PRIOR.search(before) or _ADJ_EPS_FROM.search(before)
+                    or _ADJ_EPS_PRIOR_AFTER.match(after)
+                    or _ADJ_EPS_PAIR.match(after)):
+                continue
+            if _TABLE_TAIL.match(after[:12]):
+                continue                  # flattened multi-period table row
+            v = float(m.group(1))
+            if _EPS_BAND[0] <= v <= _EPS_BAND[1]:
+                vals.append(v)
+    if not vals or (max(vals) - min(vals)) > _AGREE_USD:
+        return None
+    return vals[0]
+
+
+def adjusted_eps_stated(html: str) -> bool:
+    """True when the release mentions any adjusted / non-GAAP / ex-items EPS
+    (see _ADJ_EPS_MARK) — whether or not a value could be extracted."""
+    return bool(_ADJ_EPS_MARK.search(_flat_text(html)))
+
 
 def _dollar_metric(text: str, pats, band) -> float | None:
     def _gen():
@@ -418,6 +505,7 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
     out["bv_ps_common"] = _dollar_metric(text, _BV_COMMON_PATS, _BV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
     out["eps_diluted"] = _dollar_metric(text, _EPS_PATS, _EPS_BAND)
+    out["eps_adj"] = _adj_eps_metric(text)
     if expected_qend and any(v is None for v in out.values()):
         tab = extract_table_metrics(html, expected_qend)
         for k, v in tab.items():
@@ -623,8 +711,16 @@ _TABLE_SPECS = {
 # Rows whose label is an "Adjusted …" variant are normally refused (the
 # core/adjusted exclusion) — these specs OPT IN to exactly those rows.
 _ADJ_TABLE_SPECS = {
-    "eps_adj": (r"adjusted diluted (?:earnings|net income)(?: \(loss\))? per "
-                r"(?:common )?share", "$", (0.01, 60.0)),
+    # Real 2Q26 row labels: "Adjusted diluted earnings per share" (FBK),
+    # "Adjusted EPS, diluted" (ONB), "Adjusted diluted EPS" (EWBC),
+    # "Adjusted operating earnings per common share, diluted" (AUB),
+    # "Adjusted earnings per share - diluted (non-GAAP)" (NBHC), "Core
+    # diluted earnings per common share (non-GAAP)" (NIC/ISTR). A "- basic"
+    # row is never the diluted figure.
+    "eps_adj": (r"(?:adjusted|core)(?: diluted)?(?: operating)?(?: diluted)? "
+                r"(?:eps\b|(?:earnings|net income)(?: \(loss\))? per "
+                r"(?:diluted |common )?share)(?!\s*[-–—,]?\s*basic)",
+                "$", (0.01, 60.0)),
 }
 
 
@@ -1124,7 +1220,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v21:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v22:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1145,6 +1241,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v22 (2026-10-06): adjusted / ex-items EPS (review P0-1) — prose forms
+    # (JPM "excluding significant items … ($6.14 per share)", ZION "(or
+    # $1.74 excluding notable items)", HBAN/ONB "adjusted EPS 1 was/of"),
+    # widened table labels (ONB "Adjusted EPS, diluted"), and the new
+    # `eps_adj_stated` flag the Results board needs to confirm a surprise's
+    # GAAP-vs-adjusted basis. Forces a universe-wide re-extraction.
     # v20 (2026-10-01): bv_ps per-COMMON only when the release carries
     # preferred equity (NPB: v19 served $17.69 incl. preferred).
     # v19 (2026-10-01): deterministic bv_ps (prose + table) — BV/share was
@@ -1181,7 +1283,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v21:{int(cik)}"
+    key = f"release_metrics:v22:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -1249,6 +1351,9 @@ def release_metrics(cik) -> dict | None:
     val = {
         "qend": qend,
         "metrics": extract_release_metrics(rel["html"], expected_qend=qend),
+        # Any adjusted / ex-items EPS mention at all (value extracted or
+        # not) — the board's surprise-basis check (data/earnings_results).
+        "eps_adj_stated": adjusted_eps_stated(rel["html"]),
         # Q/Q from the SAME document's comparative column — same reporting
         # basis as the current quarter, zero extra fetches. Table-only (the
         # prose narrates the current quarter).
