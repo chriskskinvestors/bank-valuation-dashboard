@@ -272,12 +272,22 @@ def _render_valuation_performance_tables(row, fdic_rec=None, quote=None):
     Last Price / Change come from the page's one quote (`quote`, see
     _page_price) so they match the Market Data block (UX-P1-13)."""
     fdic_rec = fdic_rec or {}
+    # Per-metric reasons from the engine (analysis/valuation _notes: merger in
+    # the TTM window, share-basis mismatch, …). A flagged n/a renders "n/a †"
+    # with the reason on hover — never a row that silently disappears.
+    notes = row.get("_notes") or {}
 
     def disp(key):
         m = METRICS_BY_KEY.get(key, {})
         v = row.get(key)
-        return (format_value(v, m.get("format", "number"), m.get("decimals", 2))
-                if v is not None and not pd.isna(v) else None)
+        txt = (format_value(v, m.get("format", "number"), m.get("decimals", 2))
+               if v is not None and not pd.isna(v) else None)
+        note = notes.get(key)
+        if note:
+            tip = _html.escape(str(note), quote=True)
+            return (f'{txt} <span title="{tip}">†</span>' if txt is not None
+                    else f'<span title="{tip}">n/a †</span>')
+        return txt
 
     def _fd_pct(field):
         v = _num(fdic_rec.get(field))
@@ -310,10 +320,12 @@ def _render_valuation_performance_tables(row, fdic_rec=None, quote=None):
     # labeled as such. The old inline fallback (bank YTD NETINC annualized ÷
     # period-end TCE, INTAN "or 0") was a third definition that changed
     # silently by bank (REVIEW 2026-09-24 P1-5: WTFC 18.50% vs company 14.91%).
-    if disp("roatce_holdco") is not None:
+    if row.get("roatce_holdco") is not None:
         roatce_row = ("ROATCE (HoldCo, TTM)", disp("roatce_holdco"))
-    else:
+    elif row.get("roatce_blended") is not None:
         roatce_row = ("ROATCE (Bank, FDIC)", disp("roatce_blended"))
+    else:   # flagged n/a (e.g. merger in the TTM window) shows its reason
+        roatce_row = ("ROATCE (HoldCo, TTM)", disp("roatce_holdco"))
 
     # Every FDIC row is the BANK SUBSIDIARY's call report, not the holding
     # company (JPM bank CET1 15.03% vs holdco 14.2%) — labeled per row.
