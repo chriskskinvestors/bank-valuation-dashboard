@@ -76,12 +76,13 @@ def test_annualize_ytd():
 
 
 def _hist_4q():
-    """Desc-sorted 4-quarter YTD history, all in fiscal 2025."""
+    """Desc-sorted 4-quarter YTD history, all in fiscal 2025. INTAN 0.0 is
+    explicit: an ABSENT intangibles field is n/a (REVIEW 2026-10-06), never 0."""
     return [
-        {"REPDTE": "20251231", "NETINC": 400.0, "EQTOT": 10000.0},  # Q4 YTD
-        {"REPDTE": "20250930", "NETINC": 300.0, "EQTOT": 9900.0},   # Q3 YTD
-        {"REPDTE": "20250630", "NETINC": 200.0, "EQTOT": 9800.0},   # Q2 YTD
-        {"REPDTE": "20250331", "NETINC": 100.0, "EQTOT": 9700.0},   # Q1 YTD
+        {"REPDTE": "20251231", "NETINC": 400.0, "EQTOT": 10000.0, "INTAN": 0.0},  # Q4 YTD
+        {"REPDTE": "20250930", "NETINC": 300.0, "EQTOT": 9900.0, "INTAN": 0.0},   # Q3 YTD
+        {"REPDTE": "20250630", "NETINC": 200.0, "EQTOT": 9800.0, "INTAN": 0.0},   # Q2 YTD
+        {"REPDTE": "20250331", "NETINC": 100.0, "EQTOT": 9700.0, "INTAN": 0.0},   # Q1 YTD
     ]
 
 
