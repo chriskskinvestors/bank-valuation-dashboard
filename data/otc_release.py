@@ -352,7 +352,7 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     default 24h read ceiling would drop the record after any >24h gap and
     force a full re-crawl + re-extraction per bank."""
     from data import cache as _cache
-    key = f"otc_release:v16:{ticker.upper()}"
+    key = f"otc_release:v17:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
     except Exception:
