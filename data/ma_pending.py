@@ -584,9 +584,13 @@ def _milestones(filer_cik, other_name: str, announce_date: str,
         filings, f_ok = iter_submission_filings(int(filer_cik))
         if not f_ok:
             return out, False
+    # Never the merger agreement itself (Item 1.01): its closing
+    # conditions read "receipt of all required regulatory approvals"
+    # (Northrim/PBCO showed an approval one day after announcing).
     cands = [f for f in filings
              if f.get("form") == "8-K" and f.get("date", "") > announce_date
-             and any(i in f.get("items", "") for i in ("5.07", "8.01", "7.01"))]
+             and any(i in f.get("items", "") for i in ("5.07", "8.01", "7.01"))
+             and "1.01" not in f.get("items", "")]
     fetch_failed = False
     for f in sorted(cands, key=lambda x: x["date"])[:_MILESTONE_SCAN_CAP]:
         time.sleep(_PAUSE_S)
@@ -611,6 +615,9 @@ def _milestones(filer_cik, other_name: str, announce_date: str,
     return out, not fetch_failed
 
 
+_CONDITION_CTX_RE = re.compile(
+    r"conditions?\s+(?:to|of|precedent|include)|subject\s+to|\(\d\)\s*$|"
+    r"\(\d\)[^()]{0,40}$", re.IGNORECASE)
 _TRANSCRIPT_RE = re.compile(r"transcript\s+of\s+(?:the\s+)?(?:conference\s+)?call|conference\s+call\s+transcript")
 _FORWARD_RE = re.compile(
     r"(?:expect\w*|anticipat\w*|subject|prior|pending|until|upon|condition\w*|"
@@ -627,6 +634,8 @@ def _approval_about(low: str, needle: str) -> bool:
         before = low[max(0, m.start() - 60):m.start()]
         if _FORWARD_RE.search(before.strip() + " "):
             continue
+        if _CONDITION_CTX_RE.search(low[max(0, m.start() - 300):m.start()]):
+            continue              # a closing condition, not an approval
         window = low[max(0, m.start() - 250):m.end() + 250]
         flat = " ".join(window.replace(",", " ").split())
         if (needle in flat) if " " in needle else token_in(needle, window):
@@ -833,12 +842,28 @@ def find_pending_deals(cik, subject_name: str,
     subj_filings, sf_ok = (iter_submission_filings(int(cik)) if cik
                            else ([], True))
     ok = ok1 and ok2 and ok3 and sf_ok
+    own_tickers = {ticker} if ticker else set()
+    if cik:
+        try:
+            from data.bank_universe import get_universe
+            own_tickers |= {t for t, i in get_universe().items()
+                            if int(i.get("cik") or 0) == int(cik)}
+        except Exception:
+            pass
     out = []
     for r in merged:
         # Complete the row: a counterparty outside the universe still has
         # an FDIC cert (valuation cells), and terms built without the
         # filer's ticker still get their implied price.
         terms = r.get("terms")
+        # The target's view of the deal: its terms name the COUNTERPARTY as
+        # the acquirer (EFSI's leg showed EFSI "acquiring" John Marshall at
+        # a 298% spread, 2026-10-07).
+        if (r["direction"] == "acquisition" and isinstance(terms, dict)
+                and terms.get("acq_ticker")
+                and terms["acq_ticker"] == r.get("counterparty_ticker")
+                and terms["acq_ticker"] not in own_tickers):
+            r["direction"] = "sale"
         if r["direction"] == "acquisition":
             tk = r.get("counterparty_ticker") or (
                 terms.get("tgt_ticker") if isinstance(terms, dict) else None)

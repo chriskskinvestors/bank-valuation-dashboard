@@ -2269,7 +2269,7 @@ class TestBoardFill2b(unittest.TestCase):
     def test_title_prefix_is_not_the_name(self):
         from data.ma_announcements import _clean_company_name
         self.assertEqual(_clean_company_name("ACQUISITION OF PSB HOLDINGS, INC"),
-                         "PSB HOLDINGS, INC")
+                         "PSB Holdings, Inc")
 
     def test_body_is_read_for_a_custom_named_exhibit_anchor(self):
         from data import ma_announcements as ma
@@ -2295,6 +2295,62 @@ class TestBoardFill2b(unittest.TestCase):
                                           "projectpioneerpressrelease.htm")
         self.assertIn("pebo-20260930.htm", seen)
         self.assertEqual(ma.extract_termination_fee(text), 30_660_000)
+
+
+class TestFlipAndConditions(unittest.TestCase):
+
+    def test_targets_view_is_a_sale(self):
+        from data import ma_pending
+        cash = [{"announce_date": "2026-09-08", "direction": "acquisition",
+                 "counterparty_name": "John Marshall Bancorp", "counterparty_ticker": "JMSB",
+                 "counterparty_cik": None, "value_usd": 253_000_000, "value_basis": "stated",
+                 "value_note": None, "target_cik": None, "announce_url": "u",
+                 "terms": {"exchange_ratio": 2.0, "consideration": "stock",
+                           "implied_price": 46.72, "acq_ticker": "JMSB", "tgt_ticker": "EFSI"}}]
+        uni = {"JMSB": {"name": "John Marshall Bancorp", "fdic_cert": 58243, "cik": 1710482},
+               "EFSI": {"name": "Eagle Financial Services", "fdic_cert": 6123, "cik": 880641}}
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.ma_pending.find_pending_wire", return_value=([], True)), \
+             patch("data.bank_universe.get_universe", return_value=uni), \
+             patch("data.bank_mapping.get_name", return_value="John Marshall Bancorp"), \
+             patch("data.ma_pending.fdic_cert_for_name", return_value=(None, None, True)), \
+             patch("data.ma_pending._wire_resolved", return_value=False), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            rows, ok = ma_pending.find_pending_deals(880641, "Eagle Financial Services",
+                                                     ticker="EFSI")
+        self.assertTrue(ok)
+        self.assertEqual([r["direction"] for r in rows], ["sale"])
+
+    def test_ui_never_shows_a_targets_view(self):
+        from ui.transactions import _pending_rows
+        rows = _pending_rows([
+            {"status": "pending", "announce_date": "2026-09-08", "buyer_ticker": "EFSI",
+             "target_ticker": "JMSB", "terms": {"acq_ticker": "JMSB"}},
+            {"status": "pending", "announce_date": "2026-09-08", "buyer_ticker": "JMSB",
+             "target_ticker": "EFSI", "terms": {"acq_ticker": "JMSB"}}])
+        self.assertEqual([r["buyer_ticker"] for r in rows], ["JMSB"])
+
+    def test_closing_condition_is_not_an_approval(self):
+        from data.ma_pending import _approval_about
+        cond = ("completion of the merger is subject to customary closing conditions, "
+                "including (1) approval by pbco shareholders, (2) receipt of the requisite "
+                "approval by northrim shareholders, (3) receipt of all required regulatory "
+                "approvals, including the approval of the federal reserve, for the pbco merger")
+        self.assertFalse(_approval_about(cond, "pbco"))
+        done = ("northrim announced that it has received all required regulatory approvals "
+                "for the merger with pbco financial corporation.")
+        self.assertTrue(_approval_about(done, "pbco"))
+
+    def test_all_caps_names_are_title_cased(self):
+        from data.ma_announcements import _clean_company_name
+        self.assertEqual(_clean_company_name("FIRST CAROLINA BANCSHARES CORPORATION"),
+                         "First Carolina Bancshares Corporation")
+        self.assertEqual(_clean_company_name("PSB HOLDINGS, INC"), "PSB Holdings, Inc")
+        self.assertEqual(_clean_company_name("blueharbor bank"), "blueharbor bank")
 
 
 if __name__ == "__main__":

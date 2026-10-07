@@ -142,7 +142,13 @@ def _pending_rows(deals: list[dict]) -> list[dict]:
             # a legend-parse artifact (live: EFSI "acquiring" EFSI at a 100%
             # "spread") — never shown.
             and not (d.get("target_ticker") and d.get("buyer_ticker")
-                     and d["target_ticker"] == d["buyer_ticker"])]
+                     and d["target_ticker"] == d["buyer_ticker"])
+            # The target's view of a deal (its terms name a different
+            # acquirer) is never a row: "Eagle acquiring John Marshall" at a
+            # 298% spread, 2026-10-07.
+            and not ((d.get("terms") or {}).get("acq_ticker") and d.get("buyer_ticker")
+                     and (d.get("terms") or {})["acq_ticker"] == d.get("target_ticker")
+                     and d["target_ticker"] != d["buyer_ticker"])]
     rows.sort(key=lambda d: d.get("announce_date") or "", reverse=True)
     return rows
 

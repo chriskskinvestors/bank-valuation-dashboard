@@ -1638,7 +1638,29 @@ def _clean_company_name(phrase: str) -> str:
     # 2026 release) is Citizens Bank of Kentucky: the trailing capitalized
     # run, when the phrase has a lowercase lead-in.
     p = _trailing_name(p)
-    return p.strip(" .,")
+    return _uncap(p.strip(" .,"))
+
+
+_KEEP_UPPER = {"N.A.", "NA", "USA", "US"}
+
+
+def _uncap(name: str) -> str:
+    """Title-case an ALL-CAPS name ("FIRST CAROLINA BANCSHARES CORPORATION"
+    -> "First Carolina Bancshares Corporation"); short tokens that read as
+    acronyms (PSB, CNB) stay upper, common suffixes are title-cased."""
+    letters = [c for c in name if c.isalpha()]
+    if len(letters) < 6 or any(c.islower() for c in letters):
+        return name
+    out = []
+    for w in name.split():
+        core = w.strip(",.")
+        if core.upper() in ("INC", "CO", "OF", "AND", "THE", "CORP", "LLC", "LTD"):
+            out.append(w.capitalize() if core.upper() != "LLC" else w)
+        elif len(core) <= 3 or core in _KEEP_UPPER:
+            out.append(w)
+        else:
+            out.append(w.capitalize())
+    return " ".join(out)
 
 
 def expand_defined_term(short: str, text: str) -> str:
