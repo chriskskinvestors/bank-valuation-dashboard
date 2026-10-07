@@ -155,7 +155,8 @@ def detail_figure(deal: dict) -> go.Figure:
                              customdata=[p["offer"] for p in s],
                              hovertemplate="offer %{y:.1f}  ($%{customdata:.2f})<extra></extra>"),
                   row=1, col=1)
-    fig.add_trace(go.Scatter(x=x, y=[p["acq"] / a0 * 100 for p in s], mode=mode,
+    if a0:
+      fig.add_trace(go.Scatter(x=x, y=[p["acq"] / a0 * 100 for p in s], mode=mode,
                              name=f"{deal['buyer_ticker']} (acquirer)",
                              line=dict(color=COLOR_NEUTRAL, width=1.5),
                              customdata=[p["acq"] for p in s],
