@@ -174,6 +174,9 @@ class TestForm4RenderCache(unittest.TestCase):
     def _seed(self, age):
         self.store.files[(f4.FORM4_CACHE_PREFIX, f"{self.CIK}.json")] = {
             "cik": self.CIK, "cached_at": _stamp(age),
+            # The 365-day walk's cutoff on the day the file was written.
+            "cutoff": (datetime.now() - age - timedelta(days=365)
+                       ).date().isoformat(),
             "transactions": self.CACHED}
 
     def test_thirty_hour_old_file_served_without_fetch(self):

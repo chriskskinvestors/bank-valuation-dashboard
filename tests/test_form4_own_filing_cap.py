@@ -378,9 +378,9 @@ class TestOwnFilingCap(_BacWalk):
         self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED[:30]])
 
     def test_cutoff_respected(self):
-        # months_back=3 from 2026-10-06 12:00 → cutoff 2026-07-08: the walk
-        # ends at feed row 16 (2026-07-10) with only 4 own filings found.
-        in_window = [a for a, d, _ in BAC_FEED if d >= "2026-07-08"]
+        # months_back=3 from 2026-10-06 12:00 → 91 days → cutoff 2026-07-07:
+        # the walk ends at feed row 16 (2026-07-10) with only 4 own filings.
+        in_window = [a for a, d, _ in BAC_FEED if d >= "2026-07-07"]
         self.assertEqual(len(in_window), 16)
 
         f4.fetch_insider_trades(BAC_CIK, months_back=3, force=True)
@@ -388,7 +388,7 @@ class TestOwnFilingCap(_BacWalk):
         self.assertEqual(self.fetched, in_window)
         self.assertEqual(self._kept(),
                          {a for a, d, c in BAC_FEED
-                          if c is OWN and d >= "2026-07-08"})
+                          if c is OWN and d >= "2026-07-07"})
         self.assertEqual(len(self._kept()), 4)
         self.assertIsNone(self.saved[f"{BAC_CIK}.json"]["complete_since"])
 
@@ -471,6 +471,7 @@ class TestCompleteSinceCacheObjects(unittest.TestCase):
 
     def test_fresh_cache_carries_the_field(self):
         hist = self._read({"cached_at": datetime.now().isoformat(),
+                           "cutoff": "2025-10-06",
                            "transactions": [dict(self.ROW)],
                            "complete_since": "2026-03-04"})
         self.assertEqual(hist["complete_since"], "2026-03-04")
@@ -478,6 +479,7 @@ class TestCompleteSinceCacheObjects(unittest.TestCase):
 
     def test_legacy_object_without_the_field(self):
         hist = self._read({"cached_at": datetime.now().isoformat(),
+                           "cutoff": "2025-10-06",
                            "transactions": [dict(self.ROW)]})
         self.assertIsNone(hist["complete_since"])
         self.assertEqual(len(hist["transactions"]), 1)
@@ -498,9 +500,11 @@ class TestCompleteSinceCacheObjects(unittest.TestCase):
 
     def test_firehose_merge_preserves_the_field(self):
         obj = self._poll({"cached_at": "2026-10-06T04:30:00",
+                          "cutoff": "2025-10-06",
                           "transactions": [dict(self.ROW)],
                           "complete_since": "2026-03-04"})
         self.assertEqual(obj["complete_since"], "2026-03-04")
+        self.assertEqual(obj["cutoff"], "2025-10-06")
         self.assertEqual(obj["cached_at"], "2026-10-06T04:30:00")
         self.assertEqual(len(obj["transactions"]), 3)  # 2 new rows + 1
 
