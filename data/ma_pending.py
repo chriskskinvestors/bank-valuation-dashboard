@@ -112,6 +112,21 @@ def _fdic_abbreviated(phrase: str) -> str | None:
     return " ".join(out) if out != words else None
 
 
+_FDIC_EXPAND = {v: k for k, v in _FDIC_ABBREV.items()}
+_FDIC_EXPAND.update({"corp": "corporation", "co": "company", "assn": "association",
+                     "natl": "national", "bk": "bank", "svgs": "savings"})
+_NAME_SUFFIX_WORDS = {"inc", "incorporated", "corp", "corporation", "co", "company",
+                      "ltd", "llc", "the"}
+
+
+def _fdic_norm(name: str) -> tuple[str, ...]:
+    """Comparable word tuple: lowered, FDIC abbreviations expanded, corporate
+    suffix words dropped."""
+    words = re.findall(r"[a-z0-9&]+", (name or "").lower())
+    words = [_FDIC_EXPAND.get(w, w) for w in words]
+    return tuple(w for w in words if w not in _NAME_SUFFIX_WORDS)
+
+
 def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
     """(cert, FDIC name, ok) for the ONE active FDIC-insured institution —
     or the one charter under a holding company — carrying this name
@@ -147,8 +162,13 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
             rows = [d["data"] for d in resp.json().get("data", [])]
         except Exception:
             return None, None, False
-        hits = [r for r in rows
-                if token_in(tok, f"{r.get('NAME') or ''} {r.get('NAMEHCR') or ''}".lower())]
+        # EXACT normalized equality on the searched field: the phrase
+        # search is a prefix match, and "First Carolina" (the captured short
+        # name of First Carolina Bancshares, First Bancorp 2026-07-14) hit
+        # the unrelated $3.4B First Carolina Bank — a 0.43x P/TBV on the
+        # board. A short name never links; the full name does.
+        want = _fdic_norm(phrase)
+        hits = [r for r in rows if _fdic_norm(r.get(field) or "") == want]
         if hits:
             break
     out = ((int(hits[0]["CERT"]), hits[0].get("NAME"), True) if len(hits) == 1
@@ -653,6 +673,17 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
     return rows, not fetch_failed
 
 
+def _dedupe_tok(name: str | None) -> str | None:
+    """Leg-dedupe key: the brand token, else (all-generic name — "First
+    Savings Financial Group, Inc", First Merchants 2026) the first two
+    words lowered, so the 425 row and the 8-K row of one deal collapse."""
+    tok = brand_token(name or "")
+    if tok:
+        return tok
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return " ".join(words[:2]) if len(words) >= 2 else None
+
+
 def find_pending_deals(cik, subject_name: str,
                        ticker: str | None = None) -> tuple[list[dict], bool]:
     """
@@ -666,10 +697,10 @@ def find_pending_deals(cik, subject_name: str,
     """
     rows_425, ok1 = _find_pending_425(cik, subject_name)
     cash, ok2 = find_open_announcements(cik, subject_name)
-    seen = {brand_token(r["counterparty_name"] or "") for r in rows_425}
+    seen = {_dedupe_tok(r["counterparty_name"]) for r in rows_425}
     merged = list(rows_425)
     for c in cash:
-        tok = brand_token(c["counterparty_name"] or "")
+        tok = _dedupe_tok(c["counterparty_name"])
         if tok and tok in seen:
             continue
         seen.add(tok)
