@@ -43,7 +43,8 @@ from datetime import datetime
 SNAPSHOT_KEY = "deal_comps_snapshot:v1"
 _PTBV_SANE = (0.2, 8.0)         # outside → basis-mismatch guard, n/a + flag
 _MAX_TBV_AGE_DAYS = 200
-_EMPTY_HISTORY_RETRY_WAITS = (15, 45)   # seconds before re-fetching a bank
+_EMPTY_HISTORY_RETRY_WAITS = (15, 45)
+_PENDING_RETRY_WAITS = (90,)              # seconds before the failed-bank retry   # seconds before re-fetching a bank
                                         # whose history came back empty
 
 
@@ -427,10 +428,20 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
     by_key: dict[tuple, dict] = {}
     failed: set = set()
     walked = 0
-    for b in banks:
+    import time as _time
+    # Second attempt for banks that failed the first sweep (SEC 429s are
+    # shared with every other job; a failed bank otherwise keeps its stale
+    # pending rows until the next pass — Northrim's condition-as-approval
+    # survived several passes that way, 2026-10-07).
+    queue = list(banks)
+    retry: list[dict] = []
+    attempt = 1
+    while queue:
+      for b in queue:
         cert, cik, ticker = b.get("cert"), b.get("cik"), b.get("ticker")
         if not cert or not (cik or ticker):
             continue
+        failed.discard(cert)
         try:
             rows, ok = pending_deal_rows(cik, ticker, b.get("name") or ticker,
                                          settled.get(cert, []))
@@ -438,9 +449,11 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
             print(f"[deal_comps] pending {ticker}: {type(e).__name__}: {e} "
                   "— previous pending rows kept")
             failed.add(cert)
+            retry.append(b)
             continue
         if not ok:
             failed.add(cert)
+            retry.append(b)
             continue
         walked += 1
         fresh: dict[tuple, dict] = {}
@@ -459,9 +472,17 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
             fresh[k] = _snapshot_row(b, cert, d, mult)
         if not ok:
             failed.add(cert)
+            retry.append(b)
             walked -= 1
             continue
         by_key.update(fresh)
+      if attempt >= 2 or not retry:
+          break
+      attempt += 1
+      queue, retry = retry, []
+      print(f"[deal_comps] pending pass: retrying {len(queue)} failed banks", flush=True)
+      for _w in _PENDING_RETRY_WAITS:
+          _time.sleep(_w)
     if not walked:
         print("[deal_comps] pending pass walked no bank — snapshot NOT written")
         return None

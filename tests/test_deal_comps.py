@@ -224,6 +224,10 @@ class TestPendingRefresh(unittest.TestCase):
     """refresh_pending_snapshot: only pending rows change; a bank whose
     pending leg fails keeps its previous pending rows; settled rows net."""
 
+    def setUp(self):
+        p = patch("data.deal_comps._PENDING_RETRY_WAITS", ())
+        p.start(); self.addCleanup(p.stop)
+
     _MULT = {"tbv_usd": None, "tbv_basis": None, "tbv_asof": None,
              "p_tbv": None, "price_assets": None, "core_dep_premium": None,
              "comp_assets": None, "flagged": None, "ttm_eps": None,
@@ -256,8 +260,10 @@ class TestPendingRefresh(unittest.TestCase):
                       counterparty={"name": "blueharbor bank", "cert": 9})
         fresh["completion_date"] = None
         mock_pend.side_effect = [([fresh], True),      # bank A: fresh row
-                                 ([], False)]           # bank B: leg failed
-        snap = refresh_pending_snapshot([
+                                 ([], False),           # bank B: leg failed
+                                 ([], False)]           # bank B: retry failed too
+        with patch("data.deal_comps._PENDING_RETRY_WAITS", ()):
+          snap = refresh_pending_snapshot([
             {"ticker": "A", "name": "A Corp", "cert": 1, "cik": 10},
             {"ticker": "B", "name": "B Corp", "cert": 2, "cik": 20}])
         names = sorted((r["target_name"], r["status"]) for r in snap["deals"])
@@ -272,6 +278,27 @@ class TestPendingRefresh(unittest.TestCase):
         self.assertEqual([s["counterparty"]["name"] for s in settled],
                          ["Old Target Bank"])
         mock_cput.assert_called_once()
+
+    @patch("data.cache.put")
+    @patch("data.deal_comps.compute_multiples")
+    @patch("data.ma_history.pending_deal_rows")
+    @patch("data.deal_comps.get_comps_snapshot")
+    def test_failed_bank_is_retried_once(self, mock_snap, mock_pend, mock_cm, mock_cput):
+        from data.deal_comps import refresh_pending_snapshot
+        mock_snap.return_value = self._snap()
+        mock_cm.return_value = (dict(self._MULT), True)
+        fresh = _deal(status="pending", announce_date="2026-10-06",
+                      announce_url="https://x/fresh/y.htm",
+                      counterparty={"name": "Retry Bank", "cert": 9})
+        fresh["completion_date"] = None
+        # bank A fails first (SEC 429), succeeds on the retry
+        mock_pend.side_effect = [([], False), ([fresh], True)]
+        with patch("data.deal_comps._PENDING_RETRY_WAITS", ()):
+            snap = refresh_pending_snapshot([{"ticker": "A", "name": "A", "cert": 1, "cik": 10}])
+        self.assertEqual(mock_pend.call_count, 2)
+        self.assertEqual(snap["pending_banks_failed"], [])
+        self.assertIn("Retry Bank", [r["target_name"] for r in snap["deals"]])
+        self.assertNotIn("Stale Pending Bancorp", [r["target_name"] for r in snap["deals"]])
 
     @patch("data.cache.put")
     @patch("data.ma_history.pending_deal_rows", return_value=([], False))
