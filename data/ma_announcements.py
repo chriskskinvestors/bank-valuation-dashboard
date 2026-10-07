@@ -131,6 +131,17 @@ def brand_token(name: str) -> str | None:
     return None
 
 
+def row_token(name: str | None) -> str | None:
+    """Per-deal key for a counterparty name: the brand token, else (an
+    all-generic name — "Citizens National Corporation", Peoples 2026-04-21)
+    its first two words lowered."""
+    tok = brand_token(name or "")
+    if tok:
+        return tok
+    words = re.findall(r"[a-z0-9]+", (name or "").lower())
+    return " ".join(words[:2]) if len(words) >= 2 else None
+
+
 def token_in(tok: str | None, text: str) -> bool:
     """Word-boundary presence of a brand token in already-lowered text."""
     if not tok:
@@ -323,7 +334,8 @@ def _trailing_name(phrase: str) -> str:
     words = phrase.split()
     keep: list[str] = []
     for w in reversed(words):
-        if w[:1].isupper() or w.lower() in _NAME_CONNECTORS or w == "&":
+        if (w[:1].isupper() or w.lower() in _NAME_CONNECTORS or w == "&"
+                or re.match(r"^\d{1,2}(?:st|nd|rd|th)$", w)):
             keep.append(w)
         else:
             break
@@ -601,6 +613,11 @@ _IMPLIED_PRICE_DECK_RE = re.compile(
     r"\$\s?" + _NUM, re.IGNORECASE)
 # "the aggregate transaction value is approximately $728.1 million, or
 # $43.75 per share" (Peoples/Capital 2026-09-30).
+# Deck forms: "Indicative price per share: $19.52 per FSRL share" (Colony),
+# "$ 49.85 implied per share transaction value" (Bank First).
+_IMPLIED_PRICE_DECK2_RE = re.compile(
+    r"(?:indicative|implied)\s+(?:transaction\s+)?price\s+per\s+share:?\s*\$\s?" + _NUM
+    + r"|\$\s?" + _NUM + r"\s+implied\s+per\s+share", re.IGNORECASE)
 _IMPLIED_PRICE_OR_RE = re.compile(
     r"(?:million|billion),?\s+or\s+(?:approximately\s+|about\s+)?\$\s?" + _NUM
     + r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
@@ -738,7 +755,58 @@ def extract_implied_price(text: str) -> float | None:
     found = [round(_num(m.group(1)), 4)
              for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE, _IMPLIED_PRICE_OR_RE)
              for m in rx.finditer(text)]
+    found += [round(_num(next(g for g in m.groups() if g)), 4)
+              for m in _IMPLIED_PRICE_DECK2_RE.finditer(text)]
     return _single(found)
+
+
+# ── Deck-stated multiples (owner 2026-10-07: "the decks have all this
+# info"). Read AS STATED from the acquirer's investor presentation, shown
+# marked ᵈ only where our own computation is n/a. Forms (verbatim, live):
+#   "Price / Tangible Book Value per Share: 162%" (Colony/First Reliance)
+#   "163% of Tangible Book Value per share" (Bank First/PSB)
+#   "135% of tangible book value" (First Financial/First Illinois)
+#   "14.1x LTM Earnings per share" / "13.0x LTM earnings" / "11.6x LTM Earnings"
+#   "Core Deposit Premium (2): 8.5%" / "8.0 % Premium on core deposits³" /
+#   "Core Deposit Premium – 3.8%" (First Financial Bancorp/Finward)
+# Forward multiples ("Price / 2027E Earnings") are never read.
+_DECK_PTBV_RE = re.compile(
+    r"(\d{2,3})\s?%\s+of\s+tangible\s+book\s+value|"
+    r"price\s*/\s*tangible\s+book\s+value(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*(\d{2,3})\s?%|"
+    r"(?:price\s*/\s*(?:tangible\s+book(?:\s+value)?|tbv)|p\s*/\s*tbv)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*"
+    r"(\d\.\d{1,2})\s?x\b", re.IGNORECASE)
+_DECK_PE_RE = re.compile(
+    r"(\d{1,2}\.\d)\s?x\s+ltm\s+(?:earnings|eps)|"
+    r"price\s*/\s*ltm\s+(?:earnings|eps)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*(\d{1,2}\.\d)\s?x",
+    re.IGNORECASE)
+_DECK_CDP_RE = re.compile(
+    r"core\s+deposit\s+premium\s*(?:\(\d\)|[¹²³⁴⁵])?\s*[:–-]?\s*(\d{1,2}\.\d)\s?%|"
+    r"(\d{1,2}\.\d)\s?%\s+premium\s+on\s+core\s+deposits",
+    re.IGNORECASE)
+
+
+def extract_deck_metrics(text: str) -> dict:
+    """{deck_p_tbv (x), deck_p_e_ltm (x), deck_core_dep_premium (fraction)}
+    as STATED in the corpus's investor presentation; each None unless one
+    distinct plausible value."""
+    ptbv = []
+    for m in _DECK_PTBV_RE.finditer(text):
+        pct, pct2, x = m.groups()
+        v = float(x) if x else float(pct or pct2) / 100.0
+        if 0.3 <= v <= 6.0:
+            ptbv.append(round(v, 2))
+    pe = []
+    for m in _DECK_PE_RE.finditer(text):
+        v = float(next(g for g in m.groups() if g))
+        if 3.0 <= v <= 60.0:
+            pe.append(round(v, 1))
+    cdp = []
+    for m in _DECK_CDP_RE.finditer(text):
+        v = float(next(g for g in m.groups() if g)) / 100.0
+        if 0.0 <= v <= 0.30:
+            cdp.append(round(v, 4))
+    return {"deck_p_tbv": _single(ptbv), "deck_p_e_ltm": _single(pe),
+            "deck_core_dep_premium": _single(cdp)}
 
 
 def extract_premium_pct(text: str) -> float | None:
@@ -926,6 +994,7 @@ def extract_terms(text: str) -> dict:
         "expected_close_phrase": phrase,
         "expected_close_date": close_date,
         "termination_fee_usd": extract_termination_fee(text),
+        **extract_deck_metrics(text),
     }
 
 
@@ -1407,11 +1476,18 @@ def resolve_announcement_wire(acquirer_ticker: str, target_name: str,
 # announce date, and deal value via the increment-A/B machinery.
 
 _MERGER_PHRASE = '"Agreement and Plan of Merger"'
+_SUBJECT_LEGEND_RE = re.compile(
+    r"Subject\s+Compan(?:y|ies)\s*:?\s*(.{3,80}?)\s*(?:Commission\s+File|"
+    r"\(Commission|Registration\s+No|P\.?O\.?\s+Box|\d{3,5}\s+[A-Z][a-z]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Broadway|Drive|Dr|Boulevard|Blvd))",
+    re.IGNORECASE)
 _ANN_SCAN_CAP = 8               # announcement-candidate documents read per
                                 # filer (newest first); the oldest per
                                 # counterparty is the announcement
 _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
-_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press", re.IGNORECASE)
+# Exhibits worth reading with the primary document: EX-99 press releases
+# and investor decks under any file name ("projectpioneerinvestorde.htm",
+# Peoples 2026-09-30, carried the deck metrics and was skipped).
+_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentation|deck", re.IGNORECASE)
 _EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
 
 
@@ -1524,6 +1600,10 @@ def _clean_company_name(phrase: str) -> str:
     # Inc." — Isabella's 2026-06-12 release) is the LAST party; "Bank of
     # Commerce and Trust Company" (no comma) is one name.
     p = re.split(r",\s+and\s+", p)[-1]
+    # "an exceptional franchise in Citizens Bank of Kentucky" (Peoples' Q1
+    # 2026 release) is Citizens Bank of Kentucky: the trailing capitalized
+    # run, when the phrase has a lowercase lead-in.
+    p = _trailing_name(p)
     return p.strip(" .,")
 
 
@@ -1643,6 +1723,19 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         pairs = [(_clean_company_name(n), t) for n, t in _pr_ticker_pairs(text)
                  if t not in self_tickers]
         pairs = [(n, t) for n, t in pairs if n and not _is_self(n)]
+        # A Rule 425 legend on the exhibit names the counterparty exactly
+        # ("Subject Company: Citizens National Corporation", Peoples
+        # 2026-04-21 — the acquire object was "an exceptional franchise in
+        # Citizens Bank of Kentucky"). Self as subject = we are the target.
+        lm = _SUBJECT_LEGEND_RE.search(text)
+        legend_cp = _clean_company_name(lm.group(1)) if lm else None
+        if legend_cp and (_is_self(legend_cp) or _digits_in_name(legend_cp)
+                          or len(legend_cp.split()) > 8):
+            legend_cp = None
+        if legend_cp:
+            counterparty = legend_cp
+            ltok = brand_token(legend_cp)
+            cp_ticker = next((t for n, t in pairs if brand_token(n) == ltok), None)
         # The counterparty is the non-self pair the text names MOST (at
         # least twice): a peer table in an investor exhibit lists other
         # banks' pairs once (Farmers' 2026-01-13 8-K put Hingham, a peer,
@@ -1654,7 +1747,9 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
             cnt = len(re.findall(r"\b" + re.escape(tok) + r"\b", low_text)) if tok else 0
             if cnt >= 2:
                 ranked.append((cnt, n, t))
-        if ranked:
+        if counterparty:
+            pass                  # the legend settled it
+        elif ranked:
             ranked.sort(key=lambda x: -x[0])
             _cnt, counterparty, cp_ticker = ranked[0]
         else:
@@ -1702,7 +1797,7 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         # row, never a guess.
         if _digits_in_name(counterparty) or len(counterparty.split()) > 8:
             continue
-        ct = brand_token(counterparty)
+        ct = row_token(counterparty)
         if not ct:
             continue
         if ct in by_tok and by_tok[ct]["announce_date"] <= ann["file_date"]:
@@ -1779,7 +1874,7 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
         print(f"[ma_announce] index {adsh}: {type(e).__name__}: {e}")
         return base, is_http_404(e)
     names = list(dict.fromkeys(names))
-    wanted = [n for n in names if _EX99_NAME_RE.search(n) and n != primary_doc][:2]
+    wanted = [n for n in names if _EX99_NAME_RE.search(n) and n != primary_doc][:3]
     # The directory listing also carries EDGAR's site-nav links (index.htm,
     # search.htm, R1.htm ...): the filing's own documents share the primary
     # document's filename stem (tmb-20250224x8k.htm / tmb-20250224xex99d1.htm,

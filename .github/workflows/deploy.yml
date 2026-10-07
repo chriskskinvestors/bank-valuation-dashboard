@@ -259,7 +259,9 @@ jobs:
               # refresh-insider: first "Job timeout audit" run (2026-09-24)
               # found 4 of its last 12 executions killed at the 1800s limit
               # (max observed 1984s, p50 1675s) — the same silent class as
-              # refresh-sod. refresh-13f: 5400s vs a 3869s run = 1.4x headroom.
+              # refresh-sod. refresh-13f: the 2026-10-06 full pass ran ~19s/bank
+              # (~11,300s for 597 banks) — 9000s timed out at bank ~490 and
+              # only finished on the resume-retry; 14400s = 1.3x headroom.
               # 2026-09-28 audit: refresh-insider's slowest run grew to
               # 2684s (1.3x headroom at 3600) — 5400s buys room while the
               # growth itself is investigated; poll-events was killed once at
@@ -267,7 +269,7 @@ jobs:
               elif [ "$job" = "refresh-insider" ]; then
                 EXTRA="--task-timeout=5400"
               elif [ "$job" = "refresh-13f" ]; then
-                EXTRA="--task-timeout=9000"
+                EXTRA="--task-timeout=14400"
               # poll-events: the 2026-09-28 audit found 1 of 9 executions
               # killed at the 900s limit (max 1018s, p50 567s). Its 780s
               # polling budget (jobs/poll_events._TASK_BUDGET_S) already stops

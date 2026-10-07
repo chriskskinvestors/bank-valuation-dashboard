@@ -63,6 +63,7 @@ from data.ma_announcements import (
     _wire_story_text,
     brand_token,
     build_terms,
+    row_token,
     _GENERIC as _GENERIC_WORDS,
     extract_exchange_ratio,
     extract_stated_value,
@@ -140,8 +141,7 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
     TBV would be a plausible-wrong denominator. ok=False = FDIC unreachable
     (never cache that)."""
     phrase = _CORP_SUFFIX_RE.sub("", (name or "").strip()).strip(" ,.")
-    tok = brand_token(phrase)
-    if not tok or len(phrase) < 4:
+    if len(phrase) < 4 or len(phrase.split()) < 2 and not brand_token(phrase):
         return None, None, True
     key = phrase.lower()
     if key in _FDIC_NAME_CACHE:
@@ -577,14 +577,39 @@ def _milestones(filer_cik, other_name: str, announce_date: str,
                  if " " in needle else token_in(needle, low))
         if not named:
             continue
+        if _TRANSCRIPT_RE.search(low[:2000]):
+            continue              # a call transcript is not a milestone source
         url = (f"https://www.sec.gov/Archives/edgar/data/{int(filer_cik)}/"
                f"{f['accession'].replace('-', '')}/{f['doc']}")
         if "5.07" in f.get("items", "") and _VOTE_RE.search(text) \
                 and not out["votes"]:
             out["votes"].append({"side": side, "date": f["date"], "url": url})
-        if _REG_APPROVAL_RE.search(text) and not out["regulatory_approval"]:
+        if not out["regulatory_approval"] and _approval_about(low, needle):
             out["regulatory_approval"] = {"date": f["date"], "url": url}
     return out, not fetch_failed
+
+
+_TRANSCRIPT_RE = re.compile(r"transcript\s+of\s+(?:the\s+)?(?:conference\s+)?call|conference\s+call\s+transcript")
+_FORWARD_RE = re.compile(
+    r"(?:expect\w*|anticipat\w*|subject|prior|pending|until|upon|condition\w*|"
+    r"will|would|must|required?|need\w*)\s+(?:to\s+)?(?:the\s+)?(?:receipt\s+of\s+)?$")
+
+
+def _approval_about(low: str, needle: str) -> bool:
+    """A "received ... regulatory approvals" sentence that names the
+    counterparty within 250 chars and is not forward-looking ("expect to
+    receive", "subject to receipt of"). Peoples' 2026-10-05 Capital call
+    transcript discussed the Citizens approvals; it showed on the Capital
+    row as that deal's approval."""
+    for m in _REG_APPROVAL_RE.finditer(low):
+        before = low[max(0, m.start() - 60):m.start()]
+        if _FORWARD_RE.search(before.strip() + " "):
+            continue
+        window = low[max(0, m.start() - 250):m.end() + 250]
+        flat = " ".join(window.replace(",", " ").split())
+        if (needle in flat) if " " in needle else token_in(needle, window):
+            return True
+    return False
 
 
 def _merge_milestones(a: dict, b: dict) -> dict:
@@ -694,11 +719,7 @@ def _dedupe_tok(name: str | None) -> str | None:
     """Leg-dedupe key: the brand token, else (all-generic name — "First
     Savings Financial Group, Inc", First Merchants 2026) the first two
     words lowered, so the 425 row and the 8-K row of one deal collapse."""
-    tok = brand_token(name or "")
-    if tok:
-        return tok
-    words = re.findall(r"[a-z0-9]+", (name or "").lower())
-    return " ".join(words[:2]) if len(words) >= 2 else None
+    return row_token(name)
 
 
 def find_pending_deals(cik, subject_name: str,
