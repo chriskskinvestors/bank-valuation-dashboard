@@ -187,7 +187,9 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                 hovertemplate="%{text}<br>%{x} @ $%{y:.2f}<extra>Sell</extra>"))
         if complete_since:
             # No markers before coverage is "not fetched", not "no trades".
-            fig.add_vrect(x0=hist_px["date"].min(),
+            # get_history's cache hit rebuilds `date` from JSON as str, so
+            # coerce both ends (a str/Timestamp mix crashes plotly's annotation).
+            fig.add_vrect(x0=pd.Timestamp(hist_px["date"].min()),
                           x1=pd.Timestamp(complete_since),
                           fillcolor="gray", opacity=0.12, line_width=0,
                           annotation_text=trunc_flag,
