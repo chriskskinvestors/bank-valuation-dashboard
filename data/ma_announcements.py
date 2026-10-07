@@ -211,9 +211,9 @@ _RATIO_CONVERT_RE = re.compile(
 # this form prices to: 0.3803 × $72.90 + $11.36).
 _RATIO_MIXED_RE = re.compile(
     r"(?:receive|issue)\s+(\d{1,2}(?:\.\d{1,4})?)\s+(?:of\s+a\s+share|shares?)"
-    r"\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+and\s+\$\s?"
+    r"\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+(?:common\s+)?stock\s+(?:and|plus)\s+\$\s?"
     r"[\d,]+(?:\.\d+)?\s+in\s+cash\s+for\s+each\s+(?:outstanding\s+)?"
-    r"(?:share\s+of\s+)?([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+"
+    r"(?:share\s+of\s+)?([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s?)?\s+"
     r"(?:common\s+stock|shares?|stock)")
 # Merger-agreement summary with par values: "each share of common stock, par
 # value $0.01 per share, of CrossFirst ("CrossFirst Common Stock") ... will be
@@ -290,6 +290,18 @@ _SHARES_MAX_AGE_DAYS = 200      # cover count must be within 2 quarters
 _PRICE_MAX_AGE_DAYS = 10        # last close must be a normal trading gap
 
 
+# Deck / agreement-summary forms with unnamed sides (tickers come from the
+# filing's own pairs): "0.3470 x Exchange ratio" (Bank First/PSB deck),
+# "0.94 CBAN shares per FSRL share" (Colony/First Reliance deck), "the
+# Exchange Ratio is estimated to be 0.1415" (Isabella/Grand River).
+_RATIO_DECK_X_RE = re.compile(r"\b(\d\.\d{2,4})\s?x\s+exchange\s+ratio\b", re.IGNORECASE)
+_RATIO_TICKER_PER_RE = re.compile(
+    r"\b(\d{1,2}\.\d{1,4})\s+[A-Z]{2,6}\s+shares?\s+per\s+[A-Z]{2,6}\s+share\b")
+_RATIO_ESTIMATED_RE = re.compile(
+    r"exchange\s+ratio\s+is\s+estimated\s+to\s+be\s+(?:approximately\s+)?"
+    r"(\d{1,2}\.\d{1,4})", re.IGNORECASE)
+
+
 def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
     """(ratio, acquirer-side phrase, target-side phrase) from the PR's
     exchange-ratio sentence, or None. Several DISTINCT ratios -> None."""
@@ -316,6 +328,9 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     for m in _RATIO_OF_BARE_RE.finditer(text):
         found.append((float(m.group(1)), "", ""))
+    for rx in (_RATIO_DECK_X_RE, _RATIO_TICKER_PER_RE, _RATIO_ESTIMATED_RE):
+        for m in rx.finditer(text):
+            found.append((float(m.group(1)), "", ""))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
     # Several forms agreeing on one ratio: prefer the one that names sides.
@@ -689,7 +704,8 @@ _ALL_STOCK_RE = re.compile(
 _ALL_CASH_RE = re.compile(r"all[-\s]cash|100\s?%\s+cash", re.IGNORECASE)
 _ELECTION_RE = re.compile(
     r"(?:shareholder|stockholder|holder)s?['’]?s?\s+election|elect(?:ion)?\s+"
-    r"to\s+receive|may\s+elect", re.IGNORECASE)
+    r"to\s+receive|may\s+elect|elections?\s+(?:will\s+be|are)\s+subject\s+to\s+"
+    r"proration|at\s+the\s+election\s+of\s+(?:each|the\s+holder)", re.IGNORECASE)
 # A stock leg the ratio regexes could not parse: "exchange ratio" wording or
 # "0.3803 ... shares" near the cash. Cash + an unparsed stock leg must NOT
 # classify as all-cash (the Prosperity/Stellar $11.36 would have shown as
@@ -704,10 +720,12 @@ _FIXED_SHARES_RE = re.compile(
     r"issue\s+[\d,]{5,}\s+shares\s+of\s+[A-Z][\w.,&'\- ]{1,60}?\s+(?:common\s+)?"
     r"stock\s+for\s+all\s+(?:of\s+the\s+)?outstanding\s+shares", re.IGNORECASE)
 _MIX_STOCK_CASH_RE = re.compile(
-    r"(\d{1,3})\s?%\s+(?:common\s+)?stock\s*(?:and|/)\s*(\d{1,3})\s?%\s+cash",
+    r"(\d{1,3})\s?%\s+(?:common\s+)?stock\s*(?:and|/|\|)\s*(\d{1,3})\s?%\s+cash|"
+    r"(\d{1,3})\s?%\s+of\s+the\s+shares\s+of\s+[^.]{0,60}?exchanged\s+for\s+the\s+"
+    r"per\s+share\s+stock\s+consideration\s+and\s+(\d{1,3})\s?%\s+of\s+the\s+shares",
     re.IGNORECASE)
 _MIX_CASH_STOCK_RE = re.compile(
-    r"(\d{1,3})\s?%\s+cash\s*(?:and|/)\s*(\d{1,3})\s?%\s+(?:common\s+)?stock",
+    r"(\d{1,3})\s?%\s+cash\s*(?:and|/|\|)\s*(\d{1,3})\s?%\s+(?:common\s+)?stock",
     re.IGNORECASE)
 _PRORATION_RE = re.compile(
     r"(\d{1,3})\s?%\s+of\s+[^.]{0,80}?receive\s+the\s+cash\s+consideration"
@@ -725,11 +743,16 @@ def _single(values) -> float | int | None:
     return vals.pop() if len(vals) == 1 else None
 
 
+_CASH_ESTIMATED_RE = re.compile(
+    r"per\s+share\s+cash\s+consideration\s+(?:to\s+be\s+paid\s+)?is\s+estimated\s+"
+    r"to\s+be\s+(?:approximately\s+)?\$\s?" + _NUM, re.IGNORECASE)
+
+
 def extract_cash_per_share(text: str) -> float | None:
     """Cash consideration per TARGET share, or None. "cash in lieu of
     fractional shares" carries no dollar figure and never matches."""
     found = []
-    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE):
+    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE, _CASH_ESTIMATED_RE):
         for m in rx.finditer(text):
             found.append(round(_num(next(g for g in m.groups() if g)), 4))
     return _single(found)
@@ -911,16 +934,21 @@ def extract_expected_close(text: str) -> tuple[str | None, str | None]:
     return dated[0]
 
 
+def _g(m, i: int) -> str:
+    """The i-th non-empty group of a multi-alternative match."""
+    return [g for g in m.groups() if g is not None][i]
+
+
 def extract_mix_pcts(text: str) -> tuple[float, float] | None:
     """(stock %, cash %) as stated ("75% stock and 25% cash"; a proration
     "25% ... cash consideration and 75% ... stock consideration"), or None."""
     found = set()
     for m in _MIX_STOCK_CASH_RE.finditer(text):
-        found.add((float(m.group(1)), float(m.group(2))))
+        found.add((float(_g(m, 0)), float(_g(m, 1))))
     for m in _MIX_CASH_STOCK_RE.finditer(text):
-        found.add((float(m.group(2)), float(m.group(1))))
+        found.add((float(_g(m, 1)), float(_g(m, 0))))
     for m in _PRORATION_RE.finditer(text):
-        found.add((float(m.group(2)), float(m.group(1))))
+        found.add((float(_g(m, 1)), float(_g(m, 0))))
     found = {p for p in found if abs(p[0] + p[1] - 100) < 0.01}
     return found.pop() if len(found) == 1 else None
 
@@ -1489,6 +1517,9 @@ _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
 # Peoples 2026-09-30, carried the deck metrics and was skipped).
 _EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentation|deck", re.IGNORECASE)
 _EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
+# An 8-K body's file name: inline-XBRL "pebo-20260930.htm", "d947601d8k.htm",
+# "tm2618469d1_8k.htm", "hbt-20260810x8k.htm".
+_BODY_NAME_RE = re.compile(r"(?:^[a-z]{1,8}-\d{8}(?:x8k)?\.htm$|8k\.htm$)", re.IGNORECASE)
 
 
 def _split_merger_groups(hits: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -1595,6 +1626,9 @@ def _clean_company_name(phrase: str) -> str:
     if len(pieces) > 1 and len(pieces[-1].split()) >= 2:
         p = pieces[-1]
     p = re.sub(r"^\s*(?:about|the)\s+", "", p.strip(), flags=re.IGNORECASE)
+    # "ACQUISITION OF PSB HOLDINGS, INC" (a title captured as the name)
+    p = re.sub(r"^\s*(?:acquisition|merger|combination)\s+(?:of|with)\s+", "", p,
+               flags=re.IGNORECASE)
     p = _STATE_TAIL_RE.sub("", p)
     # A joint-announcement list ("Isabella Bank, and Grand River Commerce,
     # Inc." — Isabella's 2026-06-12 release) is the LAST party; "Bank of
@@ -1888,8 +1922,19 @@ def _accession_text(cik, adsh: str, primary_doc: str) -> tuple[str | None, bool]
         return k >= 5
     body = next((n for n in names
                  if n != primary_doc and not n.endswith("-index.htm")
-                 and not _EXHIBIT_NAME_RE.search(n) and _stem_match(n)), None)
-    if body and _EXHIBIT_NAME_RE.search(primary_doc or ""):
+                 and not _EXHIBIT_NAME_RE.search(n) and not _EX99_NAME_RE.search(n)
+                 and _stem_match(n)), None)
+    anchor_is_exhibit = bool(_EXHIBIT_NAME_RE.search(primary_doc or "")
+                             or _EX99_NAME_RE.search(primary_doc or ""))
+    if body is None and anchor_is_exhibit:
+        # A press release / deck under a custom name shares no stem with the
+        # 8-K body ("projectpioneerpressrelease.htm" vs "pebo-20260930.htm",
+        # Peoples 2026-09-30 — the body carried the $30.66 million fee).
+        body = next((n for n in names
+                     if n != primary_doc and _BODY_NAME_RE.search(n)
+                     and not _EXHIBIT_NAME_RE.search(n)
+                     and not _EX99_NAME_RE.search(n)), None)
+    if body and anchor_is_exhibit:
         wanted.insert(0, body)
     for n in wanted:
         time.sleep(_PAUSE_S)
