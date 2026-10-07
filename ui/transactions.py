@@ -478,6 +478,10 @@ def _render_recent_deals():
     except Exception:
         pass
 
+    # Spread tracker under the board (owner 2026-10-07).
+    from ui.spread_tracker import render_spread_tracker
+    render_spread_tracker()
+
 
 # ── By Bank (per-bank summary) ──────────────────────────────────────────────────
 

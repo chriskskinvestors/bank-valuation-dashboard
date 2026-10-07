@@ -44,6 +44,19 @@ def _universe_banks() -> list[dict]:
     return banks
 
 
+def _refresh_spreads(snap: dict) -> None:
+    """Rebuild the spread-tracker history from the snapshot just written
+    (data/deal_spreads). A failure here never fails the snapshot job."""
+    try:
+        from data.deal_spreads import refresh_spread_histories
+        built = refresh_spread_histories(snap)
+        if built is not None:
+            print(f"✓ spread tracker: {len(built['deals'])} deals charted, "
+                  f"{len(built['skipped'])} not chartable", flush=True)
+    except Exception as e:
+        print(f"✗ spread tracker build failed: {type(e).__name__}: {e}", flush=True)
+
+
 def main_pending() -> int:
     from data.deal_comps import refresh_pending_snapshot
     banks = _universe_banks()
@@ -54,6 +67,7 @@ def main_pending() -> int:
         print("✗ pending pass wrote nothing — the previous snapshot still "
               "serves", flush=True)
         return 1
+    _refresh_spreads(snap)
     pending = sum(1 for r in snap["deals"] if r.get("status") == "pending")
     print(f"✓ pending pass: {pending} pending deals spliced into the "
           f"{snap['deals_total']}-deal snapshot in {time.time() - t0:.0f}s "
@@ -96,6 +110,7 @@ def main() -> int:
               f"yielding <{_MIN_UNIVERSE_DEALS} deals) — the previous snapshot "
               "still serves", flush=True)
         return 1
+    _refresh_spreads(snap)
     print(f"✓ snapshot: {snap['deals_total']} deals "
           f"({snap['deals_priced']} priced) across "
           f"{snap['banks_covered']} banks in {time.time() - t0:.0f}s",
