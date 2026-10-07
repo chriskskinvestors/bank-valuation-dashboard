@@ -470,7 +470,7 @@ class TestFailedFetch(_BacWalk):
         return self.saved[f"{BAC_CIK}.json"]["complete_since"]
 
     def test_failure_in_a_walk_that_otherwise_finished(self):
-        # months_back=3: 16 in-window rows (cutoff 2026-07-08), 4 own (rows 2,
+        # months_back=3: 16 in-window rows (cutoff 2026-07-07), 4 own (rows 2,
         # 3, 8, 15) — complete (None) when all read. Row 15 (OWN, 2026-07-17)
         # fails both tries: the 3M window (from 2026-07-07) is missing it, so
         # coverage starts 2026-07-18. Before: None, 3 filings, looked whole.
