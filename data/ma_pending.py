@@ -56,6 +56,7 @@ from data.ma_announcements import (
     _accession_text,
     _clean_company_name,
     _close_before,
+    _digits_in_name,
     _shares_outstanding_asof,
     _wire_releases,
     _wire_story_text,
@@ -252,7 +253,7 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     # Presentation 251 John Marshall Bancorp, Inc", "Cincinnati, Ohio - July
     # 21, 2026. First Financial Bancorp" — both live on the first universe
     # board, the latter a self-deal) is unreadable: no row, never a guess.
-    if re.search(r"\d", subject_co) or len(subject_co.split()) > 8:
+    if _digits_in_name(subject_co) or len(subject_co.split()) > 8:
         return [], not fetch_failed
     # Self-detection by IDENTITY, not name tokens: the FDIC bank name and
     # the holdco name can differ in brand token ("Tri Counties Bank" vs
@@ -486,7 +487,7 @@ def _wire_resolved(ticker: str | None, needles: list[str],
         if (q.get("published_at") or "")[:10] <= announce_date:
             continue
         title = q.get("title") or ""
-        if not _WIRE_DONE_TITLE_RE.search(title):
+        if not _WIRE_RESOLVED_TITLE_RE.search(title):
             continue
         blob = f"{title} {q.get('text') or ''}".lower()
         if any(_needle_in(n, blob) for n in needles):
@@ -563,6 +564,12 @@ _WIRE_DEAL_TITLE_RE = re.compile(
 _WIRE_DONE_TITLE_RE = re.compile(
     r"(?i)\b(?:complet(?:es|ed|ion)|closes?|closing\s+of|terminat(?:es|ed|ion)|"
     r"receives?\s+(?:all\s+)?(?:regulatory|shareholder|stockholder)|final\s+exchange)")
+# RESOLUTION on the wire is completion / termination wording only — an
+# approvals release is a milestone, not a close ("Peoples Bancorp Inc. and
+# Capital Bancorp, Inc. Receive Regulatory Approvals", 2026-10-05, dropped
+# the live deal from the board).
+_WIRE_RESOLVED_TITLE_RE = re.compile(
+    r"(?i)\b(?:complet(?:es|ed|ion)|closes|closing\s+of|terminat(?:es|ed|ion))")
 _WIRE_PENDING_SCAN = 4
 
 
@@ -612,7 +619,7 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
             # target too, and "acquisition of Munster-based Finward" put
             # FNWD on the board acquiring itself (live 2026-07-21).
             if (not t or t == self_tok or token_in(self_tok, cand.lower())
-                    or re.search(r"\d", cand) or len(cand.split()) > 8):
+                    or _digits_in_name(cand) or len(cand.split()) > 8):
                 continue
             if len(cand) > len(best.get(t, "")):
                 best[t] = cand
@@ -626,7 +633,7 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         counterparty = best[ct]
         later = [q for q in prs
                  if (q.get("published_at") or "")[:10] > d
-                 and _WIRE_DONE_TITLE_RE.search(q.get("title") or "")
+                 and _WIRE_RESOLVED_TITLE_RE.search(q.get("title") or "")
                  and token_in(ct, f"{q.get('title') or ''} {q.get('text') or ''}".lower())]
         if later:
             continue              # closed, terminated or otherwise resolved
