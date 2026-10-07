@@ -263,7 +263,10 @@ class TestJointFilingDedupe(unittest.TestCase):
         # The per-bank ledger path (fetch_insider_trades on a fresh cache)
         # returns deduped rows; the cache object itself stays raw.
         from data import form4_client
-        cache = {"cached_at": datetime.now().isoformat(), "transactions": [
+        cache = {"cached_at": datetime.now().isoformat(),
+                 "cutoff": (datetime.now() - timedelta(days=365)
+                            ).date().isoformat(),
+                 "transactions": [
             self._amal(self.W_STATES, "0000902664-26-003826"),
             self._amal(self.W_UNITED, "0000902664-26-003825"),
         ]}

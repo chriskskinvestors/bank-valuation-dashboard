@@ -140,8 +140,8 @@ class TestImmutableExtractionCachesAnyAge(_IsolatedCache):
         payload = {"figures": {"diluted_eps": 1.25}, "_preliminary": True,
                    "accession": _F8K["accession_dash"], "filed": _F8K["date"],
                    "period": "2026-03-31", "doc": "ex991.htm"}
-        cache.put(f"earnings_8k:v5:{_F8K['accession']}", payload)
-        self._age(f"earnings_8k:v5:{_F8K['accession']}", 72 * 3600)
+        cache.put(f"earnings_8k:v6:{_F8K['accession']}", payload)
+        self._age(f"earnings_8k:v6:{_F8K['accession']}", 72 * 3600)
         # Supersession (a filed 10-Q / release age) is a read-time display
         # rule pinned in test_preliminary_banner_staleness — held off here so
         # this pin never depends on today's date.

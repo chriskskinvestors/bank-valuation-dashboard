@@ -40,6 +40,15 @@ def _window_aggregates(txs: list[dict], days: int, today=None) -> dict:
             "buyers": len(buyers), "sellers": len(sellers)}
 
 
+def _window_count(txs: list[dict], days: int, today=None) -> int:
+    """Transactions of every code DATED in the trailing window. A filing in
+    the fetch window can carry older trades (late filers), so the fetched
+    row count is not a window count."""
+    today = today or datetime.now().date()
+    cutoff = (today - timedelta(days=days)).isoformat()
+    return sum(1 for t in txs if (t.get("date") or "") >= cutoff)
+
+
 def _window_truncated(days: int, complete_since: str | None, today=None) -> bool:
     """True when a trailing `days` window starts before the fetched Form 4
     coverage (fetch_insider_history's complete_since) — its aggregate would
@@ -116,7 +125,7 @@ def render_insider_activity(ticker: str, show_title: bool = True):
         _6m_items = [(label, _na) for label, _ in _6m_items]
     ledger("Summary", [
         ("Total Txns (12M)",
-         _na if complete_since else str(summary["total_transactions"])),
+         _na if complete_since else str(_window_count(txs, 365))),
         *_6m_items,
     ])
 
@@ -178,7 +187,9 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                 hovertemplate="%{text}<br>%{x} @ $%{y:.2f}<extra>Sell</extra>"))
         if complete_since:
             # No markers before coverage is "not fetched", not "no trades".
-            fig.add_vrect(x0=hist_px["date"].min(),
+            # get_history's cache hit rebuilds `date` from JSON as str, so
+            # coerce both ends (a str/Timestamp mix crashes plotly's annotation).
+            fig.add_vrect(x0=pd.Timestamp(hist_px["date"].min()),
                           x1=pd.Timestamp(complete_since),
                           fillcolor="gray", opacity=0.12, line_width=0,
                           annotation_text=trunc_flag,

@@ -51,6 +51,8 @@ SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 # filing at fetch 57 (27 foreign: fund-stake 10%-owner filings), GS at 38,
 # WFC at 36, every other bank by 31 — ~90 added requests on a ~17.6k sweep.
 # Even if every such bank hit the bound, the sweep would grow ~61%.
+# The 365-day window (was 360) adds ~1.4% more in-window filings for banks
+# under both bounds; banks that reach a bound walk exactly as before.
 _MAX_OWN_FILINGS = 30
 _MAX_XML_FETCHES = 75
 
@@ -384,6 +386,14 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
     incomplete. None = the whole window was read (a cache object written
     before the field existed also reads None).
 
+    The window is 365 * months_back // 12 days of FILING dates — 91/182/365
+    for 3/6/12, the UI's 3M/6M/1Y windows exactly. A trade is filed on or
+    after its transaction date, so every trade dated inside the UI window
+    is in a filing the walk saw (a 30-day month made 12 months 360 days,
+    dropping the 1Y window's first 5 days). A cached object is served only
+    if its stored `cutoff` reaches back that far — objects without one were
+    written by the 360-day walk.
+
     force=True skips the cached-file read and refetches + persists — the
     warming job's path (a fresh file would otherwise be handed back unrefreshed).
     """
@@ -391,9 +401,13 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
     if not cik:
         return empty
 
+    cutoff_date = (datetime.now()
+                   - timedelta(days=365 * months_back // 12)).date()
+
     # Check cache (skipped when forced)
     cached = None if force else load_json(FORM4_CACHE_PREFIX, f"{cik}.json")
-    if _is_fresh(cached) and "transactions" in cached:
+    if (_is_fresh(cached) and "transactions" in cached
+            and (cached.get("cutoff") or "9999") <= cutoff_date.isoformat()):
         return {"transactions": dedupe_joint_filings(cached["transactions"]),
                 "complete_since": cached.get("complete_since")}
 
@@ -416,8 +430,6 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
     report_dates = recent.get("reportDate", [])
     acceptances = recent.get("acceptanceDateTime", [])
     primary_docs = recent.get("primaryDocument", [])
-
-    cutoff_date = (datetime.now() - timedelta(days=30 * months_back)).date()
 
     # Collect Form 4 accessions within window
     form4_accessions = []
@@ -508,6 +520,7 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
         save_json(FORM4_CACHE_PREFIX, f"{cik}.json", {
             "cik": cik,
             "cached_at": datetime.now().isoformat(),
+            "cutoff": cutoff_date.isoformat(),
             "transactions": all_transactions,
             "complete_since": complete_since,
         })
@@ -706,6 +719,7 @@ def poll_form4_firehose(ticker_ciks: dict, pages: int = 2) -> tuple[int, int]:
                 "cached_at": (cached or {}).get("cached_at") or _EPOCH_STAMP,
                 "transactions": merged,
                 # The sweep's coverage still holds — delta rows are newer.
+                "cutoff": (cached or {}).get("cutoff"),
                 "complete_since": (cached or {}).get("complete_since"),
             })
         except Exception:
@@ -759,7 +773,6 @@ def summarize_insider_activity(transactions: list[dict]) -> dict:
     """Compute summary stats: 6M buy/sell totals, net $ flow, by-insider summary."""
     if not transactions:
         return {
-            "total_transactions": 0,
             "buys_6m_usd": 0, "sells_6m_usd": 0, "net_flow_6m_usd": 0,
             "buyer_count_6m": 0, "seller_count_6m": 0,
             "insiders": [],
@@ -808,7 +821,6 @@ def summarize_insider_activity(transactions: list[dict]) -> dict:
         by_insider[name]["txn_count"] += 1
 
     return {
-        "total_transactions": len(transactions),
         "buys_6m_usd": buys_6m_usd,
         "sells_6m_usd": sells_6m_usd,
         "net_flow_6m_usd": buys_6m_usd - sells_6m_usd,

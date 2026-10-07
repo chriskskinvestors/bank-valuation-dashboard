@@ -17,7 +17,7 @@ Cost: ~1 EDGAR full-text search + up to ~25 filer info-table fetches (plus
 prior-quarter lookups for QoQ change status) per bank — tens of thousands of
 SEC requests universe-wide. The shared data/http retry policy paces individual
 calls; the inter-ticker sleep below keeps the aggregate under SEC's guidance.
-Create the Cloud Run job with a LONG task timeout (e.g. --task-timeout=5400);
+Create the Cloud Run job with a LONG task timeout (deploy.yml sets 14400s);
 the default 900s will not fit a full pass (the refresh-capital lesson).
 
 Exit codes:
@@ -91,7 +91,7 @@ def backfill(quarters: list[str]) -> int:
 
 
 # A file this young was written by this execution (or its failed first
-# attempt): skip it, so the Cloud Run retry after a 5400s timeout resumes
+# attempt): skip it, so the Cloud Run retry after a task timeout resumes
 # where the first attempt stopped instead of recrawling from the top and
 # timing out at the same point. force=True applies to everything older.
 _RESUME_WINDOW_S = 12 * 3600

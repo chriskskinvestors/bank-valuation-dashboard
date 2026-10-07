@@ -107,6 +107,8 @@ def render_transactions():
 _ARB_PRICE_MAX_AGE_S = 4 * 86400    # a warm quote older than a long weekend
                                     # is not a live arb input — n/a
 _PE_MAX = 100.0                     # P/E beyond this is a denominator artifact
+_DECK_NOTE = ("as stated in the acquirer's investor presentation — our own "
+              "computation is n/a for this deal")
 _FEE_MAX_SHARE = 0.25               # termination fee ÷ deal value beyond this
                                     # is an extraction artifact
 
@@ -246,6 +248,9 @@ def _render_recent_deals():
             ptbv_cell = f"{p:.2f}x"
         elif d.get("flagged"):
             ptbv_note, ptbv_cell = d["flagged"], "n/a†"
+        elif terms.get("deck_p_tbv"):
+            ptbv_note = _DECK_NOTE
+            ptbv_cell = f"{terms['deck_p_tbv']:.2f}xᵈ"
         else:
             ptbv_note, ptbv_cell = None, "—"
         pe = d.get("p_e")
@@ -259,6 +264,13 @@ def _render_recent_deals():
             pe, pe_cell = None, "n/a†"
         else:
             pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
+        if pe_cell == "—" and terms.get("deck_p_e_ltm"):
+            pe_cell, pe_note = f"{terms['deck_p_e_ltm']:.1f}xᵈ", _DECK_NOTE + " (LTM)"
+        cdp = d.get("core_dep_premium")
+        cdp_cell, cdp_note = _fmt_pct(cdp), None
+        if cdp is None and terms.get("deck_core_dep_premium") is not None:
+            cdp_cell = f"{terms['deck_core_dep_premium'] * 100:.1f}%ᵈ"
+            cdp_note = _DECK_NOTE
         assets = d.get("comp_assets") or d.get("target_assets")
 
         # ── Merger arb ──
@@ -320,7 +332,7 @@ def _render_recent_deals():
                                    "the announcement" if prem is not None else None)
             + _td(ptbv_cell, title=ptbv_note)
             + _td(_fmt_pct(d.get("price_assets")))
-            + _td(_fmt_pct(d.get("core_dep_premium")))
+            + _td(cdp_cell, title=cdp_note)
             + _td(pe_cell, title=pe_note)
             + _td(_fmt_bn(assets))
             + _td(_fmt_px(tgt_px), title=tgt_px_note)
@@ -350,6 +362,11 @@ def _render_recent_deals():
                              if d.get("price_assets") is not None else None),
             "Core deposit premium (%)": (d["core_dep_premium"] * 100
                                          if d.get("core_dep_premium") is not None else None),
+            "P/TBV (deck, x)": terms.get("deck_p_tbv"),
+            "P/E LTM (deck, x)": terms.get("deck_p_e_ltm"),
+            "Core deposit premium (deck, %)": (terms["deck_core_dep_premium"] * 100
+                                               if terms.get("deck_core_dep_premium") is not None
+                                               else None),
             "P/E at announce (x)": pe, "TTM EPS at announce ($)": eps,
             "EPS as of": d.get("eps_asof"),
             "Target assets ($)": assets,
@@ -401,7 +418,8 @@ def _render_recent_deals():
                "formula: implied \$/sh = ratio × acquirer close before announce "
                "+ cash; deal value = ratio × close × target shares) · "
                "† = outside a plausibility band (P/TBV 0.2x–8x, P/E ≤ 100x, "
-               "fee ≤ 25% of value — hover) · premium only as "
+               "fee ≤ 25% of value — hover) · ᵈ = as stated in the acquirer's "
+               "investor presentation where our own computation is n/a · premium only as "
                "stated in the release, never from our own prices · P/E = "
                "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
                "announce (n/m = loss) · arb: implied offer at the acquirer's "
@@ -426,6 +444,8 @@ def _render_recent_deals():
                               "Deal value ($)": "usd", "Premium as stated (%)": "pct",
                               "P/TBV (x)": "x", "P/Assets (%)": "pct",
                               "Core deposit premium (%)": "pct",
+                              "P/TBV (deck, x)": "x", "P/E LTM (deck, x)": "x",
+                              "Core deposit premium (deck, %)": "pct",
                               "P/E at announce (x)": "x",
                               "TTM EPS at announce ($)": "usd2",
                               "Target assets ($)": "usd", "Target price ($)": "usd2",
