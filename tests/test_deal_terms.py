@@ -1759,6 +1759,32 @@ class TestBoardGates(unittest.TestCase):
         self.assertEqual(g.call_args.kwargs["since"], "2026-01-13")
         self.assertIn("until", g.call_args.kwargs)
 
+    def test_offering_close_with_deal_boilerplate_is_not_a_resolution(self):
+        from data.ma_pending import _wire_resolved
+        prs = [{"title": "First Merchants Corporation Announces Closing of Subordinated "
+                         "Notes Offering",
+                "published_at": "2026-09-25 16:05:00",
+                "text": "First Merchants Corporation (Nasdaq: FRME) today announced the "
+                        "closing of its offering of $100 million of Notes. First Merchants "
+                        "has a pending acquisition of First Savings Financial Group, Inc. "
+                        "expected to close in the fourth quarter of 2026."},
+               {"title": "First Merchants Corporation Completes Acquisition of First "
+                         "Savings Financial Group, Inc.",
+                "published_at": "2026-12-01 08:00:00", "text": ""}]
+        n = ["first savings financial group inc"]
+        with patch("data.ma_pending._wire_releases_since", return_value=prs[:1]):
+            self.assertFalse(_wire_resolved("FRME", n, "2025-09-25"))
+        with patch("data.ma_pending._wire_releases_since", return_value=prs):
+            self.assertTrue(_wire_resolved("FRME", n, "2025-09-25"))
+        # body proximity counts too
+        body = [{"title": "Independent Bank Corporation Announces Completion of the HCB "
+                          "Financial Corp. and Highpoint Community Bank Acquisition",
+                 "published_at": "2026-07-01 08:00:00",
+                 "text": "today announced that it has completed its previously announced "
+                         "acquisition of HCB Financial Corp."}]
+        with patch("data.ma_pending._wire_releases_since", return_value=body):
+            self.assertTrue(_wire_resolved("IBCP", ["hcb"], "2026-03-18"))
+
     def test_wire_completion_resolves_an_edgar_row(self):
         from data.ma_pending import _wire_resolved
         prs = [{"title": "U.S. Bancorp Completes Acquisition of BTIG",
@@ -1870,6 +1896,13 @@ class TestBoardGates(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual([(r["counterparty_name"], r["counterparty_ticker"]) for r in rows],
                          [("Grand River Commerce, Inc", "GNRV")])
+
+    def test_purpose_clause_ends_the_title_object(self):
+        from data.ma_announcements import _ACQUIRE_OBJ_RE, _clean_company_name
+        title = ("First Bancorp Announces Acquisition of First Carolina Bancshares "
+                 "Corporation to Expand its South Carolina Presence. ")
+        self.assertEqual([_clean_company_name(m.group(1)) for m in _ACQUIRE_OBJ_RE.finditer(title)],
+                         ["First Carolina Bancshares Corporation"])
 
     def test_expected_to_be_completed_is_not_a_past_deal(self):
         from data.ma_announcements import _PAST_DEAL_RE
