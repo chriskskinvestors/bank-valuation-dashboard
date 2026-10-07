@@ -178,6 +178,28 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
     return out
 
 
+def _universe_info(ticker: str | None) -> tuple[int | None, int | None] | None:
+    """(cert, cik) of a universe ticker, or None."""
+    if not ticker:
+        return None
+    try:
+        from data.bank_universe import get_universe
+        info = get_universe().get(ticker) or {}
+    except Exception:
+        return None
+    if not info:
+        return None
+    try:
+        cert = int(info.get("fdic_cert") or 0) or None
+    except (TypeError, ValueError):
+        cert = None
+    try:
+        cik = int(info.get("cik") or 0) or None
+    except (TypeError, ValueError):
+        cik = None
+    return cert, cik
+
+
 def _universe_match(name: str):
     """(ticker, cert, cik) for a live universe bank whose NAME shares the
     brand token — unique hit only, else Nones (n/a over a wrong link).
@@ -757,7 +779,7 @@ def find_pending_deals(cik, subject_name: str,
                 cp_tick = pair_tick
                 cp_cert = int(info.get("fdic_cert") or 0) or None
                 cp_cik = int(info.get("cik") or 0) or None
-        if not cp_tick:
+        if not cp_tick and not pair_tick:
             cp_tick, cp_cert, cp_cik = _universe_match(c["counterparty_name"])
         # A universe-matched counterparty shows under its universe name and
         # ticker (the acquire-verb capture was "Capital" for Capital
@@ -766,19 +788,31 @@ def find_pending_deals(cik, subject_name: str,
         if cp_tick:
             from data.bank_mapping import get_name
             cp_name = get_name(cp_tick) or cp_name
-            if isinstance(c.get("terms"), dict) and not c["terms"].get("tgt_ticker"):
+            # The filing's own pair ticker is authoritative for the
+            # per-share side; a ratio side's brand match never overrides it.
+            if isinstance(c.get("terms"), dict) and (
+                    pair_tick or not c["terms"].get("tgt_ticker")):
                 c["terms"]["tgt_ticker"] = cp_tick
+        elif pair_tick:
+            # An OTC pair outside the universe ("(OTCQX: PSBQ)") is still the
+            # exact ticker — never replaced by a brand-token name match.
+            if isinstance(c.get("terms"), dict) and c["direction"] == "acquisition":
+                c["terms"]["tgt_ticker"] = pair_tick
         merged.append({"announce_date": c["announce_date"],
                        "direction": c["direction"],
                        "counterparty_name": cp_name,
-                       "counterparty_ticker": cp_tick,
+                       "counterparty_ticker": cp_tick or pair_tick,
                        "counterparty_cert": cp_cert,
                        "counterparty_cik": cp_cik,
                        "value_usd": c["value_usd"],
                        "value_basis": c["value_basis"],
                        "value_note": c["value_note"],
-                       "target_cik": c["target_cik"] or cp_cik
-                       if c["direction"] == "sale" else c["target_cik"],
+                       # The target of an acquisition IS the counterparty
+                       # (None here cost every SEC-filer target its P/E
+                       # and holdco TBV on the board).
+                       "target_cik": (c["target_cik"] or cp_cik
+                                      if c["direction"] == "acquisition"
+                                      else c["target_cik"]),
                        "announce_url": c["announce_url"],
                        "terms": c.get("terms")})
     ok3 = True
@@ -804,12 +838,25 @@ def find_pending_deals(cik, subject_name: str,
         # Complete the row: a counterparty outside the universe still has
         # an FDIC cert (valuation cells), and terms built without the
         # filer's ticker still get their implied price.
+        terms = r.get("terms")
+        if r["direction"] == "acquisition":
+            tk = r.get("counterparty_ticker") or (
+                terms.get("tgt_ticker") if isinstance(terms, dict) else None)
+            if tk and not (r.get("counterparty_cert") and r.get("counterparty_cik")):
+                # By TICKER: "Eagle" names several universe banks, the
+                # filing's "(NASDAQ: EFSI)" names one.
+                info = _universe_info(tk)
+                if info:
+                    r["counterparty_ticker"] = tk
+                    r["counterparty_cert"] = r.get("counterparty_cert") or info[0]
+                    r["counterparty_cik"] = r.get("counterparty_cik") or info[1]
+            if not r.get("target_cik") and r.get("counterparty_cik"):
+                r["target_cik"] = r["counterparty_cik"]
         if r["direction"] == "acquisition" and not r.get("counterparty_cert"):
             c_cert, _c_name, c_ok = fdic_cert_for_name(r["counterparty_name"])
             ok = ok and c_ok
             if c_cert:
                 r["counterparty_cert"] = c_cert
-        terms = r.get("terms")
         if (isinstance(terms, dict) and terms.get("implied_price") is None
                 and (terms.get("exchange_ratio") or terms.get("cash_per_share"))):
             own = ticker
@@ -819,6 +866,21 @@ def find_pending_deals(cik, subject_name: str,
             if not fill_implied_price(terms, r["announce_date"], acq_tick=acq_t,
                                       tgt_tick=tgt_t, close_lookup=_close_before):
                 ok = False
+        # Deal value from the implied price × the target's cover shares
+        # (Finward: implied $47.90, value blank -> every multiple blank).
+        if (r["direction"] == "acquisition" and r.get("value_usd") is None
+                and isinstance(terms, dict) and terms.get("implied_price")
+                and r.get("target_cik")):
+            shares, sh_end, s_ok = _shares_outstanding_asof(r["target_cik"],
+                                                            r["announce_date"])
+            ok = ok and s_ok
+            if shares:
+                ip = terms["implied_price"]
+                r["value_usd"] = int(round(shares * ip))
+                r["value_basis"] = "computed"
+                r["value_note"] = (f"computed: implied ${ip:,.2f}/sh "
+                                   f"({terms.get('implied_price_basis') or 'n/a'}) × "
+                                   f"{shares:,} target shares ({sh_end})")
         if r.get("source") == "wire" and not cik:
             # No EDGAR to consult: the wire completion check above and the
             # FDIC completion dedupe in ma_history are this row's gates.

@@ -2139,5 +2139,163 @@ class TestMilestoneAttribution(unittest.TestCase):
         self.assertIsNone(out["regulatory_approval"])
 
 
+# ── Board fill round 2 (owner 2026-10-07, circled blanks) ──────────────────
+class TestBoardFill2(unittest.TestCase):
+
+    def test_deck_and_estimate_ratio_forms(self):
+        from data.ma_announcements import extract_terms
+        bfc = ("▪ 100% Stock consideration ▪ 0.3470 x Exchange ratio Consideration ▪ "
+               "$ 202.9 million in aggregate² ▪ $ 49.85 implied per share transaction value")
+        t = extract_terms(bfc)
+        self.assertEqual((t["exchange_ratio"], t["consideration"]), (0.347, "stock"))
+        colony = ("Under the terms of the agreement, each First Reliance shareholder will "
+                  "have the right to elect to receive either $19.75 in cash or 0.94 of a "
+                  "share of Colony's common stock in exchange for each share of First "
+                  "Reliance common stock. • Consideration mix: 80% stock | 20% cash • 0.94 "
+                  "CBAN shares per FSRL share or $19.75 per share in cash")
+        t = extract_terms(colony)
+        self.assertEqual((t["exchange_ratio"], t["cash_per_share"], t["consideration"],
+                          t["stock_pct"], t["cash_pct"]),
+                         (0.94, 19.75, "election", 80.0, 20.0))
+        isba = ("Elections will be subject to proration procedures whereby 65% of the "
+                "shares of Grand River common stock will be exchanged for the Per Share "
+                "Stock Consideration and 35% of the shares of Grand River common stock will "
+                "be exchanged for the Cash Per Share Consideration. Based on the assumption "
+                "of 9,122,073 number of shares of Grand River common stock issued and "
+                "outstanding as of the Effective Time, the Per Share Cash Consideration to "
+                "be paid is estimated to be approximately $5.72 and the Exchange Ratio is "
+                "estimated to be 0.1415.")
+        t = extract_terms(isba)
+        self.assertEqual((t["exchange_ratio"], t["cash_per_share"], t["consideration"],
+                          t["stock_pct"], t["cash_pct"]),
+                         (0.1415, 5.72, "election", 65.0, 35.0))
+
+    def test_election_is_never_priced_as_mixed(self):
+        # 0.94 × $20.00 × 80% + $19.75 × 20% = 15.04 + 3.95 = 18.99 (blended),
+        # never 0.94 × 20.00 + 19.75 = 38.55 (mixed).
+        from data.ma_announcements import implied_offer
+        t = {"consideration": "election", "exchange_ratio": 0.94, "cash_per_share": 19.75,
+             "stock_pct": 80.0, "cash_pct": 20.0}
+        v, _note = implied_offer(t, 20.0, basis_label="CBAN")
+        self.assertEqual(v, 18.99)
+
+    def _pending(self, cash, universe, shares=(None, None, True),
+                 close=(None, None, True)):
+        from data import ma_pending
+        with patch("data.ma_pending._find_pending_425", return_value=([], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.ma_pending.find_pending_wire", return_value=([], True)), \
+             patch("data.bank_universe.get_universe", return_value=universe), \
+             patch("data.bank_mapping.get_name", side_effect=lambda t: {
+                 "EFSI": "Eagle Financial Services", "FNWD": "Finward Bancorp"}.get(t)), \
+             patch("data.ma_pending.fdic_cert_for_name", return_value=(None, None, True)), \
+             patch("data.ma_pending._shares_outstanding_asof", return_value=shares), \
+             patch("data.ma_pending._close_before", return_value=close), \
+             patch("data.ma_pending._wire_resolved", return_value=False), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            return ma_pending.find_pending_deals(1710482, "John Marshall Bank", ticker="JMSB")
+
+    def test_pair_ticker_resolves_cert_and_cik_when_the_name_is_ambiguous(self):
+        uni = {"EFSI": {"name": "Eagle Financial Services", "fdic_cert": 6229, "cik": 880641},
+               "EGBN": {"name": "Eagle Bancorp", "fdic_cert": 34742, "cik": 1050441},
+               "JMSB": {"name": "John Marshall Bancorp", "fdic_cert": 58243, "cik": 1710482}}
+        cash = [{"announce_date": "2026-09-08", "direction": "acquisition",
+                 "counterparty_name": "Eagle Financial Services, Inc",
+                 "counterparty_ticker": "EFSI", "counterparty_cik": None,
+                 "value_usd": 253_000_000, "value_basis": "stated", "value_note": None,
+                 "target_cik": None, "announce_url": "u",
+                 "terms": {"exchange_ratio": 2.0, "consideration": "stock",
+                           "implied_price": 46.72, "tgt_ticker": "EGBN"}}]
+        rows, ok = self._pending(cash, uni)
+        self.assertTrue(ok)
+        r = rows[0]
+        self.assertEqual((r["counterparty_ticker"], r["counterparty_cert"],
+                          r["counterparty_cik"], r["target_cik"]),
+                         ("EFSI", 6229, 880641, 880641))
+        self.assertEqual(r["terms"]["tgt_ticker"], "EFSI")   # pair beats brand match
+
+    def test_otc_pair_outside_the_universe_is_kept(self):
+        # PSB Holdings (OTCQX: PSBQ) is not in the universe; a brand match on
+        # "Peoples" (its bank) must never replace the filing's own ticker.
+        uni = {"PEBO": {"name": "Peoples Bancorp", "fdic_cert": 6826, "cik": 318300}}
+        cash = [{"announce_date": "2026-05-19", "direction": "acquisition",
+                 "counterparty_name": "PSB Holdings", "counterparty_ticker": "PSBQ",
+                 "counterparty_cik": None, "value_usd": 202_900_000,
+                 "value_basis": "stated", "value_note": None, "target_cik": None,
+                 "announce_url": "u",
+                 "terms": {"exchange_ratio": 0.347, "consideration": "stock",
+                           "implied_price": 49.85, "tgt_ticker": "PEBO"}}]
+        rows, ok = self._pending(cash, uni)
+        self.assertTrue(ok)
+        self.assertEqual((rows[0]["counterparty_ticker"], rows[0]["terms"]["tgt_ticker"],
+                          rows[0]["counterparty_cik"]), ("PSBQ", "PSBQ", None))
+
+    def test_missing_value_is_implied_times_cover_shares(self):
+        # Finward: implied $47.90 (1.35 × FFBC $35.48), 4,321,000 cover shares
+        # -> 47.90 × 4,321,000 = $206,975,900.
+        uni = {"FNWD": {"name": "Finward Bancorp", "fdic_cert": 29523, "cik": 919864}}
+        cash = [{"announce_date": "2026-07-21", "direction": "acquisition",
+                 "counterparty_name": "Finward Bancorp", "counterparty_ticker": "FNWD",
+                 "counterparty_cik": None, "value_usd": None, "value_basis": None,
+                 "value_note": None, "target_cik": None, "announce_url": "u",
+                 "terms": {"exchange_ratio": 1.35, "consideration": "stock",
+                           "implied_price": 47.90, "implied_price_basis": "computed",
+                           "tgt_ticker": "FNWD"}}]
+        rows, ok = self._pending(cash, uni, shares=(4_321_000, "2026-06-30", True))
+        self.assertTrue(ok)
+        self.assertEqual((rows[0]["value_usd"], rows[0]["value_basis"]),
+                         (206_975_900, "computed"))
+        self.assertIn("4,321,000 target shares (2026-06-30)", rows[0]["value_note"])
+
+
+class TestBoardFill2b(unittest.TestCase):
+
+    def test_plus_mixed_form(self):
+        # Peoples/Citizens National 2026-04-21: 2.10 × $33.52 + $8.00 = $78.39,
+        # the stated per-share value.
+        from data.ma_announcements import extract_terms
+        t = extract_terms("shareholders of Citizens will receive 2.10 shares of Peoples "
+                          "common stock plus $8.00 in cash for each share of Citizens’ "
+                          "common stock. Based on Peoples’ 20-day volume-weighted average "
+                          "price per share of $33.52 on April 20, 2026, the aggregate deal "
+                          "value is approximately $76.6 million, or $78.39 per share.")
+        self.assertEqual((t["exchange_ratio"], t["cash_per_share"], t["consideration"],
+                          t["implied_price_stated"]), (2.1, 8.0, "mixed", 78.39))
+        self.assertEqual(round(2.10 * 33.52 + 8.00, 2), 78.39)
+
+    def test_title_prefix_is_not_the_name(self):
+        from data.ma_announcements import _clean_company_name
+        self.assertEqual(_clean_company_name("ACQUISITION OF PSB HOLDINGS, INC"),
+                         "PSB HOLDINGS, INC")
+
+    def test_body_is_read_for_a_custom_named_exhibit_anchor(self):
+        from data import ma_announcements as ma
+        index = ('<a href="/Archives/edgar/data/318300/000031830026000205/pebo-20260930.htm">'
+                 '<a href="/Archives/edgar/data/318300/000031830026000205/projectpioneerpressrelease.htm">'
+                 '<a href="/Archives/edgar/data/318300/000031830026000205/projectpioneerinvestorde.htm">'
+                 '<a href="/Archives/edgar/data/318300/000031830026000205/exhibit21pioneer.htm">')
+        docs = {"projectpioneerpressrelease.htm": "Peoples will acquire Capital.",
+                "pebo-20260930.htm": "Capital will be required to pay Peoples a "
+                                     "termination fee of $30.66 million."}
+        seen = []
+        def fetch(cik, adsh, name):
+            seen.append(name)
+            return docs.get(name, ""), True
+        from unittest.mock import MagicMock
+        resp = MagicMock(); resp.text = index; resp.status_code = 200
+        resp.raise_for_status = MagicMock()
+        with patch("data.ma_announcements._fetch_doc_text", side_effect=fetch), \
+             patch("data.ma_announcements._get_429_aware", return_value=resp), \
+             patch("data.ma_announcements.requests.get", return_value=resp), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            text, ok = ma._accession_text(318300, "0000318300-26-000205",
+                                          "projectpioneerpressrelease.htm")
+        self.assertIn("pebo-20260930.htm", seen)
+        self.assertEqual(ma.extract_termination_fee(text), 30_660_000)
+
+
 if __name__ == "__main__":
     unittest.main()
