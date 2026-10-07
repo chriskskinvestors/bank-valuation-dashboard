@@ -2353,5 +2353,24 @@ class TestFlipAndConditions(unittest.TestCase):
         self.assertEqual(_clean_company_name("blueharbor bank"), "blueharbor bank")
 
 
+class TestWireStoryUnreachable(unittest.TestCase):
+
+    def test_unreachable_story_is_skipped_not_a_failure(self):
+        from data import ma_pending
+        prs = [{"title": "John Marshall Bancorp and Eagle Financial Services Announce "
+                         "Definitive Merger Agreement",
+                "url": "https://www.businesswire.com/news/home/x/en/", "published_at":
+                "2026-09-08 08:00:00", "text": "John Marshall Bancorp"}]
+        import datetime as _dt
+
+        class _FakeDate(_dt.date):
+            @classmethod
+            def today(cls):
+                return _dt.date(2026, 10, 7)
+        with patch("data.ma_pending._wire_releases", return_value=prs),              patch("data.ma_pending._wire_story_text", return_value=None),              patch("data.events.fmp_news._is_subject", return_value=True),              patch("data.ma_pending.time.sleep", lambda *_: None),              patch("data.ma_pending.date", _FakeDate):
+            rows, ok = ma_pending.find_pending_wire("JMSB", "John Marshall Bancorp")
+        self.assertEqual((rows, ok), ([], True))
+
+
 if __name__ == "__main__":
     unittest.main()

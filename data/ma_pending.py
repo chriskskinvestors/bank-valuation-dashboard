@@ -698,7 +698,13 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         time.sleep(_PAUSE_S)
         text = _wire_story_text(p.get("url") or "")
         if not text:
-            fetch_failed = True
+            # An unreachable story is skipped, not a failure: Business Wire
+            # refuses server fetches permanently (403), and treating that as
+            # a transient failure marked the bank's whole pending leg failed
+            # on EVERY pass — its stale rows (Northrim's condition-as-approval,
+            # John Marshall, Eagle) were then kept forever (2026-10-07). The
+            # EDGAR legs still carry SEC filers; a transient miss is picked
+            # up by the next pass.
             continue
         if _COMPLETED_RE.search(text) or not _ANNOUNCE_RE.search(text):
             continue
