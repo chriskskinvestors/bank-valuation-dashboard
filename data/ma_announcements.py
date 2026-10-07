@@ -1310,6 +1310,22 @@ def _wire_releases(ticker: str) -> list[dict] | None:
         return None
 
 
+def _wire_releases_since(ticker: str, since: str) -> list[dict] | None:
+    """The acquirer's press releases from ``since`` (YYYY-MM-DD) to today —
+    the deal-resolution read (a completion release can be months old; the
+    newest-N index missed U.S. Bancorp's 2026-06-01 BTIG completion)."""
+    from datetime import date as _date
+    from data.fmp_client import _has_key, get_press_releases
+    if not ticker or not _has_key():
+        return None
+    try:
+        return get_press_releases(ticker, limit=_WIRE_LIMIT, since=since,
+                                  until=_date.today().isoformat()) or []
+    except Exception as e:
+        print(f"[ma_announce] wire-since {ticker}: {type(e).__name__}: {e}")
+        return None
+
+
 def _wire_story_text(url: str) -> str | None:
     from data.otc_release import _fetch_story
     html = _fetch_story(url)
@@ -1391,6 +1407,9 @@ def resolve_announcement_wire(acquirer_ticker: str, target_name: str,
 # announce date, and deal value via the increment-A/B machinery.
 
 _MERGER_PHRASE = '"Agreement and Plan of Merger"'
+_ANN_SCAN_CAP = 8               # announcement-candidate documents read per
+                                # filer (newest first); the oldest per
+                                # counterparty is the announcement
 _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
 _EX99_NAME_RE = re.compile(r"ex[-_.]?99|press", re.IGNORECASE)
 _EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
@@ -1441,6 +1460,20 @@ _ACQUIRE_OBJ_RE = re.compile(
 # An ordinal-led bank name ("1st Colonial Bancorp", "1st Source") is a
 # name; any other digit in a capture is a dateline / amount run-on.
 _ORDINAL_NAME_RE = re.compile(r"^\d{1,2}(?:st|nd|rd|th)\s+[A-Z]")
+# Past-tense closing wording near a capture = a prior deal ("our recently
+# closed William Penn transaction"; "closed in April 2025"). "expected to be
+# completed in the fourth quarter" is THIS deal (Isabella, pass 4).
+# A year bound to deal wording ("NXT Bank acquisition 2021", "2019
+# merger") — never a balance-sheet date ("as of December 31, 2025" beside
+# "acquire Grand River", Isabella's June release).
+_HIST_DEAL_YEAR_RE = re.compile(
+    r"\b(?:acquisition|acquired|merger|transaction)\s+(?:in\s+|of\s+)?(20[0-4]\d)\b|"
+    r"\b(20[0-4]\d)\s+(?:acquisition|merger)\b", re.IGNORECASE)
+_PAST_DEAL_RE = re.compile(
+    r"\b(?:recently|previously)\s+(?:closed|completed)\b|\bwas\s+(?:closed|completed)\b|"
+    r"(?<!to\sbe\s)(?<!will\sbe\s)\b(?:closed|completed)\s+(?:on|in)\s+"
+    r"(?:January|February|March|April|May|June|July|August|September|October|"
+    r"November|December|\d{4})\b", re.IGNORECASE)
 
 
 def _digits_in_name(name: str) -> bool:
@@ -1485,6 +1518,10 @@ def _clean_company_name(phrase: str) -> str:
         p = pieces[-1]
     p = re.sub(r"^\s*(?:about|the)\s+", "", p.strip(), flags=re.IGNORECASE)
     p = _STATE_TAIL_RE.sub("", p)
+    # A joint-announcement list ("Isabella Bank, and Grand River Commerce,
+    # Inc." — Isabella's 2026-06-12 release) is the LAST party; "Bank of
+    # Commerce and Trust Company" (no comma) is one name.
+    p = re.split(r",\s+and\s+", p)[-1]
     return p.strip(" .,")
 
 
@@ -1579,11 +1616,15 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         n = _norm(_clean_company_name(name))
         return bool(n) and any(n == s or s.startswith(n + " ") for s in self_names)
 
-    rows, fetch_failed, seen_toks = [], False, set()
-    # Oldest first: approval / vote update 8-Ks carry the merger phrase and
-    # name the same counterparty; with newest-first the board re-anchored
-    # Isabella/Grand River to its 2026-10-06 regulatory-approval 8-K.
-    for ann in sorted(recent, key=lambda g: g["file_date"])[:4]:
+    fetch_failed = False
+    # Newest first within a bounded scan, then the OLDEST 8-K per
+    # counterparty wins (the announcement; approval / vote update 8-Ks
+    # carry the merger phrase and name the same counterparty — Isabella
+    # re-anchored to its 2026-10-06 approval 8-K). An oldest-first cap cut
+    # Peoples' 2026-09-30 Capital announcement off behind two earnings
+    # 8-Ks, an earlier deal and an approvals 8-K (pass 4, 2026-10-07).
+    by_tok: dict[str, dict] = {}
+    for ann in sorted(recent, key=lambda g: g["file_date"], reverse=True)[:_ANN_SCAN_CAP]:
         time.sleep(_PAUSE_S)
         text, t_ok = _accession_text(ann["cik"], ann["adsh"], ann["doc"])
         fetch_failed = fetch_failed or not t_ok
@@ -1624,7 +1665,16 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 # "our recently closed William Penn transaction" in Mid
                 # Penn's 1st Colonial deck (2025-09-24) is a PAST deal.
                 around = text[max(0, m.start() - 120):m.end() + 120]
-                if re.search(r"\b(?:recently\s+)?(?:closed|completed)\b", around, re.IGNORECASE):
+                if _PAST_DEAL_RE.search(around):
+                    continue
+                # A year before the filing year next to the capture is a
+                # historical deal ("Entry into Iowa with NXT Bank
+                # acquisition 2021" in HBT's 2025-10-20 deck; the deal was
+                # CNB Bank Shares, pass 4).
+                filing_year = int(ann["file_date"][:4])
+                if any(int(y) < filing_year
+                       for pair in _HIST_DEAL_YEAR_RE.findall(around)
+                       for y in pair if y):
                     continue
                 if len(re.findall("\\b" + re.escape(t) + "\\b",
                                   text.lower())) < 2:
@@ -1651,8 +1701,10 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         if _digits_in_name(counterparty) or len(counterparty.split()) > 8:
             continue
         ct = brand_token(counterparty)
-        if not ct or ct in seen_toks:
+        if not ct:
             continue
+        if ct in by_tok and by_tok[ct]["announce_date"] <= ann["file_date"]:
+            continue              # an older 8-K already carries this deal
         # Self as the acquire object -> we are the target (seller side).
         for m in _ACQUIRE_OBJ_RE.finditer(text):
             if _is_self(_clean_company_name(m.group(1))):
@@ -1669,7 +1721,6 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 direction = "sale"
             elif _is_self(acq_side) and not _is_self(tgt_side):
                 direction = "acquisition"
-        seen_toks.add(ct)
         value = extract_stated_value(text)
         basis = "stated" if value else None
         note = None
@@ -1681,7 +1732,7 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 note = comp["value_note"]
         terms, t_ok = build_terms(text, ann["file_date"])
         fetch_failed = fetch_failed or not t_ok
-        rows.append({
+        by_tok[ct] = {
             "announce_date": ann["file_date"],
             "direction": direction,
             "counterparty_name": counterparty,
@@ -1694,7 +1745,8 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                              f"{int(ann['cik'])}/{ann['adsh'].replace('-', '')}/"
                              f"{ann['doc']}"),
             "accession": ann["adsh"],
-        })
+        }
+    rows = sorted(by_tok.values(), key=lambda r: r["announce_date"], reverse=True)
     return rows, not fetch_failed
 
 
