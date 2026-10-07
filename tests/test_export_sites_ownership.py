@@ -481,6 +481,24 @@ class TestInsiderActivityExports(_ExportCapture):
         self.assertEqual(pd.Timestamp(shape.x1), pd.Timestamp("2026-05-07"))
         self.assertEqual(self.figs[0].layout.annotations[0].text, self.FLAG)
 
+    def test_price_chart_shading_survives_cached_str_dates(self):
+        # get_history's CACHE HIT is pd.DataFrame(records) after
+        # json.dumps(default=str): `date` comes back as "YYYY-MM-DD 00:00:00"
+        # strings. A str x0 beside the Timestamp x1 crashed the whole page in
+        # prod (BAC, 2026-10-07: TypeError '<' Timestamp vs str).
+        import json
+        import pandas as pd
+        fresh = pd.DataFrame({
+            "date": pd.to_datetime(["2025-10-06", "2026-05-07", "2026-10-02"]),
+            "close": [45.0, 50.0, 52.0]})
+        prices = pd.DataFrame(json.loads(json.dumps(fresh.to_dict("records"),
+                                                    default=str)))
+        self.assertIsInstance(prices["date"].min(), str)
+        self._render("2026-05-07", prices=prices)
+        (shape,) = self.figs[0].layout.shapes
+        self.assertEqual(pd.Timestamp(shape.x0), pd.Timestamp("2025-10-06"))
+        self.assertEqual(pd.Timestamp(shape.x1), pd.Timestamp("2026-05-07"))
+
 
 if __name__ == "__main__":
     unittest.main()
