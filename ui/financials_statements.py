@@ -3679,6 +3679,14 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
         inc_years = [_yr(p) for p in inc_s["periods"]]
     bin_ = _cr_hl_series(bal_s)
     iinc = _cr_hl_series(inc_s)
+    # Reverse-merger registrants (BBT): columns before the merger are a LEGACY
+    # entity (data/sec_statements period_entity). Highlights never mix them in:
+    # those columns are dropped here (the statements show them, labeled), and
+    # an average whose prior period is legacy is n/a, never a cross-entity mean
+    # (REVIEW-2026-09-24 P1-6 follow-up).
+    def _legacy_keys(stmt, keys):
+        return {k for k, e in zip(keys, stmt.get("period_entity") or []) if e}
+    legacy = _legacy_keys(bal_s, bal_years) | _legacy_keys(inc_s, inc_years)
 
     def _b(label_alts, year):
         """Balance value for a year by label (first matching alt)."""
@@ -3749,12 +3757,14 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
     dicts = []
     for k, year in enumerate(bal_years):
         prior = bal_years[k + 1] if k + 1 < len(bal_years) else None
+        cross_entity = prior is not None and prior in legacy and year not in legacy
 
         def _avg(label_alts):
             """(beginning+ending)/2 over this year and the prior IN-VIEW year;
-            period-end alone for the oldest column (no prior)."""
+            period-end alone for the oldest column (no prior); n/a when the
+            prior column is a legacy (pre-merger) entity."""
             cur = _b(label_alts, year)
-            if cur is None:
+            if cur is None or cross_entity:
                 return None
             if prior is not None:
                 pv = _b(label_alts, prior)
@@ -3925,8 +3935,8 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
             return e - g - it
 
         tce_cur = _tce(year)
-        tce_avg = tce_cur
-        if tce_cur is not None and prior is not None:
+        tce_avg = None if cross_entity else tce_cur
+        if tce_cur is not None and prior is not None and not cross_entity:
             tce_pv = _tce(prior)
             if tce_pv is not None:
                 tce_avg = (tce_cur + tce_pv) / 2.0
@@ -3976,6 +3986,10 @@ def _cr_highlights_by_year(ticker, quarterly: bool = False):
         years = list(bal_years)            # already "Qn'yy" labels
     else:
         years = [f"FY{y}" if y else "" for y in bal_years]
+    if legacy:
+        keep = [i for i, y in enumerate(bal_years) if y not in legacy]
+        years = [years[i] for i in keep]
+        dicts = [dicts[i] for i in keep]
     latest = inc["meta"]
     src = (f"https://www.sec.gov/Archives/edgar/data/{int(latest['cik'])}/"
            f"{latest['accession']}/{latest['doc']}")
