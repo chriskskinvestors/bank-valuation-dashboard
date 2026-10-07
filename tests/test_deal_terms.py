@@ -1751,6 +1751,14 @@ class TestBoardGates(unittest.TestCase):
             self.assertEqual(_resolved_after(1174850, "MidWest One", "2025-10-23",
                                              filings=filings), (True, True))
 
+    def test_resolution_reads_the_index_by_date_range(self):
+        from data.ma_announcements import _wire_releases_since
+        with patch("data.fmp_client._has_key", return_value=True), \
+             patch("data.fmp_client.get_press_releases", return_value=[{"title": "x"}]) as g:
+            self.assertEqual(_wire_releases_since("USB", "2026-01-13"), [{"title": "x"}])
+        self.assertEqual(g.call_args.kwargs["since"], "2026-01-13")
+        self.assertIn("until", g.call_args.kwargs)
+
     def test_wire_completion_resolves_an_edgar_row(self):
         from data.ma_pending import _wire_resolved
         prs = [{"title": "U.S. Bancorp Completes Acquisition of BTIG",
@@ -1759,11 +1767,11 @@ class TestBoardGates(unittest.TestCase):
                         "its acquisition of BTIG, LLC, effective June 1, 2026."},
                {"title": "U.S. Bancorp Reports First Quarter 2026 Results",
                 "published_at": "2026-04-16 06:45:00", "text": ""}]
-        with patch("data.ma_pending._wire_releases", return_value=prs):
+        with patch("data.ma_pending._wire_releases_since", return_value=prs):
             self.assertTrue(_wire_resolved("USB", ["btig"], "2026-01-13"))
             self.assertFalse(_wire_resolved("USB", ["elavon"], "2026-01-13"))
             self.assertFalse(_wire_resolved("USB", ["btig"], "2026-06-02"))
-        with patch("data.ma_pending._wire_releases", return_value=None):
+        with patch("data.ma_pending._wire_releases_since", return_value=None):
             self.assertFalse(_wire_resolved("USB", ["btig"], "2026-01-13"))
 
     def test_peer_table_pair_is_not_the_counterparty(self):
@@ -1780,6 +1788,95 @@ class TestBoardGates(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual([(r["counterparty_name"], r["counterparty_ticker"]) for r in rows],
                          [("Middlefield Banc Corp", "MBCN")])
+
+    def test_announcement_behind_several_newer_8ks_is_still_read(self):
+        # Peoples (pass 4): two earnings 8-Ks, an earlier deal and an
+        # approvals 8-K sit between the window floor and the 2026-09-30
+        # Capital announcement; it must still be read, and the oldest 8-K
+        # per counterparty is the announcement.
+        from unittest.mock import MagicMock
+        from data import ma_announcements as ma
+        cap = ("Peoples Bancorp Inc. (NASDAQ: PEBO) and Capital Bancorp, Inc. (NASDAQ: "
+               "CBNK) jointly announced the signing of an agreement and plan of merger "
+               "pursuant to which Peoples will acquire Capital in an all-stock "
+               "transaction. Capital shareholders will receive 1.11 shares of Peoples "
+               "common stock for each share of Capital common stock.")
+        other = ("Peoples Bancorp Inc. (NASDAQ: PEBO) announced a definitive agreement "
+                 "to acquire Wildcat Bancshares, Inc. (NASDAQ: WLDC). Wildcat "
+                 "shareholders will receive 0.9 shares of Peoples common stock for each "
+                 "share of Wildcat common stock.")
+        def hit(adsh, d, doc, items):
+            return {"_id": f"{adsh}:{doc}",
+                    "_source": {"adsh": adsh, "file_date": d, "ciks": ["0000318300"],
+                                "file_type": "8-K", "items": items,
+                                "display_names": ["PEOPLES BANCORP INC (PEBO) (CIK 0000318300)"]}}
+        hits = [hit("0001-26-9", "2026-10-05", "approval.htm", ["8.01"]),
+                hit("0001-26-8", "2026-09-30", "capital.htm", ["1.01", "7.01"]),
+                hit("0001-26-7", "2026-07-21", "q2.htm", ["2.02", "8.01"]),
+                hit("0001-26-6", "2026-04-24", "wildcat.htm", ["1.01"]),
+                hit("0001-26-5", "2026-04-21", "q1.htm", ["2.02", "8.01"])]
+        texts = {"approval.htm": cap, "capital.htm": cap, "q2.htm": other,
+                 "wildcat.htm": other, "q1.htm": other}
+        resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
+        resp.raise_for_status = MagicMock()
+        with patch("data.ma_announcements.requests.get", return_value=resp), \
+             patch("data.ma_announcements._accession_text",
+                   side_effect=lambda c, a, d: (texts[d], True)), \
+             patch("data.ma_announcements.compute_stock_value", return_value=(None, True)), \
+             patch("data.ma_announcements._close_before", return_value=(None, None, True)), \
+             patch("data.ma_announcements.time.sleep", lambda *_: None):
+            rows, ok = ma.find_open_announcements(318300, "Peoples Bank")
+        self.assertTrue(ok)
+        self.assertEqual([(r["announce_date"], r["counterparty_ticker"]) for r in rows],
+                         [("2026-09-30", "CBNK"), ("2026-04-21", "WLDC")])
+
+    def test_historical_year_next_to_a_capture_is_a_past_deal(self):
+        # HBT 2025-10-20: the deck's "NXT Bank acquisition 2021" sat beside
+        # the CNB Bank Shares announcement.
+        text = ("HBT Financial, Inc. (NASDAQ: HBT) announced a definitive agreement to "
+                "acquire CNB Bank Shares, Inc. in a stock and cash transaction. CNB "
+                "shareholders will receive 1.0 shares of HBT common stock for each share "
+                "of CNB common stock. Entry into Iowa with NXT Bank acquisition 2021. "
+                "The acquisition of NXT Bancorporation, Inc. expanded our footprint.")
+        rows, ok = _open_announcements(775215, "HBT FINANCIAL, INC. (HBT)", text,
+                                       "Heartland Bank and Trust Company")
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty_name"] for r in rows], ["CNB Bank Shares, Inc"])
+
+    def test_balance_sheet_date_is_not_a_historical_deal(self):
+        from data.ma_announcements import _HIST_DEAL_YEAR_RE
+        self.assertEqual([y for p in _HIST_DEAL_YEAR_RE.findall("NXT Bank acquisition 2021") for y in p if y],
+                         ["2021"])
+        self.assertEqual(_HIST_DEAL_YEAR_RE.findall(
+            "to acquire Grand River Commerce, Inc., with total assets of $507 million "
+            "as of December 31, 2025"), [])
+
+    def test_joint_list_capture_is_the_last_party(self):
+        from data.ma_announcements import _clean_company_name
+        self.assertEqual(_clean_company_name("Isabella Bank, and Grand River Commerce, Inc."),
+                         "Grand River Commerce, Inc")
+        self.assertEqual(_clean_company_name("Bank of Commerce and Trust Company"),
+                         "Bank of Commerce and Trust Company")
+        # Isabella's June 12 release end to end: the joint list names self
+        # first, Grand River is the counterparty.
+        text = ("Isabella Bank Corporation (NASDAQ: ISBA), the parent of Isabella Bank, "
+                "and Grand River Commerce, Inc. (OTC: GNRV), today jointly announced that "
+                "they have entered into an Agreement and Plan of Merger whereby Isabella "
+                "will acquire Grand River in a cash and stock transaction valued at "
+                "approximately $54.6 million. Grand River shareholders will receive 0.60 "
+                "shares of Isabella common stock for each share of Grand River common stock.")
+        rows, ok = _open_announcements(842517, "ISABELLA BANK CORP (ISBA)", text,
+                                       "Isabella Bank")
+        self.assertTrue(ok)
+        self.assertEqual([(r["counterparty_name"], r["counterparty_ticker"]) for r in rows],
+                         [("Grand River Commerce, Inc", "GNRV")])
+
+    def test_expected_to_be_completed_is_not_a_past_deal(self):
+        from data.ma_announcements import _PAST_DEAL_RE
+        self.assertTrue(_PAST_DEAL_RE.search("our recently closed William Penn transaction"))
+        self.assertTrue(_PAST_DEAL_RE.search("acquisition of William Penn closed in April 2025"))
+        self.assertFalse(_PAST_DEAL_RE.search("expected to be completed in the fourth quarter of 2026"))
+        self.assertFalse(_PAST_DEAL_RE.search("will be completed in December 2026"))
 
     def test_oldest_announcement_8k_anchors_the_deal(self):
         from unittest.mock import MagicMock
@@ -1820,9 +1917,9 @@ class TestBoardGates2(unittest.TestCase):
                         "regulatory approvals required to complete the merger."},
                {"title": "Peoples Bancorp Inc. Completes Merger with Capital Bancorp, Inc.",
                 "published_at": "2027-04-01 08:00:00", "text": "Capital"}]
-        with patch("data.ma_pending._wire_releases", return_value=prs[:1]):
+        with patch("data.ma_pending._wire_releases_since", return_value=prs[:1]):
             self.assertFalse(_wire_resolved("PEBO", ["capital"], "2026-09-30"))
-        with patch("data.ma_pending._wire_releases", return_value=prs):
+        with patch("data.ma_pending._wire_releases_since", return_value=prs):
             self.assertTrue(_wire_resolved("PEBO", ["capital"], "2026-09-30"))
 
     def test_ordinal_led_target_and_past_deal_context(self):

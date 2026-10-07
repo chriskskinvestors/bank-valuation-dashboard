@@ -59,6 +59,7 @@ from data.ma_announcements import (
     _digits_in_name,
     _shares_outstanding_asof,
     _wire_releases,
+    _wire_releases_since,
     _wire_story_text,
     brand_token,
     build_terms,
@@ -502,7 +503,7 @@ def _wire_resolved(ticker: str | None, needles: list[str],
     it pending for four months. Unavailable feed = no signal (False)."""
     if not ticker or not needles:
         return False
-    prs = _wire_releases(ticker)
+    prs = _wire_releases_since(ticker, announce_date)
     for q in prs or []:
         if (q.get("published_at") or "")[:10] <= announce_date:
             continue

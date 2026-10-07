@@ -1059,7 +1059,8 @@ PRESS_RELEASE_TTL_SECONDS = 1800  # 30m — matches the poll cadence; a release'
 #                                   text never changes once published.
 
 
-def get_press_releases(ticker: str, limit: int = 25) -> list[dict]:
+def get_press_releases(ticker: str, limit: int = 25,
+                       since: str | None = None, until: str | None = None) -> list[dict]:
     """Recent FIRST-PARTY company press releases for `ticker` from FMP's
     press-release index (which aggregates Business Wire / PR Newswire / etc.),
     newest first:
@@ -1076,12 +1077,22 @@ def get_press_releases(ticker: str, limit: int = 25) -> list[dict]:
     if not _has_key():
         return []
     ticker = ticker.upper()
-    cache_key = f"fmp_press:{ticker}:{limit}"
+    # ``since``/``until`` (YYYY-MM-DD) bound the index by date: the plain
+    # newest-N read returned 13 releases for U.S. Bancorp (a daily
+    # publisher), so a four-month-old completion release was invisible to
+    # the deal-resolution check (2026-10-07).
+    cache_key = (f"fmp_press:{ticker}:{limit}" if not (since or until)
+                 else f"fmp_press:{ticker}:{limit}:{since or ''}:{until or ''}")
     cached = _cache_get(cache_key, PRESS_RELEASE_TTL_SECONDS)
     if cached is not None:
         return cached
 
-    data = _get("news/press-releases", {"symbols": ticker, "limit": limit})
+    params: dict = {"symbols": ticker, "limit": limit}
+    if since:
+        params["from"] = since
+    if until:
+        params["to"] = until
+    data = _get("news/press-releases", params)
     if not isinstance(data, list) or not data:
         return []
     out: list[dict] = []
