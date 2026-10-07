@@ -1436,7 +1436,16 @@ def _split_merger_groups(hits: list[dict]) -> tuple[list[dict], list[dict]]:
 _ACQUIRE_OBJ_RE = re.compile(
     r"(?:agreement\s+to\s+acquire|will\s+acquire|to\s+acquire|"
     r"acquisition\s+of|acquire\s+100%\s+of\s+the\s+stock\s+of)\s+"
-    r"([A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s)")
+    r"((?:\d{1,2}(?:st|nd|rd|th)\s+)?[A-Z][\w.,&'\- ]{2,60}?)"
+    r"(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s)")
+# An ordinal-led bank name ("1st Colonial Bancorp", "1st Source") is a
+# name; any other digit in a capture is a dateline / amount run-on.
+_ORDINAL_NAME_RE = re.compile(r"^\d{1,2}(?:st|nd|rd|th)\s+[A-Z]")
+
+
+def _digits_in_name(name: str) -> bool:
+    body = _ORDINAL_NAME_RE.sub("", name or "", count=1) if _ORDINAL_NAME_RE.match(name or "") else (name or "")
+    return bool(re.search(r"\d", body))
 
 # The agreement sentence names THIS filing's counterparty — an acquirer with
 # two live deals cites both targets ("TC Bancshares" and "First Reliance" in
@@ -1445,7 +1454,7 @@ _ACQUIRE_OBJ_RE = re.compile(
 # Agreement") with First Reliance Bancshares, Inc." settles it.
 _MERGER_WITH_RE = re.compile(
     r"Agreement\s+and\s+Plan\s+of\s+(?:Merger|Reorganization)[^.]{0,160}?\bwith\s+"
-    r"([A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|,\s+(?:a|an|the)\s|\.\s|\s+and\s|\s+pursuant|"
+    r"((?:\d{1,2}(?:st|nd|rd|th)\s+)?[A-Z][\w.,&'\- ]{2,60}?)(?:\s*\(|,\s+(?:a|an|the)\s|\.\s|\s+and\s|\s+pursuant|"
     r"\s+under)")
 
 # A captured company phrase is often a run-on across an "About X. X" PR
@@ -1456,16 +1465,41 @@ _MERGER_WITH_RE = re.compile(
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[a-z])\.\s+(?=[A-Z])")
 
 
+_STATE_TAIL_RE = re.compile(
+    r",?\s+an?\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?\s+(?:corporation|company|"
+    r"bank(?:ing\s+corporation)?|association|bancorp|limited\s+liability\s+company)\b.*$")
+_DEFINED_TERM_HEAD = r"([A-Z][\w.,&'\- ]{3,60}?)\s*\(\s*(?:the\s+)?[“\"]"
+_DEFINED_TERM_TAIL = (r"[”\"](?:,\s*[“\"][^”\"]{1,30}[”\"])*\s*"
+                      r"(?:or\s+[“\"][^”\"]{1,30}[”\"]\s*)?\)")
+
+
 def _clean_company_name(phrase: str) -> str:
     """Normalize a captured company phrase to a single clean name: take the
     last sentence piece of an 'About X. X' footer run-on (only when that
-    piece is itself multi-word), then strip a leading 'About '/'the '."""
+    piece is itself multi-word), strip a leading 'About '/'the ' and a
+    state-of-incorporation tail ("First Savings Financial Group, Inc., an
+    Indiana corporation", First Merchants 2026-02-02)."""
     p = (phrase or "").strip(" .,")
     pieces = _SENTENCE_SPLIT_RE.split(p)
     if len(pieces) > 1 and len(pieces[-1].split()) >= 2:
         p = pieces[-1]
     p = re.sub(r"^\s*(?:about|the)\s+", "", p.strip(), flags=re.IGNORECASE)
+    p = _STATE_TAIL_RE.sub("", p)
     return p.strip(" .,")
+
+
+def expand_defined_term(short: str, text: str) -> str:
+    """A short defined term captured as a counterparty ("HCB", "BOH") is the
+    full name the text defines it with ('HCB Financial Corp. ("HCB")'),
+    else the capture unchanged. One or two words, no digits."""
+    s = (short or "").strip()
+    if not s or len(s.split()) > 2 or re.search(r"\d", s) or len(s) > 20:
+        return short
+    rx = re.compile(_DEFINED_TERM_HEAD + re.escape(s) + _DEFINED_TERM_TAIL)
+    names = {_clean_company_name(_trailing_name(m.group(1).strip()))
+             for m in rx.finditer(text)}
+    names = {n for n in names if n and n.lower() != s.lower() and len(n) > len(s)}
+    return next(iter(names)) if len(names) == 1 else short
 
 
 def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
@@ -1583,9 +1617,14 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         else:
             best = {}
             for m in _ACQUIRE_OBJ_RE.finditer(text):
-                cand = _clean_company_name(m.group(1))
+                cand = expand_defined_term(_clean_company_name(m.group(1)), text)
                 t = brand_token(cand)
                 if not t or _is_self(cand):
+                    continue
+                # "our recently closed William Penn transaction" in Mid
+                # Penn's 1st Colonial deck (2025-09-24) is a PAST deal.
+                around = text[max(0, m.start() - 120):m.end() + 120]
+                if re.search(r"\b(?:recently\s+)?(?:closed|completed)\b", around, re.IGNORECASE):
                     continue
                 if len(re.findall("\\b" + re.escape(t) + "\\b",
                                   text.lower())) < 2:
@@ -1609,7 +1648,7 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         # ("Cincinnati, Ohio - July 21, 2026. First Financial Bancorp", live
         # on the first universe board as a self-deal) — is unreadable: no
         # row, never a guess.
-        if re.search(r"\d", counterparty) or len(counterparty.split()) > 8:
+        if _digits_in_name(counterparty) or len(counterparty.split()) > 8:
             continue
         ct = brand_token(counterparty)
         if not ct or ct in seen_toks:

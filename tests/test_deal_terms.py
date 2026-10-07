@@ -1783,5 +1783,56 @@ class TestBoardGates(unittest.TestCase):
         self.assertEqual([r["announce_date"] for r in rows], ["2026-06-12"])
 
 
+class TestBoardGates2(unittest.TestCase):
+
+    def test_approvals_release_is_not_a_completion(self):
+        # Pass 3 (2026-10-07) dropped Peoples/Capital: the approvals release
+        # read as a close. Only completion / termination wording resolves.
+        from data.ma_pending import _wire_resolved
+        prs = [{"title": "Peoples Bancorp Inc. and Capital Bancorp, Inc. Receive "
+                         "Regulatory Approvals for Merger",
+                "published_at": "2026-10-05 16:05:00",
+                "text": "Peoples and Capital jointly announced receipt of all "
+                        "regulatory approvals required to complete the merger."},
+               {"title": "Peoples Bancorp Inc. Completes Merger with Capital Bancorp, Inc.",
+                "published_at": "2027-04-01 08:00:00", "text": "Capital"}]
+        with patch("data.ma_pending._wire_releases", return_value=prs[:1]):
+            self.assertFalse(_wire_resolved("PEBO", ["capital"], "2026-09-30"))
+        with patch("data.ma_pending._wire_releases", return_value=prs):
+            self.assertTrue(_wire_resolved("PEBO", ["capital"], "2026-09-30"))
+
+    def test_ordinal_led_target_and_past_deal_context(self):
+        # Mid Penn's 2025-09-24 8-K: the target is 1st Colonial Bancorp; the
+        # deck also says "our recently closed William Penn transaction".
+        from data.ma_announcements import _digits_in_name
+        self.assertFalse(_digits_in_name("1st Colonial Bancorp, Inc"))
+        self.assertTrue(_digits_in_name("Cincinnati, Ohio - July 21, 2026. First Financial"))
+        text = ("Mid Penn Bancorp, Inc. (NASDAQ: MPB) today announced that it has entered "
+                "into a definitive agreement to acquire 1st Colonial Bancorp, Inc. in a "
+                "transaction valued at approximately $190 million. Mid Penn will acquire "
+                "1st Colonial in a stock and cash transaction. Our credit mark leverages "
+                "market data from our recently closed William Penn transaction. The "
+                "acquisition of William Penn Bancorporation closed in April 2025.")
+        rows, ok = _open_announcements(879635, "MID PENN BANCORP INC (MPB)", text,
+                                       "Mid Penn Bank")
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty_name"] for r in rows], ["1st Colonial Bancorp, Inc"])
+
+    def test_defined_term_expands_to_the_full_name(self):
+        from data.ma_announcements import expand_defined_term, _clean_company_name
+        text = ('Independent Bank Corporation ("Independent") announced an agreement '
+                'to acquire HCB Financial Corp. ("HCB"), the holding company for '
+                'Hastings City Bank. Independent will acquire HCB in an all-stock deal.')
+        self.assertEqual(expand_defined_term("HCB", text), "HCB Financial Corp")
+        boh = ('South Plains Financial, Inc. ("SPFI") and BOH Holdings, Inc. ("BOH") '
+               'entered into an agreement providing for the acquisition by SPFI of BOH '
+               'through the merger of BOH with and into SPFI.')
+        self.assertEqual(expand_defined_term("BOH", boh), "BOH Holdings, Inc")
+        self.assertEqual(expand_defined_term("Finward Bancorp", boh), "Finward Bancorp")
+        self.assertEqual(_clean_company_name("First Savings Financial Group, Inc., an "
+                                             "Indiana corporation"),
+                         "First Savings Financial Group, Inc")
+
+
 if __name__ == "__main__":
     unittest.main()
