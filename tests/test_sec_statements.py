@@ -241,6 +241,16 @@ class TestParseRfile(unittest.TestCase):
         self.assertEqual(_units_scale("Balance - USD ($) $ in Millions"), 1e6)
         self.assertEqual(_units_scale("Income - USD ($) $ in Thousands"), 1e3)
 
+    def test_shares_clause_alone_is_not_a_dollar_scale(self):
+        # BMRC 10-Q Q2-2026 R4 title: dollars in whole units ("Net income (loss)
+        # $ 9,246,000"), only the share counts in thousands. The bare-'in <unit>'
+        # fallback read the shares clause and rendered net income $9.2B.
+        title = ("CONSOLIDATED STATEMENTS OF COMPREHENSIVE INCOME (LOSS) - USD ($) "
+                 "shares in Thousands")
+        self.assertEqual(_units_scale(title), 1.0)
+        self.assertEqual(_share_scale(title), 1e3)
+        self.assertEqual(_units_scale("Statement of Income - USD in Thousands"), 1e3)
+
     def test_xbrl_definition_footnotes_truncated(self):
         # SEC R-files append an element-definition footnote block after the
         # statement (no period values) — it must be dropped, not rendered.
