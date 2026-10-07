@@ -123,6 +123,41 @@ class TestTransactionsSection(unittest.TestCase):
         self.assertFalse(any("snapshot has not been compiled" in str(i.value)
                              for i in at.info))
 
+    def test_spread_tracker_renders_under_the_board(self):
+        # Owner 2026-10-07: interactive spread chart under the board. Seed the
+        # snapshot and the tracker history; both charts and the picker render.
+        from data import cache
+        from data.deal_comps import SNAPSHOT_KEY
+        from data.deal_spreads import SPREADS_KEY
+        cache.put(SNAPSHOT_KEY, {"built_at": "2026-10-07T12:00:00", "deals": [
+            {"status": "pending", "announce_date": "2026-09-08",
+             "target_name": "Eagle Financial Services", "target_ticker": "EFSI",
+             "buyer_name": "John Marshall Bancorp", "buyer_ticker": "JMSB",
+             "terms": {"exchange_ratio": 2.0, "consideration": "stock"}}]})
+        series = [{"date": "2026-09-08", "acq": 23.36, "tgt": 45.00, "offer": 46.72,
+                   "gross": 0.038222, "annualized": 0.068388, "days": 204},
+                  {"date": "2026-10-06", "acq": 22.90, "tgt": 45.55, "offer": 45.80,
+                   "gross": 0.005488, "annualized": 0.011382, "days": 176}]
+        cache.put(SPREADS_KEY, {"built_at": "2026-10-07T12:05:00", "skipped": [
+            {"key": "BY:x", "label": "Illinois State Bancorp ← BY",
+             "target_name": "Illinois State Bancorp", "reason": "target not listed"}],
+            "deals": {"JMSB:EFSI:2026-09-08": {
+                "label": "EFSI ← JMSB", "target_ticker": "EFSI",
+                "target_name": "Eagle Financial Services", "buyer_ticker": "JMSB",
+                "buyer_name": "John Marshall Bancorp", "announce_date": "2026-09-08",
+                "expected_close_date": "2027-03-31", "consideration": "stock",
+                "exchange_ratio": 2.0, "cash_per_share": None, "milestones": [],
+                "series": series, "dropped": 0}}})
+        try:
+            at = self._open_transactions()
+        except ModuleNotFoundError as e:
+            self.skipTest(f"AppTest unavailable: {e}")
+        html = "\n".join(str(m.value) for m in at.markdown)
+        self.assertIn("Spread tracker", html)
+        self.assertEqual(len(at.get("plotly_chart")), 2)   # overlay + drill-down
+        picker = next(m for m in at.multiselect if m.key == "spread_deals")
+        self.assertEqual(list(picker.value), ["JMSB:EFSI:2026-09-08"])
+
 
 if __name__ == "__main__":
     unittest.main()
