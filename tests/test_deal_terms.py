@@ -282,11 +282,17 @@ class TestConsiderationMix(unittest.TestCase):
 class TestBuildTerms(unittest.TestCase):
 
     def test_fhb_stated_price_and_tickers(self):
+        closes = {"FHB": (30.13, "2026-07-10", True), "TCBK": (52.00, "2026-07-10", True)}
         with patch("data.ma_announcements._close_before",
-                   return_value=(30.13, "2026-07-10", True)) as cb:
+                   side_effect=lambda tk, d: closes[tk]) as cb:
             t, ok = build_terms(FHB_PR, "2026-07-13")
         self.assertTrue(ok)
-        cb.assert_called_once_with("FHB", "2026-07-13")
+        self.assertEqual([c.args for c in cb.call_args_list],
+                         [("FHB", "2026-07-13"), ("TCBK", "2026-07-13")])
+        # No premium stated -> computed from TriCo's own last close:
+        # 63.12 / 52.00 - 1 = 21.4%, labeled computed.
+        self.assertEqual(t["premium_computed"], 21.4)
+        self.assertIn("TCBK close $52.00", t["premium_note"])
         self.assertEqual((t["acq_ticker"], t["tgt_ticker"]), ("FHB", "TCBK"))
         self.assertEqual(t["exchange_ratio"], 2.095)
         self.assertEqual(t["consideration"], "stock")

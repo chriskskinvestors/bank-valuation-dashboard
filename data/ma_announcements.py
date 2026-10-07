@@ -167,7 +167,7 @@ _COMPLETED_RE = re.compile(
 # termination fee / capital figure can never match.
 _VALUE_RE = re.compile(
     r"(?:transaction\s+valued\s+at|valued\s+at|deal\s+valued\s+at|"
-    r"aggregate\s+(?:transaction\s+)?value\s+of|total\s+(?:transaction|deal)\s+"
+    r"aggregate\s+(?:transaction\s+)?value\s+of|total\s+(?:transaction|deal|current)\s+"
     r"value\s+of|purchase\s+price\s+of|aggregate\s+consideration\s+of)\s+"
     r"(?:approximately\s+|about\s+)?(?:US)?\$\s?([\d][\d,]*(?:\.\d+)?)\s*"
     r"(billion|million)", re.IGNORECASE)
@@ -328,9 +328,13 @@ def extract_exchange_ratio(text: str) -> tuple[float, str, str] | None:
         found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     for m in _RATIO_OF_BARE_RE.finditer(text):
         found.append((float(m.group(1)), "", ""))
-    for rx in (_RATIO_DECK_X_RE, _RATIO_TICKER_PER_RE, _RATIO_ESTIMATED_RE):
+    for rx in (_RATIO_DECK_X_RE, _RATIO_TICKER_PER_RE, _RATIO_ESTIMATED_RE,
+               _RATIO_EQUATE_RE):
         for m in rx.finditer(text):
             found.append((float(m.group(1)), "", ""))
+    for rx in (_RATIO_IN_EXCHANGE_RE, _RATIO_AND_CASH_AMOUNT_RE):
+        for m in rx.finditer(text):
+            found.append((float(m.group(1)), m.group(2).strip(), m.group(3).strip()))
     if not found or len({r for r, _, _ in found}) != 1:
         return None
     # Several forms agreeing on one ratio: prefer the one that names sides.
@@ -541,12 +545,22 @@ _VALUE_CONSID_RE = re.compile(
     r"\$\s?([\d][\d,]*(?:\.\d+)?)\s*(billion|million)", re.IGNORECASE)
 
 
+_VALUE_ACQUIRE_FOR_RE = re.compile(
+    r"(?:will\s+)?acquire\s+[\w.,&'\- ]{2,60}?\s+for\s+(?:total\s+consideration\s+of\s+)?"
+    r"(?:approximately\s+|about\s+)?\$\s?([\d][\d,]*(?:\.\d+)?)\s*(billion|million)",
+    re.IGNORECASE)
+_VALUE_RAW_RE = re.compile(
+    r"\$\s?(\d{1,3}(?:,\d{3}){2,})\s+in\s+aggregate\s+consideration", re.IGNORECASE)
+
+
 def extract_stated_value(text: str) -> int | None:
     """Deal value in RAW DOLLARS from strict stated-value phrasings, or None.
     Distinct candidate amounts -> None (ambiguous, never a guess)."""
     vals = set()
+    for raw in _VALUE_RAW_RE.findall(text):
+        vals.add(int(raw.replace(",", "")))
     for num, unit in (_VALUE_RE.findall(text) + _VALUE_TRAIL_RE.findall(text)
-                      + _VALUE_CONSID_RE.findall(text)):
+                      + _VALUE_CONSID_RE.findall(text) + _VALUE_ACQUIRE_FOR_RE.findall(text)):
         try:
             v = float(num.replace(",", ""))
         except ValueError:
@@ -675,7 +689,10 @@ _EXPECTED_CLOSE_RE = re.compile(
     r"(?:close|be\s+completed|be\s+consummated|complete|consummate)"
     r"(?:\s+(?:the|this)\s+(?:transaction|merger|acquisition|mergers))?"
     r"|(?:closing|completion)\s+(?:of\s+the\s+(?:transaction|merger|"
-    r"acquisition|mergers)\s+)?is\s+(?:expected|anticipated))\s+"
+    r"acquisition|mergers)\s+)?is\s+(?:expected|anticipated)"
+    r"|anticipate\s+closing(?:\s+the\s+(?:merger|transaction|acquisition))?"
+    r"|(?:closing|merger|transaction|completion)[^.]{0,40}?(?:expected|anticipated)\s+"
+    r"to\s+occur)\s+"
     r"((?:in|during|by|on\s+or\s+before|before|prior\s+to|late\s+in|early"
     r"\s+in|around)\s+[^.;]{3,90})", re.IGNORECASE)
 _CLOSE_CUT_RE = re.compile(
@@ -705,7 +722,7 @@ _ALL_CASH_RE = re.compile(r"all[-\s]cash|100\s?%\s+cash", re.IGNORECASE)
 _ELECTION_RE = re.compile(
     r"(?:shareholder|stockholder|holder)s?['’]?s?\s+election|elect(?:ion)?\s+"
     r"to\s+receive|may\s+elect|elections?\s+(?:will\s+be|are)\s+subject\s+to\s+"
-    r"proration|at\s+the\s+election\s+of\s+(?:each|the\s+holder)", re.IGNORECASE)
+    r"proration|at\s+the\s+(?:election|option)\s+of\s+(?:each|the\s+holder)", re.IGNORECASE)
 # A stock leg the ratio regexes could not parse: "exchange ratio" wording or
 # "0.3803 ... shares" near the cash. Cash + an unparsed stock leg must NOT
 # classify as all-cash (the Prosperity/Stellar $11.36 would have shown as
@@ -743,6 +760,41 @@ def _single(values) -> float | int | None:
     return vals.pop() if len(vals) == 1 else None
 
 
+# Northrim/PBCO: "receive 1.160 shares of Northrim common stock in exchange
+# for each share of PBCO common stock".
+_RATIO_IN_EXCHANGE_RE = re.compile(
+    r"receive\s+(\d{1,2}\.\d{1,4})\s+(?:of\s+a\s+share|shares?)\s+of\s+"
+    r"([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+common\s+stock\s+in\s+exchange\s+for\s+"
+    r"each\s+(?:outstanding\s+)?share\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+common\s+stock")
+# First Bancorp/First Carolina: "receive 14.5340 shares of First Bancorp
+# common stock and cash in the amount of $294.94 for each share of First
+# Carolina common stock".
+_RATIO_AND_CASH_AMOUNT_RE = re.compile(
+    r"receive\s+(\d{1,2}\.\d{1,4})\s+shares?\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+"
+    r"common\s+stock\s+and\s+cash\s+in\s+the\s+amount\s+of\s+\$\s?[\d,]+(?:\.\d+)?\s+"
+    r"for\s+each\s+(?:outstanding\s+)?share\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)\s+common\s+stock")
+_CASH_AMOUNT_EACH_RE = re.compile(
+    r"and\s+cash\s+in\s+the\s+amount\s+of\s+\$\s?" + _NUM
+    + r"\s+for\s+each\s+(?:outstanding\s+)?share", re.IGNORECASE)
+# Bank7/Century: "this would equate to $210.41 in cash and 3.7052 shares of
+# Company common stock per Century share".
+_RATIO_EQUATE_RE = re.compile(
+    r"equate\s+to\s+\$\s?[\d,]+(?:\.\d+)?\s+in\s+cash\s+and\s+(\d{1,2}\.\d{1,4})\s+"
+    r"shares?\s+of\s+[\w ]{1,40}?common\s+stock\s+per\s+[A-Z][\w&'\-]+\s+share",
+    re.IGNORECASE)
+_CASH_EQUATE_RE = re.compile(
+    r"equate\s+to\s+\$\s?" + _NUM + r"\s+in\s+cash\s+and\s+\d", re.IGNORECASE)
+# HBT/Tri-County: "TYFG stockholders are expected to receive cash consideration
+# of approximately $59.9 million and stock consideration of approximately 3.8
+# million shares of HBT common stock" — the aggregate split of an election.
+_AGG_SPLIT_RE = re.compile(
+    r"cash\s+consideration\s+of\s+approximately\s+\$\s?([\d.,]+)\s*million\s+and\s+"
+    r"stock\s+consideration\s+of\s+approximately\s+([\d.,]+)\s*million\s+shares",
+    re.IGNORECASE)
+# HBT/Tri-County: "the implied per share purchase price is $82.89".
+_IMPLIED_PRICE_PS_RE = re.compile(
+    r"implied\s+per[- ]share\s+(?:purchase\s+|transaction\s+)?(?:price|value)\s+"
+    r"(?:is|of)\s+(?:approximately\s+)?\$\s?" + _NUM, re.IGNORECASE)
 _CASH_ESTIMATED_RE = re.compile(
     r"per\s+share\s+cash\s+consideration\s+(?:to\s+be\s+paid\s+)?is\s+estimated\s+"
     r"to\s+be\s+(?:approximately\s+)?\$\s?" + _NUM, re.IGNORECASE)
@@ -752,7 +804,8 @@ def extract_cash_per_share(text: str) -> float | None:
     """Cash consideration per TARGET share, or None. "cash in lieu of
     fractional shares" carries no dollar figure and never matches."""
     found = []
-    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE, _CASH_ESTIMATED_RE):
+    for rx in (_CASH_PER_SHARE_RE, _CASH_CONSID_RE, _CASH_ESTIMATED_RE,
+               _CASH_AMOUNT_EACH_RE, _CASH_EQUATE_RE):
         for m in rx.finditer(text):
             found.append(round(_num(next(g for g in m.groups() if g)), 4))
     return _single(found)
@@ -776,7 +829,8 @@ def _cash_with_unparsed_stock_leg(text: str) -> bool:
 def extract_implied_price(text: str) -> float | None:
     """Per-share offer value as STATED in the text, or None."""
     found = [round(_num(m.group(1)), 4)
-             for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE, _IMPLIED_PRICE_OR_RE)
+             for rx in (_IMPLIED_PRICE_RE, _IMPLIED_PRICE_DECK_RE, _IMPLIED_PRICE_OR_RE,
+                        _IMPLIED_PRICE_PS_RE)
              for m in rx.finditer(text)]
     found += [round(_num(next(g for g in m.groups() if g)), 4)
               for m in _IMPLIED_PRICE_DECK2_RE.finditer(text)]
@@ -1023,7 +1077,17 @@ def extract_terms(text: str) -> dict:
     cash = extract_cash_per_share(text)
     pcts = extract_mix_pcts(text)
     phrase, close_date = extract_expected_close(text)
+    mix_basis = "stated" if pcts else None
+    if not pcts and ratio and cash:
+        m = _AGG_SPLIT_RE.search(text)
+        if m:
+            n_cash = float(m.group(1).replace(",", "")) * 1e6 / cash
+            n_stock = float(m.group(2).replace(",", "")) * 1e6 / ratio
+            if n_cash > 0 and n_stock > 0:
+                sp = round(100 * n_stock / (n_cash + n_stock), 1)
+                pcts, mix_basis = (sp, round(100 - sp, 1)), "derived"
     return {
+        "mix_basis": mix_basis,
         "consideration": classify_consideration(text, ratio, cash),
         "exchange_ratio": ratio,
         "acq_side": ratio_hit[1] if ratio_hit else None,
@@ -1095,16 +1159,48 @@ def fill_implied_price(t: dict, announce_date: str, acq_tick: str | None = None,
         close, close_date, ok = (close_lookup or _close_before)(acq_tick, announce_date)
     t["acq_close_at_announce"] = close
     t["acq_close_date"] = close_date
-    if t.get("implied_price_stated") is not None:
-        t["implied_price"] = t["implied_price_stated"]
+    computed, c_note = implied_offer(t, close, basis_label=f"{acq_tick} close {close_date}")
+    stated = t.get("implied_price_stated")
+    if stated is not None and computed:
+        gap = abs(stated / computed - 1)
+        if t.get("mix_basis") == "derived" and gap > _DERIVED_MIX_TOL:
+            # The derived proration does not reproduce the stated price:
+            # never price the live spread off it.
+            t["stock_pct"] = t["cash_pct"] = None
+            computed, c_note = implied_offer(t, close, basis_label="")
+        elif gap > _STATED_PRICE_TOL:
+            # "$166 million, or $64.22 per share" (First Bancorp/First
+            # Carolina) against 14.534 x $~50 + $294.94 ~= $1,000: the stated
+            # figure is not a per-TARGET-share value. Discard it.
+            t["implied_price_stated_rejected"] = stated
+            t["implied_price_stated"] = stated = None
+    if stated is not None:
+        t["implied_price"] = stated
         t["implied_price_basis"] = "stated"
         t["implied_price_note"] = "per-share value as stated in the announcement"
     else:
-        v, note = implied_offer(t, close, basis_label=f"{acq_tick} close {close_date}")
-        t["implied_price"] = v
-        t["implied_price_basis"] = "computed" if v is not None else None
-        t["implied_price_note"] = f"computed: {note}" if note else None
+        t["implied_price"] = computed
+        t["implied_price_basis"] = "computed" if computed is not None else None
+        t["implied_price_note"] = f"computed: {c_note}" if c_note else None
+    # Premium: as stated when the release states it; else computed from the
+    # target's own last close before announcement (labeled computed).
+    if (t.get("premium_pct") is None and t.get("implied_price") and tgt_tick
+            and announce_date):
+        tc, tc_date, t_ok = (close_lookup or _close_before)(tgt_tick, announce_date)
+        ok = ok and t_ok
+        if tc:
+            p = t["implied_price"] / tc - 1
+            if _PREMIUM_BAND[0] <= p <= _PREMIUM_BAND[1]:
+                t["premium_computed"] = round(p * 100, 1)
+                t["premium_note"] = (f"computed: implied ${t['implied_price']:,.2f} ÷ "
+                                     f"{tgt_tick} close ${tc:,.2f} ({tc_date}) − 1")
     return ok
+
+
+_STATED_PRICE_TOL = 0.25       # stated vs ratio x close (+cash): VWAP vs close
+                               # differ a few %, a wrong figure differs wildly
+_DERIVED_MIX_TOL = 0.03        # a derived proration must reproduce the price
+_PREMIUM_BAND = (-0.5, 2.0)    # computed premium outside = a stale/bad close
 
 
 def _get_429_aware(url: str, params: dict | None = None):
@@ -1575,7 +1671,8 @@ def _split_merger_groups(hits: list[dict]) -> tuple[list[dict], list[dict]]:
 # "About "/"the " (section-header run-on) is stripped by the caller.
 _ACQUIRE_OBJ_RE = re.compile(
     r"(?:agreement\s+to\s+acquire|will\s+acquire|to\s+acquire|"
-    r"acquisition\s+of|acquire\s+100%\s+of\s+the\s+stock\s+of)\s+"
+    r"acquisition\s+of|acquire\s+(?:100%|all)\s+of\s+the\s+(?:outstanding\s+)?"
+    r"(?:common\s+)?stock\s+of)\s+"
     r"((?:\d{1,2}(?:st|nd|rd|th)\s+)?[A-Z][\w.,&'\- ]{2,60}?)"
     r"(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s|"
     r"\s+to\s+(?:expand|create|form|enter|strengthen|bolster|grow|become|"
@@ -1859,6 +1956,15 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 pick = [t for t in best if t in with_toks]
                 if len(pick) == 1:
                     counterparty = best[pick[0]]
+            else:
+                # No acquire-verb capture at all: the agreement sentence names
+                # the party ("Agreement and Plan of Merger ... with First
+                # Carolina Bancshares Corporation", First Bancorp 2026-07-14).
+                withs = {_clean_company_name(m.group(1))
+                         for m in _MERGER_WITH_RE.finditer(text)}
+                withs = {w for w in withs if w and not _is_self(w)}
+                if len(withs) == 1:
+                    counterparty = withs.pop()
         if not counterparty or _is_self(counterparty):
             continue
         # A capture that is not a company name — a dateline run-on

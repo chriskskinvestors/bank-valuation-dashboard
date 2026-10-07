@@ -60,6 +60,7 @@ from data.ma_announcements import (
     _shares_outstanding_asof,
     _wire_releases,
     _wire_releases_since,
+    expand_defined_term,
     _wire_story_text,
     brand_token,
     build_terms,
@@ -729,7 +730,9 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         if len(pick) != 1 or pick[0] in seen:
             continue
         ct = pick[0]
-        counterparty = best[ct]
+        # "Great Plains" is the defined term for Great Plains Bancshares,
+        # Inc.: the full name is what links its FDIC record (valuation).
+        counterparty = expand_defined_term(best[ct], text)
         later = [q for q in prs
                  if (q.get("published_at") or "")[:10] > d
                  and _WIRE_RESOLVED_TITLE_RE.search(q.get("title") or "")

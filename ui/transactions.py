@@ -242,7 +242,13 @@ def _render_recent_deals():
         else:
             val_note, val_cell = None, "—"
         prem = terms.get("premium_pct")
-        prem_cell = "—" if prem is None else f"{prem:.1f}%"
+        prem_note = "premium to the target's price as stated in the announcement"
+        if prem is None and terms.get("premium_computed") is not None:
+            prem = terms["premium_computed"]
+            prem_note = terms.get("premium_note")
+            prem_cell = f"{prem:.1f}%*"
+        else:
+            prem_cell = "—" if prem is None else f"{prem:.1f}%"
 
         # ── Valuation at announce ──
         p = d.get("p_tbv")
@@ -331,11 +337,12 @@ def _render_recent_deals():
             + _td(ann_cell, "left") + _td(tgt_cell, "left") + _td(acq_cell, "left")
             + _td(mix_cell, "left", mix_title)
             + _td(f"{ratio:g}" if ratio else "—")
-            + _td(_fmt_px(cash))
+            + _td(_fmt_px(cash) if cash or mix != "stock" else "none",
+                  title=("all-stock deal — no cash consideration"
+                         if mix == "stock" and not cash else None))
             + _td(implied_cell, title=terms.get("implied_price_note"))
             + _td(val_cell, title=val_note)
-            + _td(prem_cell, title="premium to the target's price as stated in "
-                                   "the announcement" if prem is not None else None)
+            + _td(prem_cell, title=prem_note if prem is not None else None)
             + _td(ptbv_cell, title=ptbv_note)
             + _td(_fmt_pct(d.get("price_assets")))
             + _td(cdp_cell, title=cdp_note)
@@ -424,9 +431,10 @@ def _render_recent_deals():
                "formula: implied \$/sh = ratio × acquirer close before announce "
                "+ cash; deal value = ratio × close × target shares) · "
                "† = outside a plausibility band (P/TBV 0.2x–8x, P/E ≤ 100x, "
-               "fee ≤ 25% of value — hover) · ᵈ = as stated in the acquirer's "
-               "investor presentation where our own computation is n/a · premium only as "
-               "stated in the release, never from our own prices · P/E = "
+               "fee ≤ 25% of value — hover) · premium* = implied $/sh ÷ the "
+               "target's last close before announcement − 1 where the release "
+               "states none · ᵈ = as stated in the acquirer's "
+               "investor presentation where our own computation is n/a · P/E = "
                "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
                "announce (n/m = loss) · arb: implied offer at the acquirer's "
                "current price, gross spread = offer ÷ target price − 1, "
