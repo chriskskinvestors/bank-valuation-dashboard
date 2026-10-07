@@ -234,10 +234,13 @@ class TestIssuerMatches(unittest.TestCase):
         self.assertFalse(f4._issuer_matches(INSIDER_SALE_XML, 196170))
 
     def test_unparseable_issuer_cik_is_skipped(self):
+        # None (unattributable), not False (foreign): the sweep counts it
+        # unread (test_form4_own_filing_cap.TestFailedFetch).
         bad = INSIDER_SALE_XML.replace("<issuerCik>0000019617</issuerCik>",
                                        "<issuerCik>n/a</issuerCik>")
-        self.assertFalse(f4._issuer_matches(bad, JPM_CIK))
-        self.assertFalse(f4._issuer_matches("<not xml", JPM_CIK))
+        self.assertIsNone(f4._issuer_matches(bad, JPM_CIK))
+        self.assertIsNone(f4._issuer_matches("<not xml", JPM_CIK))
+        self.assertIs(f4._issuer_matches(BANK_AS_OWNER_XML, JPM_CIK), False)
 
 
 class _Resp:

@@ -314,6 +314,7 @@ class _BacWalk(unittest.TestCase):
             clear()
         self.saved = {}
         self.fetched = []
+        self.fail_once = set()   # accessions whose FIRST fetch returns None
         self.xml_for = {a: (OWN_XML if c is OWN else FOREIGN_XML)
                         for a, _, c in BAC_FEED}
         submissions = {"filings": {"recent": {
@@ -323,6 +324,9 @@ class _BacWalk(unittest.TestCase):
 
         def _fetch(acc, cik, primary_doc=None):
             self.fetched.append(acc)
+            if acc in self.fail_once:
+                self.fail_once.discard(acc)
+                return None
             return self.xml_for[acc]
 
         def _save(prefix, name, obj):
@@ -362,14 +366,16 @@ class TestOwnFilingCap(_BacWalk):
         self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED[:57]])
 
     def test_fetch_bound_holds_when_nothing_matches(self):
-        for label, xml in (("all foreign", FOREIGN_XML), ("all failed", None)):
+        # All failed: the bound holds for the walk; the one-retry pass then
+        # re-fetches each failure once (TestFailedFetch pins its coverage).
+        bounded = [a for a, _, _ in BAC_FEED[:f4._MAX_XML_FETCHES]]
+        for label, xml, fetched in (("all foreign", FOREIGN_XML, bounded),
+                                    ("all failed", None, bounded * 2)):
             with self.subTest(label):
                 self.fetched.clear()
                 self.xml_for = dict.fromkeys(self.xml_for, xml)
                 f4.fetch_insider_trades(BAC_CIK, force=True)
-                self.assertEqual(len(self.fetched), f4._MAX_XML_FETCHES)
-                self.assertEqual(self.fetched,
-                                 [a for a, _, _ in BAC_FEED[:f4._MAX_XML_FETCHES]])
+                self.assertEqual(self.fetched, fetched)
                 self.assertEqual(self._kept(), set())
 
     def test_no_extra_fetches_when_every_filing_is_own(self):
@@ -451,6 +457,104 @@ class TestCompleteSince(_BacWalk):
         self.assertEqual({t["accession"] for t in out}, set(_OWN_ACCS[:30]))
 
 
+class TestFailedFetch(_BacWalk):
+    """A Form 4 whose XML can't be fetched (429-exhausted, timeout, 5xx) or
+    attributed (not XML, unparseable issuerCik) was dropped like a foreign
+    filing: a walk that otherwise finished kept complete_since None, so the
+    aggregates looked complete without it. Each failure is now retried once
+    at the end of the walk; one still unread counts as unread —
+    complete_since = newest unread filing_date + 1 day. Rows are 1-based
+    BAC_FEED rows; dates read off the fixture by hand."""
+
+    def _since(self):
+        return self.saved[f"{BAC_CIK}.json"]["complete_since"]
+
+    def test_failure_in_a_walk_that_otherwise_finished(self):
+        # months_back=3: 16 in-window rows (cutoff 2026-07-08), 4 own (rows 2,
+        # 3, 8, 15) — complete (None) when all read. Row 15 (OWN, 2026-07-17)
+        # fails both tries: the 3M window (from 2026-07-07) is missing it, so
+        # coverage starts 2026-07-18. Before: None, 3 filings, looked whole.
+        row15 = BAC_FEED[14]
+        self.assertEqual(row15[1:], ("2026-07-17", OWN))
+        self.xml_for[row15[0]] = None
+
+        f4.fetch_insider_trades(BAC_CIK, months_back=3, force=True)
+
+        self.assertEqual(self._since(), "2026-07-18")
+        self.assertEqual(self._kept(), {BAC_FEED[i][0] for i in (1, 2, 7)})
+        # Walk rows 1-16, then one retry of row 15.
+        self.assertEqual(self.fetched,
+                         [a for a, _, _ in BAC_FEED[:16]] + [row15[0]])
+
+    def test_unattributable_xml_is_unread_not_foreign(self):
+        # Same walk; row 15 serves a document _issuer_matches can't attribute.
+        row15 = BAC_FEED[14][0]
+        bad_cik = OWN_XML.replace("<issuerCik>0000070858</issuerCik>",
+                                  "<issuerCik>n/a</issuerCik>")
+        for label, doc in (("not XML", "<html><body>503</body></html>"),
+                           ("bad issuerCik", bad_cik)):
+            with self.subTest(label):
+                self.xml_for[row15] = doc
+                f4.fetch_insider_trades(BAC_CIK, months_back=3, force=True)
+                self.assertEqual(self._since(), "2026-07-18")
+                self.assertNotIn(row15, self._kept())
+        # A parsed issuerCik naming ANOTHER issuer is a read filing: complete.
+        self.xml_for[row15] = FOREIGN_XML
+        f4.fetch_insider_trades(BAC_CIK, months_back=3, force=True)
+        self.assertIsNone(self._since())
+
+    def test_transient_failure_recovers_on_the_retry(self):
+        # Row 2 (OWN, 2026-09-17) fails its first fetch only. The walk takes
+        # row 58 as its 30th own filing instead of row 57; the retry then
+        # reads row 2 — kept although that makes 31 — and coverage is the
+        # cap's alone: row 59 (2026-03-03) is the newest unwalked → 03-04.
+        row2 = BAC_FEED[1][0]
+        self.assertEqual(BAC_FEED[1][1:], ("2026-09-17", OWN))
+        self.assertEqual(BAC_FEED[57][1:], ("2026-03-03", OWN))
+        self.assertEqual(BAC_FEED[58][1], "2026-03-03")
+        self.fail_once.add(row2)
+
+        f4.fetch_insider_trades(BAC_CIK, force=True)
+
+        self.assertEqual(self._kept(), set(_OWN_ACCS[:31]))
+        self.assertEqual(self._since(), "2026-03-04")
+        self.assertEqual(self.fetched,
+                         [a for a, _, _ in BAC_FEED[:58]] + [row2])
+
+    def test_persistent_failure_on_an_own_filing(self):
+        # Row 2 fails twice: newest unread is 2026-09-17 (newer than the cap's
+        # 2026-03-03) → 2026-09-18, and the 30 kept are own filings 2-31.
+        row2 = BAC_FEED[1][0]
+        self.xml_for[row2] = None
+
+        hist = f4.fetch_insider_history(BAC_CIK, force=True)
+
+        self.assertEqual(self._since(), "2026-09-18")
+        self.assertEqual(hist["complete_since"], "2026-09-18")
+        self.assertEqual(self._kept(), set(_OWN_ACCS[1:31]))
+
+    def test_failure_on_the_newest_filing_nas_every_window(self):
+        # The accepted tradeoff: row 1 (FGN, 2026-10-05) unreadable on both
+        # tries → coverage starts 2026-10-06, so every window shows n/a until
+        # the next sweep — even though the filing turns out not to be BAC's.
+        self.assertEqual(BAC_FEED[0][1:], ("2026-10-05", FGN))
+        self.xml_for[BAC_FEED[0][0]] = None
+        f4.fetch_insider_trades(BAC_CIK, force=True)
+        self.assertEqual(self._since(), "2026-10-06")
+        self.assertEqual(self._kept(), set(_OWN_ACCS[:30]))
+
+    def test_sec_outage_is_not_a_quiet_bank(self):
+        # Every fetch fails in a walk that would otherwise finish (3M): before,
+        # this saved transactions=[] + complete_since None — "no insider
+        # trades". Now the newest in-window filing (row 1, 2026-10-05) bounds
+        # coverage: every window n/a.
+        self.xml_for = dict.fromkeys(self.xml_for, None)
+        f4.fetch_insider_trades(BAC_CIK, months_back=3, force=True)
+        self.assertEqual(self._kept(), set())
+        self.assertEqual(self._since(), "2026-10-06")
+        self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED[:16]] * 2)
+
+
 class TestCompleteSinceCacheObjects(unittest.TestCase):
     """Reading back, and the firehose merge, of the per-CIK cache object."""
 
@@ -503,6 +607,28 @@ class TestCompleteSinceCacheObjects(unittest.TestCase):
         self.assertEqual(obj["complete_since"], "2026-03-04")
         self.assertEqual(obj["cached_at"], "2026-10-06T04:30:00")
         self.assertEqual(len(obj["transactions"]), 3)  # 2 new rows + 1
+
+    def test_firehose_failed_fetch_leaves_the_object_alone(self):
+        # The firehose does not retry or move complete_since: the filing is
+        # newer than the sweep's snapshot (which complete_since describes),
+        # the next poll retries it while it is in the feed, and the nightly
+        # sweep is the backstop. Unattributable XML is skipped the same way.
+        cached = {"cached_at": "2026-10-06T04:30:00",
+                  "transactions": [dict(self.ROW)],
+                  "complete_since": "2026-03-04"}
+        for label, xml in (("fetch failed", None), ("not XML", "<html>")):
+            with self.subTest(label):
+                saved = {}
+                with patch.object(f4, "_recent_form4_filings", lambda pages: [
+                        {"cik": BAC_CIK, "accession": "0000070858-26-000480",
+                         "filed": "2026-10-06", "filed_at": None}]), \
+                     patch.object(f4, "load_json", lambda prefix, name: cached), \
+                     patch.object(f4, "_fetch_form4_xml", lambda acc, cik: xml), \
+                     patch.object(f4, "save_json", lambda prefix, name, obj:
+                                  saved.update({name: obj})):
+                    self.assertEqual(f4.poll_form4_firehose({"BAC": BAC_CIK}),
+                                     (0, 0))
+                self.assertEqual(saved, {})
 
     def test_firehose_merge_into_legacy_or_new_object(self):
         legacy = self._poll({"cached_at": "2026-10-06T04:30:00",

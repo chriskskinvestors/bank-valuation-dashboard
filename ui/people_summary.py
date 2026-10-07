@@ -167,7 +167,8 @@ def render_people_summary(ticker: str):
         since = fetch_insider_history(int(cik))["complete_since"]
         st.caption("Insiders with Form 4 activity "
                    + (f"since {since} (history truncated: the fetch keeps the "
-                      "30 most recent Form 4s)" if since
+                      "30 most recent Form 4s, and one it could not read "
+                      "cuts coverage at its date)" if since
                       else "in the trailing 12 months")
                    + " — an activity roster, not the complete officer/director "
                    "list (that's the proxy table above).")

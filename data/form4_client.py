@@ -157,8 +157,9 @@ def _fetch_form4_xml(accession: str, cik: int,
         return None
 
 
-def _issuer_matches(xml_text: str, cik: int) -> bool:
-    """True when this Form 4's <issuer><issuerCik> is `cik`.
+def _issuer_matches(xml_text: str, cik: int) -> bool | None:
+    """True when this Form 4's <issuer><issuerCik> is `cik`, False when it
+    names another issuer, None when the filing can't be attributed.
 
     A CIK's submissions feed also lists Form 4s that company filed as a
     REPORTING OWNER of another issuer's stock — JPM's lists accession
@@ -167,22 +168,27 @@ def _issuer_matches(xml_text: str, cik: int) -> bool:
     Form 4s held 19 such filings (2026-10-05). Ingesting those booked another
     company's securities as the bank's own insider activity.
 
-    CIKs compare as integers (EDGAR zero-pads: "0000019617" == 19617). An
-    issuerCik that is present but unparseable can't be attributed → False
-    (skip, never guess). The element is schema-required on every real EDGAR
+    CIKs compare as integers (EDGAR zero-pads: "0000019617" == 19617). A
+    document that doesn't parse, isn't an <ownershipDocument> (the index.json
+    fallback returns any .xml body — a well-formed error page included), or
+    has an issuerCik that is present but unparseable, can't be attributed →
+    None: skipped (never guessed), and the sweep counts it as UNREAD, not as
+    a read foreign filing. The element is schema-required on every real EDGAR
     ownership document; one absent entirely carries no conflicting issuer,
     so it is kept."""
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
-        return False
+        return None
+    if root.tag != "ownershipDocument":
+        return None
     raw = root.findtext("issuer/issuerCik")
     if raw is None:
         return True
     try:
         return int(raw.strip()) == int(cik)
     except (TypeError, ValueError):
-        return False
+        return None
 
 
 def _parse_form4(xml_text: str) -> list[dict]:
@@ -371,8 +377,9 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
     Fetch all Form 4 filings for a CIK and parse into transactions.
 
     Returns {"transactions": [...deduped], "complete_since": "YYYY-MM-DD"|None}.
-    complete_since is set when the walk stopped at _MAX_OWN_FILINGS or
-    _MAX_XML_FETCHES with in-window filings unread: every Form 4 filed on or
+    complete_since is set when in-window filings went unread — the walk
+    stopped at _MAX_OWN_FILINGS or _MAX_XML_FETCHES, or a filing's XML could
+    not be fetched or attributed even on a retry: every Form 4 filed on or
     after it was read, so an aggregate whose window starts earlier is
     incomplete. None = the whole window was read (a cache object written
     before the field existed also reads None).
@@ -432,19 +439,12 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
             "primary_doc": primary_docs[i] if i < len(primary_docs) else None,
         })
 
-    # Walk newest-first until _MAX_OWN_FILINGS issuer filings, the window
-    # cutoff, or the per-bank fetch bound. The cap counts only filings that
-    # pass the issuer check: capping first left BAC 11 of its own (2026-10-05).
-    all_transactions = []
-    n_own = n_walked = 0
-    for entry in form4_accessions[:_MAX_XML_FETCHES]:
-        if n_own >= _MAX_OWN_FILINGS:
-            break
-        n_walked += 1
+    def _read(entry):
+        """(xml, True/False/None) — None: fetch failed or unattributable."""
         xml = _fetch_form4_xml(entry["accession"], cik, entry["primary_doc"])
-        if not xml or not _issuer_matches(xml, cik):
-            continue  # missing, or the bank is the reporting owner elsewhere
-        n_own += 1
+        return xml, (_issuer_matches(xml, cik) if xml else None)
+
+    def _take(entry, xml):
         txs = _parse_form4(xml)
         for tx in txs:
             tx["filing_date"] = entry["filing_date"]
@@ -455,13 +455,50 @@ def fetch_insider_history(cik: int, months_back: int = 12, *,
             tx["filed_at"] = entry.get("filed_at")
         all_transactions.extend(txs)
 
+    # Walk newest-first until _MAX_OWN_FILINGS issuer filings, the window
+    # cutoff, or the per-bank fetch bound. The cap counts only filings that
+    # pass the issuer check: capping first left BAC 11 of its own (2026-10-05).
+    all_transactions = []
+    failed = []
+    n_own = n_walked = 0
+    for entry in form4_accessions[:_MAX_XML_FETCHES]:
+        if n_own >= _MAX_OWN_FILINGS:
+            break
+        n_walked += 1
+        xml, own = _read(entry)
+        if own is None:
+            failed.append(entry)  # not read — retried below
+        elif own:
+            n_own += 1
+            _take(entry, xml)
+        # False: the bank is the reporting owner of another issuer — skip.
+
+    # A failed read is NOT a foreign filing: dropping it made the aggregates
+    # look complete (an SEC outage mid-sweep rendered "no insider trades").
+    # Retry each once — a 503 or exhausted 429 is usually transient — and a
+    # filing still unread counts as unread below. One that proves own on the
+    # retry is kept even past the cap: it is newer than the cap's last filing.
+    still_failed = []
+    for entry in failed:
+        xml, own = _read(entry)
+        if own is None:
+            still_failed.append(entry)
+        elif own:
+            _take(entry, xml)
+    if still_failed:
+        print(f"[Form4] CIK {cik}: {len(still_failed)} Form 4(s) unreadable "
+              f"after retry, newest filed {still_failed[0]['filing_date']}",
+              flush=True)
+
     # Sort by transaction date desc
     all_transactions.sort(key=lambda x: x.get("date") or "", reverse=True)
 
-    # Stopped at the cap/bound with in-window filings unread: coverage starts
-    # the day after the newest unread one — not at the oldest READ filing's
+    # In-window filings unread — past the cap/bound, or failed twice: coverage
+    # starts the day after the newest one — not at the oldest READ filing's
     # date, since BAC's 30th own filing (2026-03-03) has unread same-day ones.
-    unread = [e["filing_date"] for e in form4_accessions[n_walked:]]
+    # A failure on today's filing n/a's every window until the next sweep.
+    unread = [e["filing_date"]
+              for e in form4_accessions[n_walked:] + still_failed]
     complete_since = ((datetime.strptime(max(unread), "%Y-%m-%d").date()
                        + timedelta(days=1)).isoformat() if unread else None)
 
