@@ -2372,5 +2372,39 @@ class TestWireStoryUnreachable(unittest.TestCase):
         self.assertEqual((rows, ok), ([], True))
 
 
+class TestAggregateCashLeg(unittest.TestCase):
+    """Byline/Illinois State Bancorp 2026-10-06 (verbatim)."""
+
+    TEXT = ("Byline will issue approximately 1.4 million shares of common stock and "
+            "$28.9 million in cash to Illinois State Bancorp, Inc. shareholders. Fixed "
+            "exchange ratio of 4.5208 Byline shares for each Illinois State Bancorp common "
+            "share outstanding. Based upon the closing price of Byline's common stock of "
+            "$37.63 on October 5, 2026, this represents a fully diluted transaction value "
+            "of approximately $87.9 million or $261.23 per Illinois State Bancorp common "
+            "share. Transaction Multiples Price / TBV: 1.07x(1) Core Deposit Premium: "
+            "1.6%(1) LTM Earnings: 13.1x(1)")
+
+    def test_aggregate_cash_leg_is_mixed_and_never_priced_stock_only(self):
+        from data.ma_announcements import extract_terms, implied_offer
+        t = extract_terms(self.TEXT)
+        self.assertEqual((t["exchange_ratio"], t["cash_per_share"], t["consideration"]),
+                         (4.5208, None, "mixed"))
+        # 4.5208 x $37.63 = $170.12 would omit the ~$91/sh cash leg: n/a.
+        self.assertEqual(implied_offer(t, 36.87, basis_label="BY"), (None, None))
+        self.assertEqual(t["implied_price_stated"], 261.23)
+
+    def test_deck_ltm_earnings_colon_form(self):
+        from data.ma_announcements import extract_deck_metrics
+        self.assertEqual(extract_deck_metrics(self.TEXT),
+                         {"deck_p_tbv": 1.07, "deck_p_e_ltm": 13.1, "deck_core_dep_premium": 0.016})
+
+    def test_all_stock_stays_stock(self):
+        from data.ma_announcements import extract_terms
+        t = extract_terms("Peoples will acquire Capital in an all-stock transaction. Capital "
+                          "shareholders will receive 1.11 shares of Peoples common stock for "
+                          "each share of Capital common stock.")
+        self.assertEqual(t["consideration"], "stock")
+
+
 if __name__ == "__main__":
     unittest.main()
