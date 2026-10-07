@@ -69,14 +69,17 @@ def spread_series(terms: dict, announce_date: str, acq_hist, tgt_hist,
     from data.deal_comps import merger_arb
     acq, tgt = _closes(acq_hist), _closes(tgt_hist)
     out, dropped = [], 0
-    for iso in sorted(set(acq) & set(tgt)):
+    # An all-cash offer does not move with the acquirer (who may not even be
+    # listed — First Seacoast's buyer is a mutual holding company).
+    cash_only = (terms or {}).get("consideration") == "cash"
+    for iso in sorted(set(tgt) if cash_only else set(acq) & set(tgt)):
         # From the first trading day AFTER the announcement: a deal announced
         # after the close leaves that day's target close at the pre-deal
         # price (Colony/First Reliance and First Financial/Finward read ~30%
         # on announcement day in the first preview, 2026-10-07).
         if iso <= announce_date:
             continue
-        arb = merger_arb(terms, acq[iso], tgt[iso], date.fromisoformat(iso),
+        arb = merger_arb(terms, acq.get(iso), tgt[iso], date.fromisoformat(iso),
                          acq_ticker=acq_ticker)
         g = arb["gross_spread"]
         if g is None:
@@ -84,7 +87,7 @@ def spread_series(terms: dict, announce_date: str, acq_hist, tgt_hist,
         if abs(g) > _BAD_PRINT:
             dropped += 1
             continue
-        out.append({"date": iso, "acq": acq[iso], "tgt": tgt[iso],
+        out.append({"date": iso, "acq": acq.get(iso), "tgt": tgt[iso],
                     "offer": round(arb["implied_offer"], 4),
                     "gross": round(g, 6),
                     "annualized": (round(arb["annualized_spread"], 6)
@@ -111,7 +114,8 @@ def _skip_reason(d: dict) -> str | None:
     terms = d.get("terms") or {}
     if not d.get("target_ticker"):
         return "target not listed — no price history"
-    if not d.get("buyer_ticker"):
+    if not d.get("buyer_ticker") and not ((d.get("terms") or {}).get("consideration") == "cash"
+                                          and (d.get("terms") or {}).get("cash_per_share")):
         return "acquirer not listed"
     mix = terms.get("consideration")
     if mix == "election" and (terms.get("stock_pct") is None
@@ -155,7 +159,8 @@ def build_spread_histories(deals: list[dict], history=None) -> dict:
             continue
         terms = d.get("terms") or {}
         series, dropped = spread_series(terms, d.get("announce_date") or "",
-                                        _hist(d["buyer_ticker"]), _hist(d["target_ticker"]),
+                                        _hist(d["buyer_ticker"]) if d.get("buyer_ticker") else None,
+                                        _hist(d["target_ticker"]),
                                         acq_ticker=d["buyer_ticker"])
         if not series:
             out["skipped"].append({"key": key, "label": label,

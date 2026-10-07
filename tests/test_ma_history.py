@@ -504,7 +504,7 @@ class TestPendingDeals(_AnnPatched):
         self.assertIsNone(d["completion_date"])
         self.assertEqual(d["announce_date"], "2026-07-13")
         self.assertEqual(d["counterparty"],
-                         {"name": "TriCo Bancshares", "cert": 21943})
+                         {"name": "TriCo Bancshares", "cert": 21943, "ticker": "TCBK"})
         self.assertEqual(d["value_usd"], 2_014_271_431)
         # Target assets at announce for the LIVE counterparty cert.
         self.assertEqual(d["target_assets"], 9_800_000_000)

@@ -324,11 +324,17 @@ def build_comps_snapshot(banks: list[dict],
         for d in deals:
             if d.get("deal_kind") != "whole_company" or d.get("internal"):
                 continue
+            row_b, row_cert = b, cert
             if d.get("direction") == "sale" and d.get("status") in (
                     "completed", "pending"):
                 # The acquirer's row carries the deal — a pending deal
-                # otherwise appears under BOTH filers' 425 episodes.
-                continue
+                # otherwise appears under BOTH filers' 425 episodes. Unless
+                # the acquirer is NOT in the universe (a mutual holding
+                # company, a private buyer): then the target's row is the
+                # only one, shown from the target's side.
+                if not _sale_to_unlisted(d):
+                    continue
+                row_b, row_cert, d = _as_target_view(b, cert, d)
             k = _dedupe_key(d, cert)
             prev = by_key.get(k)
             if prev is not None:
@@ -343,7 +349,7 @@ def build_comps_snapshot(banks: list[dict],
                     continue
             mult, m_ok = compute_multiples(d)
             lookups_ok = lookups_ok and m_ok
-            by_key[k] = _snapshot_row(b, cert, d, mult)
+            by_key[k] = _snapshot_row(row_b, row_cert, d, mult)
     rows = list(by_key.values())
     if not lookups_ok:
         print("[deal_comps] lookups failed during build — snapshot NOT cached")
@@ -367,6 +373,27 @@ def build_comps_snapshot(banks: list[dict],
     }
     cache.put(SNAPSHOT_KEY, snapshot)
     return snapshot
+
+
+def _sale_to_unlisted(d: dict) -> bool:
+    """A PENDING sale whose buyer is not a universe bank (no ticker): the
+    target's row is the deal's only row (First Seacoast to Cambridge
+    Financial Group, a mutual holding company, $17.25 cash)."""
+    return (d.get("direction") == "sale" and d.get("status") == "pending"
+            and not (d.get("counterparty") or {}).get("ticker"))
+
+
+def _as_target_view(b: dict, cert, d: dict) -> tuple[dict, object, dict]:
+    """(buyer-like, buyer cert, deal) for a sale row re-oriented so the
+    universe bank is the TARGET and the unlisted buyer the acquirer."""
+    cp = d.get("counterparty") or {}
+    terms = dict(d.get("terms") or {})
+    terms["tgt_ticker"] = b.get("ticker")
+    terms["acq_ticker"] = None
+    deal = {**d, "direction": "acquisition", "terms": terms,
+            "counterparty": {"name": b.get("name") or b.get("ticker"), "cert": cert},
+            "target_cik": b.get("cik"), "target_assets": d.get("target_assets")}
+    return {"ticker": None, "name": cp.get("name")}, cp.get("cert"), deal
 
 
 def _snapshot_row(b: dict, cert, d: dict, mult: dict) -> dict:
@@ -458,8 +485,11 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
         walked += 1
         fresh: dict[tuple, dict] = {}
         for d in rows:
+            row_b, row_cert = b, cert
             if d.get("direction") == "sale":
-                continue              # the acquirer's row carries the deal
+                if not _sale_to_unlisted(d):
+                    continue          # the acquirer's row carries the deal
+                row_b, row_cert, d = _as_target_view(b, cert, d)
             k = _dedupe_key(d, cert)
             prev = fresh.get(k)
             if prev is not None and (d.get("target_assets") or 0) <= (
@@ -469,7 +499,7 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
             if not m_ok:
                 ok = False
                 break
-            fresh[k] = _snapshot_row(b, cert, d, mult)
+            fresh[k] = _snapshot_row(row_b, row_cert, d, mult)
         if not ok:
             failed.add(cert)
             retry.append(b)

@@ -431,7 +431,7 @@ def _render_recent_deals():
                "formula: implied \$/sh = ratio × acquirer close before announce "
                "+ cash; deal value = ratio × close × target shares) · "
                "† = outside a plausibility band (P/TBV 0.2x–8x, P/E ≤ 100x, "
-               "fee ≤ 25% of value — hover) · premium* = implied $/sh ÷ the "
+               "fee ≤ 25% of value — hover) · premium* = implied \$/sh ÷ the "
                "target's last close before announcement − 1 where the release "
                "states none · ᵈ = as stated in the acquirer's "
                "investor presentation where our own computation is n/a · P/E = "

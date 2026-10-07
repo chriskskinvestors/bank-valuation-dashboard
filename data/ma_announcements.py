@@ -696,7 +696,7 @@ _EXPECTED_CLOSE_RE = re.compile(
     r"((?:in|during|by|on\s+or\s+before|before|prior\s+to|late\s+in|early"
     r"\s+in|around)\s+[^.;]{3,90})", re.IGNORECASE)
 _CLOSE_CUT_RE = re.compile(
-    r",?\s+(?:subject\s+to|pending|assuming|contingent|following|and\s+is|"
+    r",?\s+(?:subject\s+to|pending|assuming|contingent|following|and\s+(?:is|be)|"
     r"which|with\s+the)\b", re.IGNORECASE)
 _ORD = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
         "fourth": 4, "4th": 4}
@@ -1019,6 +1019,12 @@ def classify_consideration(text: str, ratio, cash) -> str | None:
     """'stock' | 'cash' | 'mixed' | 'election' | None from the extracted
     components first, the PR's own wording second."""
     if ratio and cash:
+        if any(rx.search(text) for rx in (_RATIO_EQUATE_RE, _RATIO_AND_CASH_AMOUNT_RE,
+                                          _RATIO_MIXED_RE, _RATIO_CASH_AND_SHARES_RE)):
+            # "$210.41 in cash and 3.7052 shares ... per Century share"
+            # (Bank7 2026-09-17) pays both; it showed as an election at a
+            # blended $205.93 instead of $412.60.
+            return "mixed"
         return "election" if _ELECTION_RE.search(text) else "mixed"
     if ratio:
         # A cash leg stated only in aggregate ("1.4 million shares of common
@@ -1618,6 +1624,10 @@ _SUBJECT_LEGEND_RE = re.compile(
     r"Subject\s+Compan(?:y|ies)\s*:?\s*(.{3,80}?)\s*(?:Commission\s+File|"
     r"\(Commission|Registration\s+No|P\.?O\.?\s+Box|\d{3,5}\s+[A-Z][a-z]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Broadway|Drive|Dr|Boulevard|Blvd))",
     re.IGNORECASE)
+_PER_SHARE_SIDE_RE = re.compile(
+    r"each\s+(?:outstanding\s+)?share\s+of\s+([A-Z][\w.,&'\- ]{1,60}?)(?:['’]s)?\s+"
+    r"(?:Class\s+[AB]\s+)?(?:common\s+)?stock[^.]{0,200}?(?:converted|right)\s+"
+    r"[^.]{0,40}?receive\s+(?:\$|\d|either|cash|a\s+pro\s+rata)")
 _ANN_SCAN_CAP = 8               # announcement-candidate documents read per
                                 # filer (newest first); the oldest per
                                 # counterparty is the announcement
@@ -1749,6 +1759,7 @@ def _clean_company_name(phrase: str) -> str:
     # 2026 release) is Citizens Bank of Kentucky: the trailing capitalized
     # run, when the phrase has a lowercase lead-in.
     p = _trailing_name(p)
+    p = re.sub(r",?\s+(?:as|being)\s+the\s+surviving\s+\w+.*$", "", p, flags=re.IGNORECASE)
     return _uncap(p.strip(" .,"))
 
 
@@ -1983,6 +1994,16 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
             if _is_self(_clean_company_name(m.group(1))):
                 direction = "sale"
                 break
+        # The per-share consideration sentence names the side being BOUGHT:
+        # "each share of Company common stock ... will be converted into the
+        # right to receive $17.25 in cash" — "Company" is First Seacoast
+        # itself (2026-05-05), shown as the acquirer before.
+        for m in _PER_SHARE_SIDE_RE.finditer(text):
+            side = expand_defined_term(_clean_company_name(m.group(1)), text)
+            if _is_self(side):
+                direction = "sale"
+                break
+        counterparty = expand_defined_term(counterparty, text)
         # The ratio sentence's per-share side is the target: a seller's own
         # 8-K carrying the joint release lists the buyer's ticker pair first
         # (Tri-County's 8-K, 2026-08-10) and would otherwise read as an

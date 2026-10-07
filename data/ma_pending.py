@@ -891,8 +891,13 @@ def find_pending_deals(cik, subject_name: str,
             ok = ok and c_ok
             if c_cert:
                 r["counterparty_cert"] = c_cert
-        if (isinstance(terms, dict) and terms.get("implied_price") is None
-                and (terms.get("exchange_ratio") or terms.get("cash_per_share"))):
+        # Price when unpriced; re-check a STATED price that was never compared
+        # with ratio x close (First Carolina's "$64.22 per share", 2026-10-07).
+        if (isinstance(terms, dict)
+                and (terms.get("exchange_ratio") or terms.get("cash_per_share"))
+                and (terms.get("implied_price") is None
+                     or (terms.get("implied_price_basis") == "stated"
+                         and terms.get("acq_close_at_announce") is None))):
             own = ticker
             cp_t = r.get("counterparty_ticker")
             acq_t = own if r["direction"] == "acquisition" else cp_t
