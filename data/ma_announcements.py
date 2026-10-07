@@ -635,7 +635,7 @@ _IMPLIED_PRICE_DECK2_RE = re.compile(
     + r"|\$\s?" + _NUM + r"\s+implied\s+per\s+share", re.IGNORECASE)
 _IMPLIED_PRICE_OR_RE = re.compile(
     r"(?:million|billion),?\s+or\s+(?:approximately\s+|about\s+)?\$\s?" + _NUM
-    + r"\s+per\s+(?:\w+\s+){0,3}?share\b", re.IGNORECASE)
+    + r"\s+per\s+(?:\w+\s+){0,5}?share\b", re.IGNORECASE)
 
 # Premium as STATED: "a premium of approximately 28% to ..." / "a 28%
 # premium to the closing price". Window-gated to PRICE context (closing /
@@ -800,6 +800,7 @@ _DECK_PTBV_RE = re.compile(
     r"(\d\.\d{1,2})\s?x\b", re.IGNORECASE)
 _DECK_PE_RE = re.compile(
     r"(\d{1,2}\.\d)\s?x\s+ltm\s+(?:earnings|eps)|"
+    r"ltm\s+(?:earnings|eps)\s*(?:\(\d\))?:\s*(\d{1,2}\.\d)\s?x|"
     r"price\s*/\s*ltm\s+(?:earnings|eps)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*(\d{1,2}\.\d)\s?x",
     re.IGNORECASE)
 _DECK_CDP_RE = re.compile(
@@ -953,12 +954,25 @@ def extract_mix_pcts(text: str) -> tuple[float, float] | None:
     return found.pop() if len(found) == 1 else None
 
 
+_AGG_CASH_LEG_RE = re.compile(
+    r"\$\s?[\d.,]+\s*(?:million|billion)\s+in\s+cash\s+to\s+(?:(?!\.\s+(?-i:[A-Z])).){0,80}?"
+    r"(?:shareholders|stockholders|holders)|"
+    r"\b(?:cash[- ]and[- ]stock|stock[- ]and[- ]cash)\s+(?:transaction|deal|merger)",
+    re.IGNORECASE)
+
+
 def classify_consideration(text: str, ratio, cash) -> str | None:
     """'stock' | 'cash' | 'mixed' | 'election' | None from the extracted
     components first, the PR's own wording second."""
     if ratio and cash:
         return "election" if _ELECTION_RE.search(text) else "mixed"
     if ratio:
+        # A cash leg stated only in aggregate ("1.4 million shares of common
+        # stock and $28.9 million in cash to ... shareholders", Byline
+        # 2026-10-06) makes the deal mixed with per-share cash unknown —
+        # pricing it as stock-only understated the offer by a third.
+        if _AGG_CASH_LEG_RE.search(text):
+            return "mixed"
         return "stock"
     if cash:
         if _STOCK_LEG_RE.search(text) or _cash_with_unparsed_stock_leg(text):
