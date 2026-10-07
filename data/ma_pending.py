@@ -510,9 +510,25 @@ def _wire_resolved(ticker: str | None, needles: list[str],
         title = q.get("title") or ""
         if not _WIRE_RESOLVED_TITLE_RE.search(title):
             continue
-        blob = f"{title} {q.get('text') or ''}".lower()
-        if any(_needle_in(n, blob) for n in needles):
+        if _release_resolves(title, q.get("text") or "", needles):
             return True
+    return False
+
+
+def _release_resolves(title: str, text: str, needles: list[str]) -> bool:
+    """A completion/termination-titled release is ABOUT the counterparty
+    when its title names it, or the completion wording sits within 150
+    chars of the name in the body. "Announces Closing of Subordinated Notes
+    Offering" with the pending deal in its boilerplate is not a close."""
+    low_t = title.lower()
+    if any(_needle_in(n, low_t) for n in needles):
+        return True
+    low = (text or "").lower()
+    for n in needles:
+        for m in re.finditer(re.escape(n), low):
+            around = low[max(0, m.start() - 150):m.end() + 150]
+            if _WIRE_RESOLVED_TITLE_RE.search(around):
+                return True
     return False
 
 
@@ -655,7 +671,7 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         later = [q for q in prs
                  if (q.get("published_at") or "")[:10] > d
                  and _WIRE_RESOLVED_TITLE_RE.search(q.get("title") or "")
-                 and token_in(ct, f"{q.get('title') or ''} {q.get('text') or ''}".lower())]
+                 and _release_resolves(q.get("title") or "", q.get("text") or "", [ct])]
         if later:
             continue              # closed, terminated or otherwise resolved
         seen.add(ct)

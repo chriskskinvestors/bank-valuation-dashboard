@@ -1456,7 +1456,9 @@ _ACQUIRE_OBJ_RE = re.compile(
     r"(?:agreement\s+to\s+acquire|will\s+acquire|to\s+acquire|"
     r"acquisition\s+of|acquire\s+100%\s+of\s+the\s+stock\s+of)\s+"
     r"((?:\d{1,2}(?:st|nd|rd|th)\s+)?[A-Z][\w.,&'\- ]{2,60}?)"
-    r"(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s)")
+    r"(?:\s*\(|\s+in\s+an?\s|,\s+the\s|\.\s|\s+and\s|"
+    r"\s+to\s+(?:expand|create|form|enter|strengthen|bolster|grow|become|"
+    r"build|extend|add|accelerate)\b)", re.IGNORECASE)
 # An ordinal-led bank name ("1st Colonial Bancorp", "1st Source") is a
 # name; any other digit in a capture is a dateline / amount run-on.
 _ORDINAL_NAME_RE = re.compile(r"^\d{1,2}(?:st|nd|rd|th)\s+[A-Z]")
