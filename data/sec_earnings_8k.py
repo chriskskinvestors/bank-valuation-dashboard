@@ -488,6 +488,78 @@ def _grid_rows(grid: list, spans: list | None = None) -> list[tuple]:
         if not any(n is not None for n in nums):
             continue
         out.append((r, cl, nums, cols))
+    if spans is not None:
+        out = _rebase_offset_blocks(grid, spans, out)
+    return out
+
+
+# A header cell that names a period: a year or a month.
+_PERIOD_CUE = re.compile(
+    r"\b(?:19|20)\d{2}\b|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b",
+    re.I)
+
+
+def _rebase_offset_blocks(grid: list, spans: list, rows: list) -> list:
+    """Re-base a block of rows whose own section uses different columns than
+    the rest of its <table>. Some releases are ONE table of several sections
+    with different grids: SYBT 2Q26's "June 30, 2026 | 2025" balance-sheet
+    section sits in columns 10/14 of a table whose five-quarter section
+    starts at column 2, so its "Tangible common equity per share" read
+    [None, None, None, None, 31.39, …] and rendered n/a (RBKB "Other Data",
+    UBSI "EOP Share Data" alike).
+
+    A block — consecutive data rows between non-data rows — is re-based to
+    start at its first populated column only when (a) it has ≥2 rows, (b)
+    NO row in it has a value left of that column (the whole block is offset;
+    one row's blank latest cell still reads None, audit P3, because its
+    block-mates fill the column), and (c) the header governing it — the
+    nearest header rows above that name a period over that column (or the
+    one left of it: '$' layouts head the '$' column) — names NO period over
+    the columns it skips. A header naming the skipped column too ("2026 |
+    2026 | 2025" over an all-blank first column) says that column IS the
+    latest quarter, merely blank: the rows stay [None, …] (audit P3). RBKB's
+    book values sit under its single top header, which also heads the
+    skipped three-month columns — left as is."""
+    blocks: list[list[int]] = []
+    for i, (r, *_rest) in enumerate(rows):
+        if _is_year_header(grid[r]):
+            continue
+        if blocks and rows[blocks[-1][-1]][0] == r - 1:
+            blocks[-1].append(i)
+        else:
+            blocks.append([i])
+    data_rows = {r for r, *_rest in rows if not _is_year_header(grid[r])}
+
+    def cue_over(k, cols):
+        return any(_PERIOD_CUE.search(t) for a, b, t in spans[k]
+                   if any(a <= c <= b for c in cols))
+
+    out = list(rows)
+    for blk in blocks:
+        if len(blk) < 2:
+            continue
+        first = min(next(c for n, c in zip(rows[i][2], rows[i][3]) if n is not None)
+                    for i in blk)
+        skipped = sorted({c for i in blk for c in rows[i][3] if c < first})
+        if not skipped:
+            continue                        # nothing to the left: not offset
+        # The governing header: the nearest header row above naming a period
+        # over the block's first column, with its contiguous header rows.
+        k = next((k for k in range(rows[blk[0]][0] - 1, -1, -1)
+                  if k not in data_rows and cue_over(k, (first, first - 1))), None)
+        if k is None:
+            continue
+        lo = hi = k
+        while lo > 0 and lo - 1 not in data_rows:
+            lo -= 1
+        while hi + 1 < len(grid) and hi + 1 not in data_rows:
+            hi += 1
+        if any(cue_over(j, skipped) for j in range(lo, hi + 1)):
+            continue
+        for i in blk:
+            r, cl, nums, cols = rows[i]
+            keep = [(n, c) for n, c in zip(nums, cols) if c >= first]
+            out[i] = (r, cl, [n for n, _ in keep], [c for _, c in keep])
     return out
 
 
@@ -1763,7 +1835,8 @@ def latest_earnings_8k_figures(cik) -> dict | None:
     # v5: row/column semantics — year-to-date / prior-quarter columns,
     #     non-GAAP & segment tables, split average headers, attributable net
     #     income, tax-equivalent NII (_headline_candidates).
-    ckey = f"earnings_8k:v5:{f8k['accession']}"
+    # v6: offset sections of a multi-grid table re-based (WAL, SYBT, UBSI).
+    ckey = f"earnings_8k:v6:{f8k['accession']}"
     # Accession-keyed and version-prefixed = immutable; the default 24h read
     # ceiling would silently re-run the fetch+parse for every bank every day.
     payload = cache.get(ckey, max_age_s=None)
@@ -1991,8 +2064,9 @@ def reported_bvps_status(
     # v9: supplement rows read from the release-quarter column (STT).
     # v10: a per-common label that ties TOTAL equity ÷ shares beside preferred
     #      is per-total-equity → not_disclosed (PCB), never a conflict.
+    # v11: offset sections of a multi-grid table re-based (SYBT/RBKB/UBSI).
     return _window_status(
-        cik, "reported_bvps:v10", f"{rk}:{tk}",
+        cik, "reported_bvps:v11", f"{rk}:{tk}",
         lambda html, pe: extract_reported_bvps_status(
             html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
 
@@ -2100,7 +2174,9 @@ def reported_share_basis(cik, common_equity: float | None) -> float | None:
 #      column to _table_rows (BHB: every row read [None, 23.43, …]).
 # v14: supplement rows read from the column headed by the release quarter
 #      (STT oldest-first addendum) + self-tying bare rows (BYFC).
-_REPORTED_TBVPS_CKEY_V = "v14"
+# v15: offset sections of a multi-grid table re-based (SYBT/RBKB/UBSI —
+#      _rebase_offset_blocks).
+_REPORTED_TBVPS_CKEY_V = "v15"
 
 
 def reported_tbvps_status(

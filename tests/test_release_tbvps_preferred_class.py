@@ -286,7 +286,7 @@ class TestSameQuarterWindow(_Site):
     def test_newest_answer_is_never_second_guessed(self):
         self._bcbp()
         import data.cache as cache
-        cache.put("reported_tbvps:v14:000119312526339642:14.7320:na",
+        cache.put(f"reported_tbvps:{se8k._REPORTED_TBVPS_CKEY_V}:000119312526339642:14.7320:na",
                   {"value": None, "status": "gate_rejected"})
         self.assertEqual(se8k.reported_tbvps_status(BCBP, reconstructed=14.732),
                          (None, "gate_rejected"))
@@ -305,7 +305,7 @@ class TestSameQuarterWindow(_Site):
             self.assertEqual(se8k.reported_tbvps_status(BCBP, reconstructed=14.732),
                              (None, "not_disclosed"))
         self.assertIsNone(cache.get(
-            "reported_tbvps:v14:000119312526339642:14.7320:na", max_age_s=None))
+            f"reported_tbvps:{se8k._REPORTED_TBVPS_CKEY_V}:000119312526339642:14.7320:na", max_age_s=None))
 
 
 if __name__ == "__main__":
