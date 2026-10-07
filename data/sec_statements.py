@@ -13,6 +13,7 @@ design in docs/DATA-SOURCING-ARCHITECTURE.md.
 """
 from __future__ import annotations
 
+import functools
 import re
 
 from lxml import etree, html as lhtml
@@ -344,12 +345,16 @@ def _units_scale(title: str) -> float:
     share COUNTS, not dollars (KEY's income title is '… shares in Thousands,
     $ in Millions' — keying off the first 'in thousands' would wrongly scale
     every dollar line by 1e3 instead of 1e6). Prefer the explicit '$ in <unit>',
-    then fall back to a bare 'in <unit>' for titles that omit the '$'."""
+    then fall back to a bare 'in <unit>' for titles that omit the '$' — but
+    never the 'shares in <unit>' clause itself: BMRC's 10-Qs since Q3-2025
+    title their income statement '… - USD ($) shares in Thousands' with the
+    dollars in whole units, and reading that clause as the dollar scale
+    rendered Q2'26 net income $9.2B (the filing: $9,246,000)."""
     t = title.lower()
     m = re.search(r"\$\s*in\s+(thousands|millions|billions)", t)
     if m:
         return _SCALE_WORD[m.group(1)]
-    m = re.search(r"\bin\s+(thousands|millions|billions)", t)
+    m = re.search(r"(?<!shares )\bin\s+(thousands|millions|billions)", t)
     if m:
         return _SCALE_WORD[m.group(1)]
     return 1.0
@@ -1168,8 +1173,20 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
     liabilities and equity') and stay separate — a merge can never overwrite or
     invent a value. The surviving row keeps the label whose values reach the NEWEST
     (leftmost) period; absorbed values fill only its blank cells. Header rows never
-    merge. The injected 'shares issued not disclosed' placeholder is dropped."""
-    if not stmt or not stmt.get("rows"):
+    merge. The injected 'shares issued not disclosed' placeholder is dropped.
+
+    CO-REPORTED guard (tiers 2-3, P1-6): two DIFFERENT elements never fold when
+    one filing reports them on separate lines (stmt["_cooccur"], from
+    _element_cooccurrence), or when one is reported beside a member of the
+    other's label family it does not itself resemble (_sibling) — the period
+    guard alone let the provision line swap values with 'net interest income
+    after provision' (SLBK/RNST/NKSH/FNWD) and discontinued-ops EPS fill basic
+    EPS (FRST). Cell restatement notes travel with their values."""
+    if not stmt:
+        return stmt
+    stmt = dict(stmt)
+    cooccur = stmt.pop("_cooccur", None) or {}     # element -> {filing index}
+    if not stmt.get("rows"):
         return stmt
     rows = [r for r in stmt["rows"]
             if r["header"] or not _PLACEHOLDER_LABEL.search(r["label"])]
@@ -1177,10 +1194,50 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
     n = len(stmt.get("periods") or [])
     out: list = []
     out_sect: list = []                         # section id parallel to `out`
+    o_elems: list = []                          # elements folded into each `out` row
+    compat: dict = {}
+
+    def _compatible(a: str, b: str) -> bool:
+        if (a, b) not in compat:
+            compat[(a, b)] = _variant_compatible(a, b)
+        return compat[(a, b)]
+
+    def _family_neighbour(elems: set, label: str, own_label: str, kind,
+                          skip: set) -> bool:
+        """Some row x (an element outside `skip`, same kind) shares a filing
+        with one of `elems`, is variant-compatible with `label` and NOT with
+        `own_label` — a member of the other row's family that this row is
+        reported beside without resembling it."""
+        mine = set().union(*(cooccur.get(e, set()) for e in elems)) if elems else set()
+        if not mine:
+            return False
+        for x in rows:
+            ex = x.get("element_id", "")
+            if (x["header"] or not ex or ex in skip or x.get("kind") != kind
+                    or not (mine & cooccur.get(ex, set()))):
+                continue
+            if _compatible(label, x["label"]) and not _compatible(own_label, x["label"]):
+                return True
+        return False
+
+    def _sibling(r: dict, o: dict, o_eids: set) -> bool:
+        """r and o are two parts of one label family, not a relabel: one of
+        them is reported beside a member of the other's family that it does
+        not itself resemble (FRST: discontinued-ops EPS beside continuing-ops
+        EPS, a member of basic EPS's family). A neighbour resembling BOTH
+        (PNC: 'Net income attributable to common shareholders' beside 2021's
+        'Net income (loss)') says nothing — the relabel still folds."""
+        r_e = {r.get("element_id", "")} - {""}
+        skip = r_e | set(o_eids)
+        return (_family_neighbour(r_e, o["label"], r["label"], r.get("kind"), skip)
+                or _family_neighbour(set(o_eids), r["label"], o["label"], r.get("kind"),
+                                     skip))
+
     for ri, r in enumerate(rows):
         if r["header"]:
             out.append(dict(r))
             out_sect.append(sect[ri])
+            o_elems.append(set())
             continue
         r_eid = r.get("element_id", "")
         r_orphan = _is_orphan(r["values"])
@@ -1189,6 +1246,7 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
             if o["header"]:
                 continue
             o_eid = o.get("element_id", "")
+            o_eids = o_elems[oi]
             same_element = bool(r_eid) and r_eid == o_eid
             # Tier 2 orphan absorption: a true all-blank orphan (on either side),
             # same section, near-synonym labels.
@@ -1206,20 +1264,49 @@ def _consolidate_variants(stmt: dict | None) -> dict | None:
             # share count as $/share or vice versa (P0-3).
             if (o.get("kind") and r.get("kind")) and o["kind"] != r["kind"]:
                 continue
+            # Never fold two DIFFERENT elements that one filing reports on
+            # separate lines: they are distinct lines however the labels read
+            # (EBC: 'Net (loss) income from discontinued operations' is a
+            # token-superset of 'Net income (loss)'; BYFC/SLBK/RNST:
+            # 'Provision for credit losses' of 'Net interest income after
+            # provision for credit losses' — the old fold swapped their
+            # values). Nor when r is reported beside ANOTHER member of o's
+            # label family: FRST's 10-Ks show continuing-ops EPS beside basic
+            # EPS, and discontinued-ops EPS beside continuing-ops EPS — so
+            # discontinued EPS (2021: 0.01) is a sibling of basic EPS, never
+            # its relabel, though the two never share a filing. A blank
+            # duplicate row beats a wrong number.
+            if r_eid and any(e != r_eid for e in o_eids) and (
+                    any(cooccur.get(r_eid, set()) & cooccur.get(e, set())
+                        for e in o_eids if e != r_eid)
+                    or _sibling(r, o, o_eids)):
+                continue
             # Guard: skip if ANY period already holds a value in BOTH rows.
             if any(o["values"][i] is not None and r["values"][i] is not None
                    for i in range(min(len(o["values"]), len(r["values"])))):
                 continue
-            target = o
+            target, target_i = o, oi
             break
         if target is None:
             out.append(dict(r))
             out_sect.append(sect[ri])
+            o_elems.append({r_eid} if r_eid else set())
             continue
+        if r_eid:
+            o_elems[target_i].add(r_eid)
         merged = [target["values"][i] if (i < len(target["values"])
                   and target["values"][i] is not None)
                   else (r["values"][i] if i < len(r["values"]) else None)
                   for i in range(n)]
+        if target.get("restated") or r.get("restated"):
+            # A cell's restatement note travels with the value it describes.
+            tn = target.get("restated") or [None] * n
+            rn = r.get("restated") or [None] * n
+            tv = target["values"] + [None] * n
+            rv = r["values"] + [None] * n
+            target["restated"] = [tn[i] if tv[i] is not None
+                                  else rn[i] if rv[i] is not None
+                                  else (tn[i] or rn[i]) for i in range(n)]
 
         def _first(vals):
             return next((i for i, v in enumerate(vals) if v is not None), n)
@@ -1260,8 +1347,12 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
     statement. Pure (no network) — unit-testable."""
     if not parsed:
         return None
+    # Newest first; two periods in one calendar year (a fiscal-year-end change:
+    # HNVR Sep-2023 and Dec-2023) order by month — keying on the year alone
+    # left their order to set iteration, i.e. to the process's hash seed.
     all_periods = sorted({p for f in parsed for p in f["periods"]},
-                         key=_period_year, reverse=True)[:n_years]
+                         key=lambda p: (_period_year(p), _period_key(p) or (0, 0)),
+                         reverse=True)[:n_years]
     def _column(f, period):
         idx = f["periods"].index(period)
         return {k: (r["values"][idx] if idx < len(r["values"]) else None)
@@ -1274,35 +1365,46 @@ def _stitch_statement(parsed: list, n_years: int = 5) -> dict | None:
     # THAT period's cell blank (KEY's latest balance sheet carries Dec-31-2023 as
     # a third date but fills only a few rows — Total assets is blank); such a hole
     # is backfilled from the newest OLDER filing that reports a number for that
-    # exact (line, period). Never overwrites a real owner value.
+    # exact (line, period). Never overwrites a real owner value — and never
+    # crosses a reverse-merger break (_recast_break): a hole in the accounting
+    # acquirer's recast column is NOT filled from the legacy registrant's own
+    # 10-K (that would splice two companies into one column — P1-6).
+    brk = _recast_break(parsed)
+
+    def _same_basis(a, b):
+        return not brk or ((_filed(a) < brk) == (_filed(b) < brk))
+
     col: dict = {}                              # period -> {norm_key: value}
+    src: dict = {}                              # period -> [filings used]
+    orig: dict = {}                             # period -> (oldest filing, its column)
     for period in all_periods:
         owner_idx = next((i for i, f in enumerate(parsed)
                           if period in f["periods"]), None)
         if owner_idx is None:
             col[period] = {}
             continue
-        merged = _column(parsed[owner_idx], period)   # owner defines present lines
+        owner = parsed[owner_idx]
+        merged = _column(owner, period)               # owner defines present lines
+        used = [owner]
         for key, val in list(merged.items()):
             if val is None:                           # a hole in an existing line
                 for f in parsed[owner_idx + 1:]:      # older filings, newest first
-                    if period in f["periods"]:
+                    if period in f["periods"] and _same_basis(owner, f):
                         older = _column(f, period).get(key)
                         if older is not None:
                             merged[key] = older
+                            if f not in used:
+                                used.append(f)
                             break
         col[period] = merged
-    rows = []
-    for key, label, header, element_id, kind in _merge_row_order(parsed):
-        if header:
-            rows.append({"label": label, "header": True, "values": []})
-        else:
-            rows.append({"label": label, "header": False, "element_id": element_id,
-                         "kind": kind,
-                         "values": [col.get(p, {}).get(key) for p in all_periods]})
-    return _consolidate_variants(
-        {"periods": all_periods, "rows": rows,
-         "units_scale": parsed[0]["units_scale"]})
+        src[period] = used
+        oldest = [f for f in parsed[owner_idx + 1:] if period in f["periods"]]
+        if oldest:
+            orig[period] = (oldest[-1], _rekey(_column(oldest[-1], period),
+                                               oldest[-1], owner))
+    notes, entity, recast = _provenance(all_periods, col, src, orig, parsed)
+    return _consolidate_variants(_rows_with_provenance(
+        parsed, col, all_periods, notes, entity, all_periods, recast))
 
 
 # ── Multi-quarter stitching (Company Reported — discrete single quarters) ────
@@ -1489,23 +1591,61 @@ def _quarter_ends_desc(latest_q: tuple, n: int) -> list:
     return out
 
 
-def _assemble(parsed: list, col: dict, periods: list) -> dict | None:
-    """Build the stitched statement dict from a period→{key:value} map, using
-    _merge_row_order for the union label order (newest filing's display label)."""
-    have = [p for p in periods if p in col]
-    if not have:
-        return None
+def _element_cooccurrence(parsed: list) -> dict:
+    """{element id: {index of each filing whose statement carries it}} — two
+    elements sharing a filing index are separate lines in that filing, which
+    _consolidate_variants must never fold together."""
+    out: dict = {}
+    for i, f in enumerate(parsed):
+        for r in f["rows"]:
+            if not r["header"] and r.get("element_id"):
+                out.setdefault(r["element_id"], set()).add(i)
+    return out
+
+
+def _rows_with_provenance(parsed: list, col: dict, periods: list, notes: dict,
+                          entity: list | None, labels: list,
+                          period_notes: dict | None = None) -> dict:
+    """Stitched statement dict (before _consolidate_variants): the union label
+    order (_merge_row_order, newest filing's display label), each data row's
+    values per period, plus — only where they apply — the row's per-cell
+    "restated" notes, the statement's per-column "period_entity" labels (see
+    _provenance) and per-column "period_notes" caveats."""
     rows = []
     for key, label, header, element_id, kind in _merge_row_order(parsed):
         if header:
             rows.append({"label": label, "header": True, "values": []})
-        else:
-            rows.append({"label": label, "header": False, "element_id": element_id,
-                         "kind": kind,
-                         "values": [col.get(p, {}).get(key) for p in periods]})
-    return _consolidate_variants(
-        {"periods": [_q_label(p) for p in periods], "rows": rows,
-         "units_scale": parsed[0]["units_scale"]})
+            continue
+        row = {"label": label, "header": False, "element_id": element_id,
+               "kind": kind, "values": [col.get(p, {}).get(key) for p in periods]}
+        cell_notes = [notes.get(p, {}).get(key) for p in periods]
+        if any(cell_notes):
+            row["restated"] = cell_notes
+        rows.append(row)
+    out = {"periods": labels, "rows": rows, "units_scale": parsed[0]["units_scale"],
+           "_cooccur": _element_cooccurrence(parsed)}
+    if entity:
+        out["period_entity"] = entity
+    if period_notes and any(p in period_notes for p in periods):
+        out["period_notes"] = [period_notes.get(p) for p in periods]
+    return out
+
+
+def _assemble(parsed: list, col: dict, periods: list, src: dict | None = None,
+              orig: dict | None = None, extra_notes: dict | None = None,
+              period_notes: dict | None = None) -> dict | None:
+    """Build the stitched statement dict from a period→{key:value} map, using
+    _merge_row_order for the union label order (newest filing's display label).
+    src/orig/extra_notes feed _provenance (restated cells, legacy columns);
+    omitted, the statement carries values only."""
+    have = [p for p in periods if p in col]
+    if not have:
+        return None
+    notes, entity, recast = _provenance(periods, col, src or {}, orig or {}, parsed,
+                                        extra_notes)
+    return _consolidate_variants(_rows_with_provenance(
+        parsed, col, periods, notes, entity, [_q_label(p) for p in periods],
+        {**recast, **(period_notes or {})}))
 
 
 def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> dict | None:
@@ -1516,7 +1656,12 @@ def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> di
     broken out — the company's own absence, never a guess."""
     sources = parsed_q + parsed_k        # 10-Qs (newest first) then 10-Ks
     col: dict = {}                       # q_end -> {norm_key: value}
+    src: dict = {}
+    orig: dict = {}
+    extra: dict = {}
+    col_notes: dict = {}
     for qe in q_ends:
+        hits = []
         for f in sources:
             mc = f["_colmeta"]
             # Balance columns are point-in-time: pick the column whose period-end
@@ -1524,9 +1669,24 @@ def _stitch_balance_quarters(parsed_q: list, parsed_k: list, q_ends: list) -> di
             idx = next((i for i, (_, p) in enumerate(mc)
                         if _period_key(p) == qe), None)
             if idx is not None:
-                col[qe] = _column_values(f, idx)
-                break
-    return _assemble(sources, col, q_ends)
+                hits.append((f, idx))
+        if not hits:
+            continue
+        # The newest 10-Q (else 10-K) reporting the date is the base; a filing
+        # DATED later (a 10-K after the 10-Qs that carried its prior year-end)
+        # takes over only when it restates that date (P1-6 owner rule).
+        by_date = sorted(hits, key=lambda h: _filed(h[0]), reverse=True)
+        shown, col[qe], drops, note = _later_column(hits[0], by_date[0])
+        src[qe] = [shown]
+        if drops:
+            extra[qe] = drops
+        if note:
+            col_notes[qe] = note
+        if by_date[-1][0] is not shown:
+            orig[qe] = (by_date[-1][0], _rekey(_column_values(*by_date[-1]),
+                                               by_date[-1][0], hits[0][0]))
+    return _assemble(sources, col, q_ends, src=src, orig=orig, extra_notes=extra,
+                     period_notes=col_notes)
 
 
 def _filed(f: dict) -> str:
@@ -1602,46 +1762,64 @@ def _interim_restated(facts: dict, qe: tuple, acc_q: str, acc_k: str) -> bool:
     return False
 
 
-def _q4_from_10k_tags(fk: dict, qe: tuple, nine_end: tuple) -> dict:
-    """{row_key: value} for the fourth quarter straight from the FY 10-K's own
+def _quarter_tags(fk: dict, qe: tuple, prev_end: tuple, kinds: tuple,
+                  rows_of: dict | None = None) -> dict:
+    """{row_key: value} for one fiscal quarter straight from a 10-K's own
     iXBRL: an UNDIMENSIONED fact of the row's element whose period is exactly
-    the fiscal fourth quarter (the day after the 9M end through qe). Used only
-    when the interims were restated (_interim_restated) and FY − 9M is
-    therefore not a quarter: Beacon's FY2025 10-K tags Q4-25 NII 199,741 and
-    net income 53,366 ($K) although its R-file face shows FY columns only
-    (REVIEW-2026-09-24 P0-2 residual). Monetary rows only (never EPS/shares,
-    same rule as the differencing). A row the 10-K did not tag for Q4 stays
-    blank; any fetch/parse failure returns {} (the whole column stays blank)."""
+    that quarter (the day after prev_end through qe). Rows (and so keys) are
+    rows_of's — default the 10-K's own face — of the given value kinds, each
+    the only row of its element. A row the 10-K did not tag for the quarter
+    is absent; any fetch/parse failure returns {}."""
     from datetime import date, timedelta
     meta = fk.get("_meta") or {}
     if not (meta.get("cik") and meta.get("accession") and meta.get("doc")):
         return {}
-    ny, nm = nine_end
-    q4_start = (date(ny + (nm == 12), nm % 12 + 1, 1)).isoformat()   # day after 9M end
+    py, pm = prev_end
+    q_start = (date(py + (pm == 12), pm % 12 + 1, 1)).isoformat()   # day after prev_end
     y, m = qe
-    q4_end = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).isoformat()
+    q_end = (date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)).isoformat()
     try:
         from data.sec_filing_scraper import instance_facts
         inst = instance_facts({"cik": meta["cik"], "accession": meta["accession"],
                                "doc": meta["doc"]})
     except Exception as e:
-        print(f"[sec_statements] Q4 tag fill skipped for {meta.get('accession')}: "
+        print(f"[sec_statements] quarter tag read skipped for {meta.get('accession')}: "
               f"{type(e).__name__}: {e}")
         return {}
     by_concept = {}
     for f in inst:
-        if (not f.members and f.period_start == q4_start
-                and f.period_end == q4_end):
+        if (not f.members and f.period_start == q_start
+                and f.period_end == q_end):
             by_concept.setdefault(f.concept, f.value)
+    rows = (rows_of or fk)["rows"]
+    # Only a row whose element occurs ONCE on the face is that fact's line: a
+    # repeated element is a member re-rendering (HBAN's fee lines share
+    # NoninterestIncome), and the undimensioned fact is their TOTAL.
+    seen: dict = {}
+    for r in rows:
+        if not r["header"] and r.get("element_id"):
+            seen[r["element_id"]] = seen.get(r["element_id"], 0) + 1
     out = {}
-    for k, r in _keyed_rows(fk["rows"]):
-        if r["header"] or k[2] != "monetary":
+    for k, r in _keyed_rows(rows):
+        if r["header"] or k[2] not in kinds or seen.get(r.get("element_id")) != 1:
             continue
         eid = r.get("element_id") or ""
         concept = eid.replace("_", ":", 1) if "_" in eid else ""
         if concept in by_concept:
             out[k] = by_concept[concept]
     return out
+
+
+def _q4_from_10k_tags(fk: dict, qe: tuple, nine_end: tuple) -> dict:
+    """{row_key: value} for the fourth quarter straight from the FY 10-K's own
+    iXBRL (_quarter_tags over the day after the 9M end through qe). Used only
+    when the interims were restated (_interim_restated) and FY − 9M is
+    therefore not a quarter: Beacon's FY2025 10-K tags Q4-25 NII 199,741 and
+    net income 53,366 ($K) although its R-file face shows FY columns only
+    (REVIEW-2026-09-24 P0-2 residual). Monetary rows only (never EPS/shares,
+    same rule as the differencing). A row the 10-K did not tag for Q4 stays
+    blank; any fetch/parse failure returns {} (the whole column stays blank)."""
+    return _quarter_tags(fk, qe, nine_end, ("monetary",))
 
 
 def _element_key_map(src: dict, dst: dict) -> dict:
@@ -1668,6 +1846,386 @@ def _element_key_map(src: dict, dst: dict) -> dict:
             if s[e] != d[e] and s[e][2] == d[e][2]}
 
 
+# ── Restatement provenance + reverse-merger basis (REVIEW-2026-09-24 P1-6) ───
+# Owner decision: (1) when a LATER filing (a 10-K, or a later 10-Q's prior-
+# period column) reports a different value for the same period and line, the
+# later value is displayed and the original goes into the cell's click-through
+# ("as originally filed: …, restated in <form> filed <date>"); (2) after a
+# reverse merger (the registrant is the LEGAL acquirer, the target the
+# ACCOUNTING acquirer — Beacon: Berkshire Hills' CIK, Brookline's history),
+# prior periods come from the post-merger filings' recast columns where they
+# exist, and a column that only the legacy registrant's own filings report is
+# labeled with that entity — never presented as the same company silently.
+# Each stitch records, per displayed cell, the filing it came from; these
+# helpers turn that into the per-cell "restated" notes and per-column
+# "period_entity" labels the Company Reported page renders.
+
+def _src_desc(f: dict) -> str:
+    """'10-Q filed 2025-08-11' for a parsed filing ('' parts drop out)."""
+    m = f.get("_meta") or {}
+    form = m.get("form") or ""
+    when = f"filed {m['date']}" if m.get("date") else ""
+    return " ".join(x for x in (form, when) if x)
+
+
+def _src_url(f: dict) -> str:
+    """EDGAR URL of a parsed filing's primary document ('' when unknown)."""
+    m = f.get("_meta") or {}
+    if not (m.get("cik") and m.get("accession") and m.get("doc")):
+        return ""
+    return (f"https://www.sec.gov/Archives/edgar/data/{int(m['cik'])}/"
+            f"{m['accession']}/{m['doc']}")
+
+
+def _restated_note(original, f_orig: dict, f_new: dict, entity: str = "",
+                   not_re_reported: bool = False) -> dict:
+    """One cell's click-through record: the value as originally filed, where,
+    by whom (the legacy-registrant label, '' for the same company), and the
+    filing whose later value is displayed — or, not_re_reported, the filing
+    that restated the period without re-reporting this line (the cell is
+    then n/a: the original is superseded, the restated value unknown)."""
+    return {"original": original, "original_source": _src_desc(f_orig),
+            "original_url": _src_url(f_orig), "original_entity": entity,
+            "restated_in": _src_desc(f_new), "restated_url": _src_url(f_new),
+            "not_re_reported": not_re_reported}
+
+
+def _cell_tol(kind: str, *filings) -> float:
+    """Largest difference two filings' values for one line can show from the
+    filers' own rounding alone — anything beyond it is a reported change. A
+    monetary line rounds to the coarser statement scale ($K vs $M: a filer that
+    moves to millions reports 22,026 thousand as 22 million), and never less
+    than $1,000 — FMFG's whole-dollar 10-Ks became rounded-thousand ones under
+    the same 'USD ($)' title (31,323,138 vs 31,323,000); EPS to the cent."""
+    if kind == "pershare":
+        return 0.005 + 1e-9
+    if kind == "monetary":
+        return max([float(f.get("units_scale") or 1.0) for f in filings] + [1000.0])
+    return max([float(f.get("shares_scale") or 1.0) for f in filings] + [1.0])
+
+
+def _differs(a, b, kind: str, tol: float) -> bool:
+    """True when two reported values for the same line differ beyond rounding
+    (share counts also get a 0.05% band: one filing rounds to thousands)."""
+    if a is None or b is None:
+        return False
+    if kind not in ("pershare", "monetary"):
+        tol = max(tol, 0.0005 * max(abs(a), abs(b)))
+    return abs(a - b) > tol
+
+
+# An entity swap, not a restatement: for one period, nearly every shared $ line
+# of a later filing's column disagrees with an older filing's column. A
+# restatement (an error correction, an ASU adopted retrospectively, a
+# discontinued operation) moves SOME lines; a reverse merger replaces the whole
+# history (Beacon's Q2-2026 10-Q vs Berkshire's own Q2-2025 10-Q: every line).
+# The value test alone also fires on a sweeping same-company re-presentation,
+# so _entity_swap additionally requires a different registrant name.
+_RECAST_MIN_LINES = 5
+_RECAST_SHARE = 0.8
+
+
+def _column_relation(new: dict, old: dict, tol: float) -> str:
+    """'recast' when two filings' columns for the SAME period disagree on
+    nearly every shared monetary line (>= _RECAST_SHARE of >= _RECAST_MIN_LINES
+    — another entity's figures), 'same' when they agree on nearly every one
+    (< 1 - _RECAST_SHARE moved — one basis, at most a partial restatement), ''
+    when the evidence is too thin or in between."""
+    shared = [k for k in new.keys() & old.keys()
+              if k[2] == "monetary" and new[k] is not None and old[k] is not None]
+    if len(shared) < _RECAST_MIN_LINES:
+        return ""
+    moved = sum(1 for k in shared if abs(new[k] - old[k]) > tol)
+    if moved >= _RECAST_SHARE * len(shared):
+        return "recast"
+    if moved < (1 - _RECAST_SHARE) * len(shared):
+        return "same"
+    return ""
+
+
+def _name_key(name: str) -> str:
+    """Registrant name for comparison: display-normalized (format_bank_name
+    drops Inc./Corp., re-cases EDGAR capitals), '&' read as 'and' (FMFG files
+    as both 'Farmers & Merchants' and 'Farmers and Merchants'), letters and
+    digits only."""
+    from utils.formatting import format_bank_name
+    s = format_bank_name(name or "").lower().replace("&", " and ")
+    return re.sub(r"[^a-z0-9]", "", s)
+
+
+def _entity_swap(fn: dict, new: dict, fo: dict, old: dict) -> bool:
+    """True when filing fn's column `new` and the older filing fo's column
+    `old` for the same period are two different companies' figures: nearly
+    every shared line differs (_column_relation 'recast') AND the two filings
+    were filed under different registrant names (Beacon vs Berkshire Hills).
+    The name is required because a sweeping same-company re-presentation
+    trips the value test alone (BNY's FY2025 10-K re-presents FY2023's fee
+    lines; BCBP and BMRC restated prior quarters) — those are restatements,
+    shown by _later_column with their notes, never labeled another entity.
+    A reverse merger in which the legal acquirer kept its name is therefore
+    not detected (the limit of the evidence)."""
+    if _column_relation(new, old, _cell_tol("monetary", fn, fo)) != "recast":
+        return False
+    a = _name_key(_registrant_name(fn.get("_meta") or {}))
+    b = _name_key(_registrant_name(fo.get("_meta") or {}))
+    return bool(a and b and a != b)
+
+
+def _recast_break(filings: list) -> str:
+    """Filing date of the first filing on the POST-reverse-merger basis; every
+    filing dated before it is the legacy registrant's own. '' when no filing
+    recasts another (the norm), or when the filings carry no dates.
+
+    Evidence: a newer filing whose column for some period is another
+    company's figures against an older filing's column for the same period
+    (_entity_swap) is post-merger, the older one legacy. Post status then spreads to every filing
+    that agrees ('same') with a post filing on a shared period, legacy status
+    to every filing that agrees with a legacy one. A filing dated between the
+    last legacy and the first post filing that no column ties to either side
+    (its comparatives match nothing loaded — Beacon's Q3-2025 10-Q when the
+    Q3-2024 10-Q is outside the window) is classified by the registrant name
+    it was filed under (_registrant_name: BEACON FINANCIAL CORPORATION vs
+    BERKSHIRE HILLS BANCORP, INC.); one that is still ambiguous counts as
+    legacy — a column is flagged, never silently presented as the current
+    company."""
+    by_period: dict = {}
+    for f in filings:
+        if not _filed(f):
+            continue
+        # 10-K multi-year parses carry no _colmeta: every column is one
+        # fiscal year (or year-end date), so the period alone identifies it.
+        ids = f.get("_colmeta") or [(12, p) for p in f.get("periods") or []]
+        for i, (d, p) in enumerate(ids):
+            pk = _period_key(p)
+            if pk:
+                by_period.setdefault((d, pk), []).append((f, i))
+    post, legacy, same = {}, set(), []
+    for cols in by_period.values():
+        for a in range(len(cols)):
+            for b in range(a + 1, len(cols)):
+                (fa, ia), (fb, ib) = cols[a], cols[b]
+                if fa is fb or _filed(fa) == _filed(fb):
+                    continue
+                (fn, inew), (fo, iold) = ((fa, ia), (fb, ib)) \
+                    if _filed(fa) > _filed(fb) else ((fb, ib), (fa, ia))
+                cn, co = _column_values(fn, inew), _column_values(fo, iold)
+                rel = _column_relation(cn, co, _cell_tol("monetary", fn, fo))
+                if rel == "recast" and _entity_swap(fn, cn, fo, co):
+                    post[id(fn)] = fn
+                    legacy.add(id(fo))
+                elif rel == "same":
+                    same.append((fn, fo))
+    if not post:
+        return ""
+    legacy_f = {id(f): f for f in filings if id(f) in legacy}
+    grew = True
+    while grew:
+        grew = False
+        for x, y in same:
+            for u, v in ((x, y), (y, x)):
+                if id(u) in post and id(v) not in post and id(v) not in legacy_f:
+                    post[id(v)] = v
+                    grew = True
+                elif id(u) in legacy_f and id(v) not in legacy_f and id(v) not in post:
+                    legacy_f[id(v)] = v
+                    grew = True
+    first_post = min(_filed(f) for f in post.values())
+    last_legacy = max((_filed(f) for f in legacy_f.values()), default="")
+    unknown = sorted((f for f in filings if _filed(f) and id(f) not in post
+                      and id(f) not in legacy_f and last_legacy < _filed(f) < first_post),
+                     key=_filed)
+    if unknown:
+        post_name = _name_key(_registrant_name(
+            max(post.values(), key=_filed).get("_meta") or {}))
+        for f in unknown:                        # oldest first: the first post one sets it
+            if post_name and _name_key(_registrant_name(f.get("_meta") or {})) == post_name:
+                return _filed(f)
+    return first_post
+
+
+_REGISTRANT_ROW = re.compile(r"defref_dei_EntityRegistrantName\b")
+
+
+def _registrant_name(meta: dict) -> str:
+    """The registrant name a filing was filed under (dei:EntityRegistrantName
+    on its cover-page R-file). '' on any failure — the caller then labels the
+    legacy column generically, never omits the label. Only reached after a
+    recast was detected (a reverse merger), so the fetch is rare; memoised
+    per (filing, fetch seam) because each stitch asks again."""
+    if not (meta and meta.get("cik") and meta.get("accession")):
+        return ""
+    try:
+        return _registrant_name_at(int(meta["cik"]), str(meta["accession"]), _get)
+    except Exception as e:                      # transient: not memoised
+        print(f"[sec_statements] registrant name unavailable for "
+              f"{meta.get('accession')}: {type(e).__name__}: {e}")
+        return ""
+
+
+@functools.lru_cache(maxsize=64)
+def _registrant_name_at(cik: int, accession: str, fetcher) -> str:
+    base = _filing_base(cik, accession)
+    fn = next((fn for short, fn in _iter_reports(base)
+               if re.search(r"cover|document\s+and\s+entity", short, re.I)), None)
+    if not fn:
+        return ""
+    h = lhtml.fromstring(fetcher(base + fn))
+    for tr in h.xpath("//tr"):
+        cells = tr.xpath("./td")
+        if len(cells) >= 2 and any(_REGISTRANT_ROW.search(a.get("onclick") or "")
+                                   for a in cells[0].xpath(".//a[@onclick]")):
+            return " ".join(cells[1].text_content().split())
+    return ""
+
+
+def _legacy_label(filings: list, brk: str) -> str:
+    """Column label for the legacy registrant's own periods: its filed name
+    (format_bank_name) + ' (legacy)', read from the NEWEST pre-break filing."""
+    pre = sorted((f for f in filings if _filed(f) and _filed(f) < brk),
+                 key=_filed, reverse=True)
+    name = _registrant_name(pre[0]["_meta"]) if pre else ""
+    if not name:
+        return "pre-merger registrant (legacy)"
+    from utils.formatting import format_bank_name
+    return f"{format_bank_name(name)} (legacy)"
+
+
+def _provenance(periods: list, col: dict, src: dict, orig: dict, filings: list,
+                extra_notes: dict | None = None):
+    """(notes, period_entity, period_notes) for a stitched statement.
+
+    src[p] — the filings a period's displayed column came from; orig[p] —
+    (filing, {key: value}) of the OLDEST filing that reported period p, when
+    that is not the displaying filing, already on col's keys (_rekey). A cell whose displayed value differs
+    from the original beyond rounding gets a _restated_note; extra_notes
+    (10-K quarter restatements)
+    are merged in as-is. period_entity[i] is the legacy-registrant label for a
+    column sourced from a pre-break filing (_recast_break), else None (None
+    overall when nothing applies — the common case). period_notes {p: text}
+    names each column a post-merger filing RECAST over the legacy
+    registrant's own report of that period."""
+    brk = _recast_break(filings)
+    label = ""
+    used = [f for p in periods for f in src.get(p, [])] + [o[0] for o in orig.values()]
+    if brk and any(_filed(f) and _filed(f) < brk for f in used):
+        label = _legacy_label(filings, brk)
+
+    def _ent(f):
+        return label if (label and _filed(f) and _filed(f) < brk) else ""
+
+    notes: dict = {}
+    recast: dict = {}
+    for p in periods:
+        if p not in orig or p not in col:
+            continue
+        fo, ovals = orig[p]
+        shown_f = src[p][0]
+        if label and _filed(fo) and _filed(fo) < brk <= _filed(shown_f):
+            recast[p] = (f"Recast in {_src_desc(shown_f)} on the accounting acquirer's "
+                         f"basis; {label} originally reported this period in "
+                         f"{_src_desc(fo)}.")
+        for key, val in col[p].items():
+            ov = ovals.get(key)                  # ovals are on col's keys (_rekey)
+            if _differs(val, ov, key[2], _cell_tol(key[2], fo, shown_f)):
+                notes.setdefault(p, {})[key] = _restated_note(ov, fo, shown_f, _ent(fo))
+    for p, cells in (extra_notes or {}).items():
+        for key, n in cells.items():
+            notes.setdefault(p, {})[key] = n
+    entity = ([label if any(_filed(f) and _filed(f) < brk for f in src.get(p, []))
+               else None for p in periods] if label else None)
+    return notes, entity, recast
+
+
+def _rekey(col: dict, src_f: dict, dst_f: dict) -> dict:
+    """A column of filing src_f put on filing dst_f's row keys wherever the
+    two tag a line with the same (unique) element. Occurrence-numbered keys of
+    a repeated label differ between filings (INBK: 'Interest-bearing
+    deposits' is the asset line first in its 10-Qs, the deposit liability
+    first in its 10-K) — without this one filing's liability lands in the
+    other's asset row. A re-keying that would collide is not applied."""
+    rekey = _element_key_map(src_f, dst_f)       # src key -> dst key, same element
+    if not rekey or src_f is dst_f:
+        return col
+    moved: dict = {}
+    for k, v in col.items():
+        tk = rekey.get(k, k)
+        if tk in moved:
+            return col
+        moved[tk] = v
+    return moved
+
+
+def _later_column(base: tuple, later: tuple):
+    """(shown filing, column, dropped-line notes, column note) for a period two
+    filings present: base = (filing, idx) the stitch showed before P1-6 (the
+    quarter's own 10-Q / the newest 10-Q carrying a balance date), later =
+    the LATEST-filed (filing, idx) presenting the same period.
+
+    The later column replaces the base WHOLE — never cell by cell, so the
+    column stays one presentation that foots (a reclassification moves an
+    amount between lines; patching only the changed element would double
+    count it) — and only when it RESTATES the base: some line both report
+    (same key, or same element under a reworded label) differs beyond
+    rounding. A later column that merely repeats the base changes nothing.
+    On replacement, a line the base reported that the later column does not
+    carry becomes n/a with its as-filed value as a not_re_reported note,
+    plus a column note — unless the two columns are different entities
+    (_entity_swap, a reverse merger), which the legacy label and the recast
+    column note explain instead."""
+    fb, ib = base
+    fl, il = later
+    bcol = _column_values(fb, ib)
+    if fl is fb:
+        return fb, bcol, {}, None
+    lcol = _rekey(_column_values(fl, il), fl, fb)   # the later column on base keys
+
+    def _lk(k):
+        return k if k in lcol else None
+
+    if not any(v is not None and _lk(k) is not None
+               and _differs(lcol[_lk(k)], v, k[2], _cell_tol(k[2], fb, fl))
+               for k, v in bcol.items()):
+        return fb, bcol, {}, None
+    if _entity_swap(fl, lcol, fb, bcol):
+        return fl, lcol, {}, None
+    drops = {}
+    for k, v in bcol.items():
+        if v is not None and (_lk(k) is None or lcol.get(_lk(k)) is None):
+            drops[k] = _restated_note(v, fb, fl, not_re_reported=True)
+            lcol.setdefault(k, None)
+    return fl, lcol, drops, (
+        f"Re-presented in {_src_desc(fl)}: prior-period amounts restated or "
+        f"reclassified from {_src_desc(fb)} — marked cells show the as-filed figure.")
+
+
+def _restating_10k(qe: tuple, f: dict, k_by_fy: dict, facts: dict | None,
+                   brk: str):
+    """The 10-K that restated interim quarter qe after f (the newest 10-Q
+    presenting it) was filed, else None: a 10-K of the fiscal year containing
+    qe, filed after f, whose companyfacts net income for an interim period of
+    that year disagrees with f's (_interim_restated — the same evidence the Q4
+    derivation uses, so the 10-K's iXBRL is only read when it restated). Never
+    across a reverse-merger break: a post-merger 10-K's quarter is the
+    accounting acquirer's, not a restatement of the legacy registrant's 10-Q
+    (that column is labeled legacy instead)."""
+    if not facts or not _filed(f):
+        return None
+    fy_ends = []
+    e = qe
+    for _ in range(3):                   # qe is Q1-Q3: the FY ends 1-3 quarters on
+        e = (e[0] + (e[1] + 3 > 12), (e[1] + 3 - 1) % 12 + 1)
+        fy_ends.append(e)
+    for fy in fy_ends:
+        for fk, _ in k_by_fy.get(fy, []):
+            if not _filed(fk) or _filed(fk) <= _filed(f):
+                continue
+            if brk and _filed(f) < brk <= _filed(fk):
+                continue
+            if _interim_restated(facts, fy, _accn(f), _accn(fk)):
+                return fk
+    return None
+
+
 def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                           facts: dict | None = None) -> dict | None:
     """Discrete-quarter stitch for a FLOW statement (income / cash flow). Q1–Q3
@@ -1688,8 +2246,21 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
         reporting a different net income for the same interim period of that
         fiscal year (_interim_restated — Beacon's FY2025 10-K restated Q3-25
         under ASU 2025-08), no FY − 9M difference is valid and the Q4 column
-        stays blank. facts=None skips the check (no network in unit fixtures)."""
-    q_by_qend: dict = {}                 # q_end -> (parsed, discrete_idx)
+        stays blank. facts=None skips the check (no network in unit fixtures).
+
+    Latest filing wins (REVIEW-2026-09-24 P1-6 owner rule): a quarter that
+    its own 10-Q reported is shown from the NEWEST 10-Q presenting that
+    quarter's three-month column — next year's prior-period column, which
+    carries any restatement and, after a reverse merger, the accounting
+    acquirer's recast history (Beacon's Q2-2026 10-Q: Q2-2025 net income
+    22,026 $K, legacy Berkshire's own 10-Q said 30,366). When a 10-K filed
+    after that 10-Q restated the fiscal year's interims (_interim_restated),
+    the 10-K's own tagged three-month facts replace the lines it re-reports
+    (Q3-25 net income -50,240 -> -4,221). The as-filed value of every changed
+    cell is kept as its "restated" note. A comparative column never FILLS a
+    quarter its own 10-Q is outside the window for (Q3'23 stays blank)."""
+    q_by_qend: dict = {}                 # q_end -> (parsed, discrete_idx) as originally filed
+    disc_by_qend: dict = {}              # q_end -> [(parsed, discrete_idx)] newest filing first
     nine_by_end: dict = {}               # nine-month-END (year, month) -> (parsed, idx)
     for f in parsed_q:
         mc = f["_colmeta"]
@@ -1698,6 +2269,10 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
         cand = sorted({_period_key(p) for d, p in mc
                        if d is not None and 2 <= d <= 4 and _period_key(p)},
                       reverse=True)
+        for qe in cand:                  # own quarter AND prior-period columns
+            di = _discrete_quarter_index(mc, qe)
+            if di is not None:
+                disc_by_qend.setdefault(qe, []).append((f, di))
         if cand:
             qe = cand[0]
             di = _discrete_quarter_index(mc, qe)
@@ -1717,11 +2292,53 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                 k_by_fy.setdefault(pk, []).append((f, i))
 
     sources = parsed_q + parsed_k
+    brk = _recast_break(sources)
     col: dict = {}
+    src: dict = {}                       # q_end -> filings the column came from
+    orig: dict = {}                      # q_end -> (original filing, its column)
+    tag_notes: dict = {}                 # q_end -> {key: note} (10-K restated lines)
+    col_notes: dict = {}                 # q_end -> column-level caveat
     for qe in q_ends:
         if qe in q_by_qend:
-            f, di = q_by_qend[qe]
-            col[qe] = _column_values(f, di)      # discrete quarter, as reported
+            fo, io = q_by_qend[qe]               # the quarter as originally filed
+            # The newest 10-Q presenting the quarter replaces it only when that
+            # prior-period column restates it (_later_column).
+            f, col[qe], drops, note = _later_column((fo, io), disc_by_qend[qe][0])
+            src[qe] = [f]
+            if f is not fo:
+                orig[qe] = (fo, _column_values(fo, io))
+                if drops:
+                    tag_notes[qe] = drops
+                if note:
+                    col_notes[qe] = note
+            fk = _restating_10k(qe, f, k_by_fy, facts, brk)
+            tags = (_quarter_tags(fk, qe, _minus_quarter(qe),
+                                  ("monetary", "pershare", "shares"), rows_of=f)
+                    if fk is not None else {})
+            if any(col[qe].get(k) is not None
+                   and _differs(v, col[qe][k], k[2], _cell_tol(k[2], f, fk))
+                   for k, v in tags.items()):
+                # The 10-K restated THIS quarter. A line it re-reports shows
+                # the restated value; a line it does not re-report is n/a —
+                # its 10-Q figure is superseded (Beacon's Q3-25 provision
+                # 87,496 $K beside the restated NII would no longer foot) —
+                # with the as-filed figure kept in the click-through.
+                for k, shown in list(col[qe].items()):
+                    if shown is None:            # restate, never fill
+                        continue
+                    if k in tags:
+                        if _differs(tags[k], shown, k[2], _cell_tol(k[2], f, fk)):
+                            tag_notes.setdefault(qe, {})[k] = _restated_note(shown, f, fk)
+                            col[qe][k] = tags[k]
+                    else:
+                        tag_notes.setdefault(qe, {})[k] = _restated_note(
+                            shown, f, fk, not_re_reported=True)
+                        col[qe][k] = None
+                src[qe] = [f, fk]
+                col_notes[qe] = (f"Restated in {_src_desc(fk)}: lines it re-reported "
+                                 f"show the restated value; lines it did not re-report "
+                                 f"are n/a (the {_src_desc(f)} figure is superseded — "
+                                 f"see the click-through).")
             continue
         # No 10-Q for this quarter: it is a fiscal year-end (Q4) iff a 10-K
         # reports a 12-month column ending here. Derive Q4 = FY − 9M, where the
@@ -1737,6 +2354,7 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                 tagged = _q4_from_10k_tags(fk, qe, nine_end)
                 if tagged:
                     col[qe] = tagged
+                    src[qe] = [fk]
                 continue                          # else restated interim -> blank Q4
             fy = _column_values(fk, ik)
             nine = _column_values(fq, iq)
@@ -1768,8 +2386,10 @@ def _stitch_flow_quarters(parsed_q: list, parsed_k: list, q_ends: list,
                 else:
                     diff[k] = None            # non-additive → no clean discrete Q4
             col[qe] = diff
+            src[qe] = [fk, fq]
         # else: omit (blank) — cannot derive a clean discrete quarter.
-    return _assemble(sources, col, q_ends)
+    return _assemble(sources, col, q_ends, src=src, orig=orig, extra_notes=tag_notes,
+                     period_notes=col_notes)
 
 
 def as_reported_statement_multiquarter(cik, stype: str = "income",
@@ -1791,7 +2411,7 @@ def as_reported_statement_multiquarter(cik, stype: str = "income",
     k_metas = _recent_10k_metas(cik, 3)
     if not q_metas:
         return None
-    ckey = f"asreported_mq:v9:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v9: member re-rendering artifact (after v8 relabeled-line Q4 + header keys)
+    ckey = f"asreported_mq:v10:{stype}:{q_metas[0]['accession']}:{n_quarters}"  # v10: latest-filing-wins + restated notes / legacy columns (P1-6)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None
@@ -1905,7 +2525,7 @@ def as_reported_statement_multiyear(cik, stype: str = "income", n_years: int = 5
     from datetime import date, timedelta
     if metas[0].get("date", "") < (date.today() - timedelta(days=540)).isoformat():
         return None
-    ckey = f"asreported_my:v12:{stype}:{metas[0]['accession']}:{n_years}"  # v12: member re-rendering artifact (after v11 header keys)
+    ckey = f"asreported_my:v13:{stype}:{metas[0]['accession']}:{n_years}"  # v13: restated notes / legacy columns (P1-6)
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached or None

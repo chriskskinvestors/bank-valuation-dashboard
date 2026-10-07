@@ -1,5 +1,5 @@
-"""Company-Reported statement exports (ui/financials_statements.py _cr_* /
-_render_company_* renderers) on the shared .xlsx exporter (ui/export.py;
+"""Company-Reported statement exports (ui/financials_statements.py _cr_* renderers;
+ui/cr_statements.py income/balance pages) on the shared .xlsx exporter (ui/export.py;
 owner directive 2026-09-22: every data table gets an Export, built from the
 RAW frame — never the display strings _cr_component renders).
 
@@ -152,9 +152,11 @@ class _CrExportSite(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        import ui.cr_statements
         import ui.export
         import ui.financials_statements
         cls.FS, cls.X = ui.financials_statements, ui.export
+        cls.CS = ui.cr_statements        # the income/balance statement pages
 
     def setUp(self):
         self.calls = []          # [(label, data, kwargs)] from download_button
@@ -163,10 +165,13 @@ class _CrExportSite(unittest.TestCase):
             download_button=lambda label, data, **k: self.calls.append((label, data, k)),
             container=lambda *a, **k: _Ctx())
         v1 = sys.modules["streamlit.components.v1"]
-        for p in (mock.patch.object(self.FS, "st", _StubSt()),
+        stub = _StubSt()
+        for p in (mock.patch.object(self.FS, "st", stub),
+                  mock.patch.object(self.CS, "st", stub),
                   mock.patch.object(self.X, "st", fake_export_st),
                   mock.patch.object(v1, "html", lambda html, **k: self.htmls.append(html)),
-                  mock.patch.object(self.FS, "get_bank_info", lambda t: INFO)):
+                  mock.patch.object(self.FS, "get_bank_info", lambda t: INFO),
+                  mock.patch.object(self.CS, "get_bank_info", lambda t: INFO)):
             p.start()
             self.addCleanup(p.stop)
 
@@ -205,7 +210,7 @@ class TestAnnualIncomeStatement(_CrExportSite):
         import data.sec_statements as S
         with mock.patch.object(S, "as_reported_statement_multiyear",
                                lambda cik, stype, n_years=5: INCOME_ANNUAL):
-            self.FS._render_company_statement_annual(TICKER, "income", CIK, INFO)
+            self.CS._render_company_statement_annual(TICKER, "income", CIK, INFO)
         wb, ws, kw = self._book()
         self.assertEqual(kw["file_name"], "TBK_cr_income_annual_2026-02-27.xlsx")
         self.assertEqual(kw["key"], "exp_cr_income_annual_TBK")
@@ -279,7 +284,7 @@ class TestBareLabelEpsRows(_CrExportSite):
         import data.sec_statements as S
         with mock.patch.object(S, "as_reported_statement_multiyear",
                                lambda cik, stype, n_years=5: self.STMT):
-            self.FS._render_company_statement_annual(TICKER, "income", CIK, INFO)
+            self.CS._render_company_statement_annual(TICKER, "income", CIK, INFO)
         wb, ws, _kw = self._book()
         html = self.htmls[0]
         self.assertIn(">$3.07<", html)            # was ">$3<"
@@ -304,7 +309,7 @@ class TestBareLabelEpsRows(_CrExportSite):
                 "filings": [META_10Q], "meta": META_10Q}
         with mock.patch.object(S, "as_reported_statement_multiquarter",
                                lambda cik, stype, n_quarters=12: stmt):
-            self.FS._render_company_statement_quarterly(TICKER, "income", CIK, INFO)
+            self.CS._render_company_statement_quarterly(TICKER, "income", CIK, INFO)
         self.assertIn(">$0.88<", self.htmls[0])
         self.assertIn(">$0.83<", self.htmls[0])
 
@@ -334,7 +339,7 @@ class TestBareLabelEpsRows(_CrExportSite):
                 "filings": [META_10K], "meta": META_10K}
         with mock.patch.object(S, "as_reported_statement_multiyear",
                                lambda cik, stype, n_years=5: stmt):
-            self.FS._render_company_statement_annual(TICKER, "balance", CIK, INFO)
+            self.CS._render_company_statement_annual(TICKER, "balance", CIK, INFO)
         wb, ws, _kw = self._book()
         html = self.htmls[0]
         self.assertIn(">$389.7M<", html)
@@ -352,6 +357,90 @@ class TestBareLabelEpsRows(_CrExportSite):
         self.assertEqual(f("usd", None), "")
 
 
+class TestRestatedAndLegacyColumns(_CrExportSite):
+    """REVIEW-2026-09-24 P1-6 (BBT): a restated cell shows the later value,
+    marked, with the as-filed figure in its click-through; a line the
+    restating filing did not re-report is n/a (never the superseded figure);
+    a legacy-registrant column is marked in the header and named in a caption
+    and on the export's Source sheet. Values are Beacon's real ones."""
+
+    LEGACY = "Berkshire Hills Bancorp (legacy)"
+    NOTE_NI = {"original": -50_240_000.0, "original_source": "10-Q filed 2025-11-10",
+               "original_url": "https://www.sec.gov/q3.htm", "original_entity": "",
+               "restated_in": "10-K filed 2026-03-02",
+               "restated_url": "https://www.sec.gov/k25.htm", "not_re_reported": False}
+    NOTE_PROV = {**NOTE_NI, "original": 87_496_000.0, "not_re_reported": True}
+    NOTE_Q2 = {**NOTE_NI, "original": 30_366_000.0, "original_entity": LEGACY,
+               "original_source": "10-Q filed 2025-08-11",
+               "restated_in": "10-Q filed 2026-08-07"}
+    STMT = {"statement": {
+        "periods": ["Q3'25", "Q2'25", "Q2'24"],
+        "period_entity": [None, None, LEGACY],
+        "period_notes": ["Restated in 10-K filed 2026-03-02: lines it re-reported show "
+                         "the restated value; lines it did not re-report are n/a.",
+                         None, None],
+        "rows": [
+            {"label": "Provision for credit losses on loans", "header": False,
+             "kind": "monetary", "values": [None, 6_997_000, None],
+             "restated": [NOTE_PROV, None, None]},
+            {"label": "Net income", "header": False, "kind": "monetary",
+             "values": [-4_221_000, 22_026_000, 24_025_000],
+             "restated": [NOTE_NI, NOTE_Q2, None]},
+        ]},
+        "filings": [META_10Q], "meta": META_10Q}
+
+    def test_marks_click_through_captions_and_export(self):
+        import json
+        import re
+        import data.sec_statements as S
+        captions = []
+        rec = _StubSt()
+        rec.caption = lambda text, **k: captions.append(text)
+        with mock.patch.object(S, "as_reported_statement_multiquarter",
+                               lambda cik, stype, n_quarters=12: self.STMT), \
+                mock.patch.object(self.CS, "st", rec):
+            self.CS._render_company_statement_quarterly(TICKER, "income", CIK, INFO)
+        wb, ws, _kw = self._book()
+        html = self.htmls[0]
+        # legacy column marked in the header (oldest → newest)
+        self.assertIn(">Q2&#x27;24 ‡<", html)         # html-escaped apostrophe
+        self.assertIn(">Q3&#x27;25<", html)
+        # restated values shown, marked, clickable; the unrestated legacy cell is plain
+        self.assertRegex(html, r'data-cid="r1c2">\(\$4\.2M\)\*<')
+        self.assertRegex(html, r'data-cid="r1c1">\$22\.0M\*<')
+        self.assertIn('<td class="val">$24.0M</td>', html)
+        # the line the 10-K did not re-report: n/a, clickable, never $87.5M
+        self.assertRegex(html, r'data-cid="r0c2">n/a\*<')
+        self.assertNotIn("$87.5M<", html)
+        cells = json.loads(re.search(r"const CELLS = (\{.*?\});\n", html).group(1))
+        ni = cells["r1c2"]
+        self.assertEqual(ni["terms"][0]["val"], "($50.2M)")
+        self.assertEqual(ni["terms"][0]["sub"], "10-Q filed 2025-11-10")
+        self.assertIn("restated in 10-K filed 2026-03-02", ni["op"])
+        self.assertEqual(ni["link"], "https://www.sec.gov/k25.htm")
+        self.assertIn(self.LEGACY, cells["r1c1"]["terms"][0]["sub"])
+        self.assertIn("does not re-report this line", cells["r0c2"]["op"])
+        self.assertEqual(cells["r0c2"]["terms"][0]["val"], "$87.5M")
+        # captions name the legacy entity and the column caveat
+        self.assertTrue(any("Q2'24" in c and self.LEGACY in c for c in captions))
+        self.assertTrue(any(c.startswith("Q3'25: Restated in 10-K") for c in captions))
+        # export: raw values; the superseded line is n/a; Source names the legacy column
+        g = self._grid(ws)
+        self.assertEqual(g[0], ["Line item", "Q2'24 ‡", "Q2'25", "Q3'25"])
+        self.assertEqual(g[2], ["Net income", 24_025_000, 22_026_000, -4_221_000])
+        self._assert_na(ws, "D2")
+        self.assertEqual(self._source(wb)["Legacy-registrant columns (‡)"],
+                         f"Q2'24 ‡: {self.LEGACY}")
+
+    def test_trend_series_drop_the_legacy_columns(self):
+        t = self.CS._trend_stmt(self.STMT["statement"])
+        self.assertEqual(t["periods"], ["Q3'25", "Q2'25"])
+        ni = next(r for r in t["rows"] if r["label"] == "Net income")
+        self.assertEqual(ni["values"], [-4_221_000, 22_026_000])
+        plain = {"periods": ["Q1'26"], "rows": []}
+        self.assertIs(self.CS._trend_stmt(plain), plain)
+
+
 class TestQuarterlyBalanceSheet(_CrExportSite):
     """Site: _render_company_statement_quarterly (10-Q stitch, balance)."""
 
@@ -359,7 +448,7 @@ class TestQuarterlyBalanceSheet(_CrExportSite):
         import data.sec_statements as S
         with mock.patch.object(S, "as_reported_statement_multiquarter",
                                lambda cik, stype, n_quarters=12: BALANCE_QUARTERLY):
-            self.FS._render_company_statement_quarterly(TICKER, "balance", CIK, INFO)
+            self.CS._render_company_statement_quarterly(TICKER, "balance", CIK, INFO)
         wb, ws, kw = self._book()
         self.assertEqual(kw["file_name"], "TBK_cr_balance_quarterly_2025-11-05.xlsx")
         self.assertEqual(kw["key"], "exp_cr_balance_quarterly_TBK")

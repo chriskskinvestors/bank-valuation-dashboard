@@ -326,15 +326,17 @@ def _compensation(t, ctx):
 # hidden per-bank when the company doesn't disclose it.
 
 def _cr_income(t, ctx):
-    from ui.financials_statements import _cr_title, _render_company_statement
+    from ui.financials_statements import _cr_title
+    from ui.cr_statements import render_company_statement
     _cr_title(t, "Income Statement — Company Reported")
-    _render_company_statement(t, "income")
+    render_company_statement(t, "income")
 
 
 def _cr_balance(t, ctx):
-    from ui.financials_statements import _cr_title, _render_company_statement
+    from ui.financials_statements import _cr_title
+    from ui.cr_statements import render_company_statement
     _cr_title(t, "Balance Sheet — Company Reported")
-    _render_company_statement(t, "balance")
+    render_company_statement(t, "balance")
 
 
 def _cr_deposit(t, ctx):
