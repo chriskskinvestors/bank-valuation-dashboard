@@ -63,6 +63,7 @@ from data.ma_announcements import (
     _wire_story_text,
     brand_token,
     build_terms,
+    row_token,
     _GENERIC as _GENERIC_WORDS,
     extract_exchange_ratio,
     extract_stated_value,
@@ -140,8 +141,7 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
     TBV would be a plausible-wrong denominator. ok=False = FDIC unreachable
     (never cache that)."""
     phrase = _CORP_SUFFIX_RE.sub("", (name or "").strip()).strip(" ,.")
-    tok = brand_token(phrase)
-    if not tok or len(phrase) < 4:
+    if len(phrase) < 4 or len(phrase.split()) < 2 and not brand_token(phrase):
         return None, None, True
     key = phrase.lower()
     if key in _FDIC_NAME_CACHE:
@@ -694,11 +694,7 @@ def _dedupe_tok(name: str | None) -> str | None:
     """Leg-dedupe key: the brand token, else (all-generic name — "First
     Savings Financial Group, Inc", First Merchants 2026) the first two
     words lowered, so the 425 row and the 8-K row of one deal collapse."""
-    tok = brand_token(name or "")
-    if tok:
-        return tok
-    words = re.findall(r"[a-z0-9]+", (name or "").lower())
-    return " ".join(words[:2]) if len(words) >= 2 else None
+    return row_token(name)
 
 
 def find_pending_deals(cik, subject_name: str,

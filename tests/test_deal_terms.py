@@ -1716,6 +1716,17 @@ class TestFdicCertForName(unittest.TestCase):
         self.assertEqual(g.call_args.kwargs["params"]["filters"],
                          'NAMEHCR:"Century finl Services" AND ACTIVE:1')
 
+    def test_generic_name_still_links_by_exact_equality(self):
+        # "Citizens National Corporation" has no brand token; the NAMEHCR
+        # equality rule links it anyway.
+        from data.ma_pending import fdic_cert_for_name
+        with patch("data.http.get_with_retry", side_effect=[
+                self._resp([]),
+                self._resp([{"CERT": 7777, "NAME": "Citizens National Bank of Paintsville",
+                             "NAMEHCR": "CITIZENS NATIONAL CORP"}])]):
+            self.assertEqual(fdic_cert_for_name("Citizens National Corporation"),
+                             (7777, "Citizens National Bank of Paintsville", True))
+
     def test_unreachable_is_not_ok_and_not_cached(self):
         from data import ma_pending
         with patch("data.http.get_with_retry", return_value=None):
@@ -1877,6 +1888,29 @@ class TestBoardGates(unittest.TestCase):
             "to acquire Grand River Commerce, Inc., with total assets of $507 million "
             "as of December 31, 2025"), [])
 
+    def test_legend_subject_names_the_counterparty(self):
+        # Peoples 2026-04-21 (EX-99.4 carries the Rule 425 legend).
+        text = ("Filed by Peoples Bancorp Inc. Pursuant to Rule 425 under the Securities "
+                "Act of 1933 and deemed filed pursuant to Rule 14a-12 under the Securities "
+                "Exchange Act of 1934 Subject Company: Citizens National Corporation "
+                "P.O. BOX 738 - MARIETTA, OHIO - 45750 Peoples Bancorp Inc. (NASDAQ: PEBO) "
+                "announced a definitive agreement for the acquisition of an exceptional "
+                "franchise in Citizens Bank of Kentucky. Peoples will acquire Citizens in "
+                "an all-stock transaction. Citizens shareholders will receive 0.20 shares "
+                "of Peoples common stock for each share of Citizens common stock.")
+        rows, ok = _open_announcements(318300, "PEOPLES BANCORP INC (PEBO)", text,
+                                       "Peoples Bank")
+        self.assertTrue(ok)
+        self.assertEqual([r["counterparty_name"] for r in rows],
+                         ["Citizens National Corporation"])
+
+    def test_lowercase_lead_in_is_dropped_from_a_capture(self):
+        from data.ma_announcements import _clean_company_name
+        self.assertEqual(_clean_company_name("an exceptional franchise in Citizens Bank of Kentucky"),
+                         "Citizens Bank of Kentucky")
+        self.assertEqual(_clean_company_name("blueharbor bank"), "blueharbor bank")
+        self.assertEqual(_clean_company_name("1st Colonial Bancorp, Inc."), "1st Colonial Bancorp, Inc")
+
     def test_joint_list_capture_is_the_last_party(self):
         from data.ma_announcements import _clean_company_name
         self.assertEqual(_clean_company_name("Isabella Bank, and Grand River Commerce, Inc."),
@@ -2013,6 +2047,54 @@ class TestBoardGates2(unittest.TestCase):
         self.assertEqual(_clean_company_name("First Savings Financial Group, Inc., an "
                                              "Indiana corporation"),
                          "First Savings Financial Group, Inc")
+
+
+# ── Deck-stated multiples (owner 2026-10-07: "the decks have all this info") ─
+class TestDeckMetrics(unittest.TestCase):
+
+    def test_colony_deck(self):
+        from data.ma_announcements import extract_deck_metrics, extract_implied_price
+        deck = ("• Consideration mix: 80% stock | 20% cash • 0.94 CBAN shares per FSRL "
+                "share or $19.75 per share in cash • Implied Aggregate Transaction Value: "
+                "$163mm • Indicative price per share: $19.52 per FSRL share • Price / "
+                "Tangible Book Value per Share: 162% • Price / 2027E Earnings: 11.7x • "
+                "Price / 2027E Earnings + Cost Saves: 6.8x • Core Deposit Premium (2): 8.5%")
+        self.assertEqual(extract_deck_metrics(deck),
+                         {"deck_p_tbv": 1.62, "deck_p_e_ltm": None, "deck_core_dep_premium": 0.085})
+        self.assertEqual(extract_implied_price(deck), 19.52)
+
+    def test_bank_first_and_first_financial_decks(self):
+        from data.ma_announcements import extract_deck_metrics, extract_implied_price
+        bfc = ("▪ 100% Stock consideration ▪ 0.3470 x Exchange ratio Consideration ▪ "
+               "$ 202.9 million in aggregate² ▪ $ 49.85 implied per share transaction value "
+               "Transaction Value¹ ▪ 163% of Tangible Book Value per share ▪ 14.1x LTM "
+               "Earnings per share ▪ 7.4 x 2027 Estimated Earnings per share + 35% Cost "
+               "Savings ▪ 8.0 % Premium on core deposits³ ▪ Pay - to - Trade ratio of")
+        self.assertEqual(extract_deck_metrics(bfc),
+                         {"deck_p_tbv": 1.63, "deck_p_e_ltm": 14.1, "deck_core_dep_premium": 0.08})
+        self.assertEqual(extract_implied_price(bfc), 49.85)
+        thff = ("135% of tangible book value ∙ 13.0x LTM earnings ∙ 7.4x 2028E earnings + "
+                "fully phased-in cost savings ∙ 5.8% premium on core deposits⁽³⁾ ∙ "
+                "Pay-to-trade ratio of 80%")
+        self.assertEqual(extract_deck_metrics(thff),
+                         {"deck_p_tbv": 1.35, "deck_p_e_ltm": 13.0, "deck_core_dep_premium": 0.058})
+        hbt = "131% of Tangible Book Value ▪ 11.6x LTM Earnings (excl. one-time items)"
+        self.assertEqual(extract_deck_metrics(hbt)["deck_p_e_ltm"], 11.6)
+        ffbc = "Core Deposit Premium – 3.8% • Price / 2027E EPS with Synergies: 8.1x"
+        self.assertEqual(extract_deck_metrics(ffbc),
+                         {"deck_p_tbv": None, "deck_p_e_ltm": None, "deck_core_dep_premium": 0.038})
+
+    def test_two_distinct_deck_values_are_none(self):
+        from data.ma_announcements import extract_deck_metrics
+        self.assertIsNone(extract_deck_metrics(
+            "150% of tangible book value ... 162% of tangible book value")["deck_p_tbv"])
+
+    def test_deck_file_names_are_read(self):
+        from data.ma_announcements import _EX99_NAME_RE
+        for n in ("projectpioneerinvestorde.htm", "tm2618469d1_ex99-2.htm",
+                  "projectpioneerpressrelease.htm", "investor-presentation.htm"):
+            self.assertTrue(_EX99_NAME_RE.search(n), n)
+        self.assertFalse(_EX99_NAME_RE.search("tm2618469d1_8k.htm"))
 
 
 if __name__ == "__main__":
