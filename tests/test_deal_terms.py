@@ -1661,12 +1661,36 @@ class TestFdicCertForName(unittest.TestCase):
         self.assertEqual(g.call_args.kwargs["params"]["filters"],
                          'NAME:"blueharbor bank" AND ACTIVE:1')
 
+    def test_short_name_is_a_prefix_hit_not_a_link(self):
+        # "First Carolina" (First Bancorp 2026-07-14) must not link First
+        # Carolina Bank, Rocky Mount; the full holdco name does link.
+        from data.ma_pending import fdic_cert_for_name
+        rocky = [{"CERT": 35530, "NAME": "First Carolina Bank", "NAMEHCR": ""}]
+        with patch("data.http.get_with_retry", side_effect=[
+                self._resp(rocky), self._resp([]), self._resp([])]):
+            self.assertEqual(fdic_cert_for_name("First Carolina"), (None, None, True))
+        holdco = [{"CERT": 24680, "NAME": "Carolina Bank",
+                   "NAMEHCR": "FIRST CAROLINA BANCSHARES CORP"}]
+        with patch("data.http.get_with_retry", side_effect=[self._resp([]), self._resp(holdco)]):
+            self.assertEqual(fdic_cert_for_name("First Carolina Bancshares Corporation"),
+                             (24680, "Carolina Bank", True))
+
     def test_holdco_phrase_with_two_charters_is_none(self):
         from data.ma_pending import fdic_cert_for_name
+        # A sibling holdco name is disambiguated by exact equality ...
         two = [{"CERT": 15752, "NAME": "First State Bank", "NAMEHCR": "TRI-COUNTY FINANCIAL GROUP INC"},
                {"CERT": 4796, "NAME": "Bank of Commerce and Trust Company", "NAMEHCR": "TRI-COUNTY FINANCIAL CORP"}]
         with patch("data.http.get_with_retry", side_effect=[self._resp([]), self._resp(two)]):
             self.assertEqual(fdic_cert_for_name("Tri-County Financial Group, Inc."),
+                             (15752, "First State Bank", True))
+        # ... two charters under ONE holdco name stay None (one charter's
+        # TBV would be a plausible-wrong denominator).
+        from data import ma_pending
+        ma_pending._FDIC_NAME_CACHE.clear()
+        same = [{"CERT": 1, "NAME": "Bank A", "NAMEHCR": "TWO CHARTER BANCORP INC"},
+                {"CERT": 2, "NAME": "Bank B", "NAMEHCR": "TWO CHARTER BANCORP INC"}]
+        with patch("data.http.get_with_retry", side_effect=[self._resp([]), self._resp(same)]):
+            self.assertEqual(fdic_cert_for_name("Two Charter Bancorp, Inc."),
                              (None, None, True))
 
     def test_suffix_stripped_and_brand_required(self):
@@ -1817,6 +1841,33 @@ class TestBoardGates2(unittest.TestCase):
                                        "Mid Penn Bank")
         self.assertTrue(ok)
         self.assertEqual([r["counterparty_name"] for r in rows], ["1st Colonial Bancorp, Inc"])
+
+    def test_generic_name_dedupes_across_legs(self):
+        from data import ma_pending
+        row425 = {"announce_date": "2025-09-25", "direction": "acquisition",
+                  "counterparty_name": "First Savings Financial Group, Inc",
+                  "counterparty_ticker": None, "counterparty_cert": None,
+                  "counterparty_cik": None, "value_usd": 250_000_000,
+                  "value_basis": "stated", "value_note": None, "target_cik": None,
+                  "announce_url": "u425", "terms": {"exchange_ratio": 1.0}}
+        cash = [{"announce_date": "2026-02-02", "direction": "acquisition",
+                 "counterparty_name": "First Savings Financial Group, Inc",
+                 "counterparty_ticker": None, "counterparty_cik": None,
+                 "value_usd": None, "value_basis": None, "value_note": None,
+                 "target_cik": None, "announce_url": "u8k", "terms": None}]
+        with patch("data.ma_pending._find_pending_425", return_value=([row425], True)), \
+             patch("data.ma_pending.find_open_announcements", return_value=(cash, True)), \
+             patch("data.ma_pending.find_pending_wire", return_value=([], True)), \
+             patch("data.ma_pending.fdic_cert_for_name", return_value=(None, None, True)), \
+             patch("data.ma_pending._wire_resolved", return_value=False), \
+             patch("data.ma_pending._close_before", return_value=(None, None, True)), \
+             patch("data.ma_pending._resolved_after", return_value=(False, True)), \
+             patch("data.ma_pending.iter_submission_filings", return_value=([], True)), \
+             patch("data.ma_pending._milestones",
+                   return_value=({"votes": [], "regulatory_approval": None}, True)):
+            rows, ok = ma_pending.find_pending_deals(712534, "First Merchants Bank", ticker="FRME")
+        self.assertTrue(ok)
+        self.assertEqual([r["announce_url"] for r in rows], ["u425"])
 
     def test_defined_term_expands_to_the_full_name(self):
         from data.ma_announcements import expand_defined_term, _clean_company_name
