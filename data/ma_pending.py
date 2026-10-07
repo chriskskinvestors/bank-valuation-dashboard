@@ -577,14 +577,39 @@ def _milestones(filer_cik, other_name: str, announce_date: str,
                  if " " in needle else token_in(needle, low))
         if not named:
             continue
+        if _TRANSCRIPT_RE.search(low[:2000]):
+            continue              # a call transcript is not a milestone source
         url = (f"https://www.sec.gov/Archives/edgar/data/{int(filer_cik)}/"
                f"{f['accession'].replace('-', '')}/{f['doc']}")
         if "5.07" in f.get("items", "") and _VOTE_RE.search(text) \
                 and not out["votes"]:
             out["votes"].append({"side": side, "date": f["date"], "url": url})
-        if _REG_APPROVAL_RE.search(text) and not out["regulatory_approval"]:
+        if not out["regulatory_approval"] and _approval_about(low, needle):
             out["regulatory_approval"] = {"date": f["date"], "url": url}
     return out, not fetch_failed
+
+
+_TRANSCRIPT_RE = re.compile(r"transcript\s+of\s+(?:the\s+)?(?:conference\s+)?call|conference\s+call\s+transcript")
+_FORWARD_RE = re.compile(
+    r"(?:expect\w*|anticipat\w*|subject|prior|pending|until|upon|condition\w*|"
+    r"will|would|must|required?|need\w*)\s+(?:to\s+)?(?:the\s+)?(?:receipt\s+of\s+)?$")
+
+
+def _approval_about(low: str, needle: str) -> bool:
+    """A "received ... regulatory approvals" sentence that names the
+    counterparty within 250 chars and is not forward-looking ("expect to
+    receive", "subject to receipt of"). Peoples' 2026-10-05 Capital call
+    transcript discussed the Citizens approvals; it showed on the Capital
+    row as that deal's approval."""
+    for m in _REG_APPROVAL_RE.finditer(low):
+        before = low[max(0, m.start() - 60):m.start()]
+        if _FORWARD_RE.search(before.strip() + " "):
+            continue
+        window = low[max(0, m.start() - 250):m.end() + 250]
+        flat = " ".join(window.replace(",", " ").split())
+        if (needle in flat) if " " in needle else token_in(needle, window):
+            return True
+    return False
 
 
 def _merge_milestones(a: dict, b: dict) -> dict:
