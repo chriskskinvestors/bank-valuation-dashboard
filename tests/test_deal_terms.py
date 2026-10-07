@@ -2097,5 +2097,47 @@ class TestDeckMetrics(unittest.TestCase):
         self.assertFalse(_EX99_NAME_RE.search("tm2618469d1_8k.htm"))
 
 
+class TestMilestoneAttribution(unittest.TestCase):
+
+    def _ms(self, text, name, items="8.01"):
+        from data.ma_pending import _milestones
+        filings = [{"form": "8-K", "date": "2026-10-05", "accession": "0001-26-5",
+                    "doc": "pebo-20261005.htm", "items": items}]
+        with patch("data.ma_pending._accession_text", return_value=(text, True)), \
+             patch("data.ma_pending.time.sleep", lambda *_: None):
+            return _milestones(318300, name, "2026-09-30", filings, side="acquirer")
+
+    def test_transcript_discussing_another_deal_is_not_an_approval(self):
+        # Peoples 2026-10-05: transcript of the Capital call; the Citizens
+        # approvals are discussed in it.
+        t = ("Item 8.01 Other Events On September 30, 2026, management of Peoples "
+             "Bancorp Inc. conducted a facilitated conference call to discuss the "
+             "announcement of the proposed merger with Capital Bancorp, Inc. A copy of "
+             "the transcript of the conference call is included as Exhibit 99.1. "
+             "... and we received all necessary regulatory approvals for the Citizens "
+             "merger last week, and we expect to receive regulatory approvals for "
+             "Capital in the first half of next year.")
+        out, ok = self._ms(t, "Capital Bancorp")
+        self.assertTrue(ok)
+        self.assertIsNone(out["regulatory_approval"])
+
+    def test_approval_sentence_naming_the_counterparty_counts(self):
+        # Peoples 2026-09-28: approvals for the Citizens National merger.
+        t = ("Item 8.01 Other Events On September 28, 2026, Peoples Bancorp Inc. issued "
+             "a press release announcing that it has received all necessary regulatory "
+             "approvals for the merger between Peoples and Citizens National Corporation "
+             "(\"Citizens\"), with Peoples as the surviving corporation.")
+        out, _ = self._ms(t, "Citizens National Corporation")
+        self.assertEqual(out["regulatory_approval"]["date"], "2026-10-05")
+        out2, _ = self._ms(t, "Capital Bancorp")
+        self.assertIsNone(out2["regulatory_approval"])
+
+    def test_forward_looking_receipt_is_not_an_approval(self):
+        t = ("The merger with Capital Bancorp, Inc. is subject to receipt of all "
+             "required regulatory approvals and is expected to close in 2027.")
+        out, _ = self._ms(t, "Capital Bancorp")
+        self.assertIsNone(out["regulatory_approval"])
+
+
 if __name__ == "__main__":
     unittest.main()
