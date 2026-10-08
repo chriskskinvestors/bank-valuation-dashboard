@@ -35,5 +35,37 @@ class TestDeckComparisonRows(unittest.TestCase):
         self.assertIsNone(m["deck_p_e_ltm"])
 
 
+WAFD = ("Implied Valuation vs. Regional Bank Index(1): 2027E ROATCE vs. Price / Tangible Book "
+        "Value (2) y = 12.68x – 0.16 R2 = 62% Illustrative Combined Company Tangible book "
+        "value per share at close: $29.24 2027E ROATCE:(2) 15%+ Regression implied price / TBV: "
+        "1.79x Implied share price: $52.41 Implied upside to WaFd shareholders: ~44% Price / TBV "
+        "at announcement 1.18x")
+BYLINE = ("this equates to an aggregate transaction value of $87.9 million or $261.23 per "
+          "share(1) Transaction Multiples Price / TBV: 1.07x(1) Core Deposit Premium: 1.6%(1) "
+          "LTM Earnings: 13.1x(1) Pro Forma Impacts Minimal TBV dilution")
+THFF = ("Ownership: 92% THFF | 8% First Illinois ∙ $111.3MM in aggregate⁽²⁾ "
+        "∙ $45.00 implied transaction value per share ∙ 135% of tangible book value "
+        "∙ 13.0x LTM earnings ∙ 7.4x 2028E earnings + fully phased-in cost savings "
+        "∙ 5.3% premium on core deposits")
+
+
+class TestCombinedCompanyMultiple(unittest.TestCase):
+
+    def test_regression_implied_multiple_is_not_the_deal(self):
+        from data.ma_announcements import extract_deck_metrics
+        self.assertEqual(extract_deck_metrics(WAFD),
+                         {"deck_p_tbv": None, "deck_p_e_ltm": None,
+                          "deck_core_dep_premium": None})
+
+    def test_deal_multiples_still_read(self):
+        from data.ma_announcements import extract_deck_metrics
+        self.assertEqual(extract_deck_metrics(BYLINE),
+                         {"deck_p_tbv": 1.07, "deck_p_e_ltm": 13.1,
+                          "deck_core_dep_premium": 0.016})
+        self.assertEqual(extract_deck_metrics(THFF),
+                         {"deck_p_tbv": 1.35, "deck_p_e_ltm": 13.0,
+                          "deck_core_dep_premium": 0.053})
+
+
 if __name__ == "__main__":
     unittest.main()

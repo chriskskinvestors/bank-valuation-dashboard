@@ -868,6 +868,15 @@ _DECK_CDP_RE = re.compile(
 # Great Plains 2026-10-07). Which column is the deal is not knowable from the
 # text, so the row is skipped; the deck's own bullet states the deal alone.
 _DECK_COMPARE_TAIL_RE = re.compile(r"\s+\d{1,2}\.\d{1,2}\s?[x%]")
+# A multiple about the COMBINED company is not the deal's price: WaFd's
+# EverBank deck "Illustrative Combined Company ... Regression implied price /
+# TBV: 1.79x" (2026-09-08) showed on the board as EverBank's P/TBV.
+_DECK_NOT_DEAL_RE = re.compile(r"regression|illustrative|combined\s+company", re.IGNORECASE)
+
+
+def _deck_skip(text: str, m) -> bool:
+    return bool(_DECK_COMPARE_TAIL_RE.match(text, m.end())
+                or _DECK_NOT_DEAL_RE.search(text, max(0, m.start() - 100), m.start()))
 
 
 def extract_deck_metrics(text: str) -> dict:
@@ -876,7 +885,7 @@ def extract_deck_metrics(text: str) -> dict:
     distinct plausible value."""
     ptbv = []
     for m in _DECK_PTBV_RE.finditer(text):
-        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+        if _deck_skip(text, m):
             continue
         pct, pct2, x = m.groups()
         v = float(x) if x else float(pct or pct2) / 100.0
@@ -884,14 +893,14 @@ def extract_deck_metrics(text: str) -> dict:
             ptbv.append(round(v, 2))
     pe = []
     for m in _DECK_PE_RE.finditer(text):
-        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+        if _deck_skip(text, m):
             continue
         v = float(next(g for g in m.groups() if g))
         if 3.0 <= v <= 60.0:
             pe.append(round(v, 1))
     cdp = []
     for m in _DECK_CDP_RE.finditer(text):
-        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+        if _deck_skip(text, m):
             continue
         v = float(next(g for g in m.groups() if g)) / 100.0
         if 0.0 <= v <= 0.30:
