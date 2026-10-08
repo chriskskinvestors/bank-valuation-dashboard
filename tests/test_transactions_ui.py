@@ -123,6 +123,35 @@ class TestTransactionsSection(unittest.TestCase):
         self.assertFalse(any("snapshot has not been compiled" in str(i.value)
                              for i in at.info))
 
+    def test_merger_arb_group_comes_first_and_stated_wins(self):
+        # Owner 2026-10-08: "make the merger arb section first" and
+        # "company-stated always wins". Header and row cells must stay aligned.
+        import re
+        from data import cache
+        from data.deal_comps import SNAPSHOT_KEY
+        cache.put(SNAPSHOT_KEY, {"built_at": "2026-10-08T12:00:00", "deals": [
+            {"status": "pending", "announce_date": "2026-10-07",
+             "target_name": "Great Plains Bancshares, Inc", "target_ticker": None,
+             "buyer_name": "Third Coast", "buyer_ticker": "TCBX",
+             "p_tbv": 1.56, "p_tbv_basis": "stated", "p_tbv_computed": 1.36,
+             "terms": {"consideration": "stock", "deck_p_tbv": 1.56,
+                       "expected_close_date": "2027-03-31"}}]})
+        try:
+            at = self._open_transactions()
+        except ModuleNotFoundError as e:
+            self.skipTest(f"AppTest unavailable: {e}")
+        html = next(str(m.value) for m in at.markdown if "Merger arb (live)" in str(m.value))
+        groups = re.findall(r'<th colspan="\d+"[^>]*>([^<]+)</th>', html)
+        self.assertEqual(groups, ["Deal", "Merger arb (live)", "Terms",
+                                  "Valuation at announce", "Agreement"])
+        cols = re.findall(r"<th(?: [^>]*)?>([^<]+)</th>", html.split("</tr>", 1)[1])
+        self.assertEqual(cols[3:6], ["Consid.", "Target px", "Implied offer"])
+        row = html.split("<tbody>", 1)[1].split("</tr>", 1)[0]
+        cells = re.findall(r"<td[ >]", row)
+        self.assertEqual(len(cells), len(cols))                # aligned
+        self.assertIn("1.56xᵈ", row)
+        self.assertIn("our computation: 1.36x", row)
+
     def test_spread_tracker_renders_under_the_board(self):
         # Owner 2026-10-07: interactive spread chart under the board. Seed the
         # snapshot and the tracker history; both charts and the picker render.
