@@ -157,7 +157,9 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
     for field, needle in tries:
         resp = get_with_retry(FDIC_INSTITUTIONS_URL, params={
             "filters": f'{field}:"{needle}" AND ACTIVE:1',
-            "fields": "CERT,NAME,NAMEHCR,ASSET", "limit": 5}, timeout=30)
+            # Every match: with 5, "Citizens National" never reached the
+            # second "CITIZENS NATIONAL CORP", so uniqueness was unchecked.
+            "fields": "CERT,NAME,NAMEHCR,ASSET", "limit": 100}, timeout=30)
         if resp is None:
             return None, None, False
         try:
@@ -177,6 +179,42 @@ def fdic_cert_for_name(name: str) -> tuple[int | None, str | None, bool]:
            else (None, None, True))
     _FDIC_NAME_CACHE[key] = out
     return out
+
+
+def fdic_cert_for_subsidiary(holdco_name: str, bank_names: list[str]
+                             ) -> tuple[int | None, bool]:
+    """(cert, ok) for the ONE active charter whose NAME equals one of the
+    release's subsidiary names AND whose FDIC holding company (NAMEHCR)
+    equals the counterparty's name. Two holdcos are named "Citizens National
+    Corp" (Kentucky and the parent of Citizens State Bank); the release's
+    "parent company of Citizens Bank of Kentucky, Inc." names one, and FDIC's
+    NAMEHCR must agree — a subsidiary name alone could be the acquirer's."""
+    phrase = _CORP_SUFFIX_RE.sub("", (holdco_name or "").strip()).strip(" ,.")
+    want_hc = _fdic_norm(phrase)
+    want_banks = {_fdic_norm(b) for b in bank_names or [] if b}
+    if len(want_hc) < 2 or not want_banks:
+        return None, True
+    from data.fdic_client import FDIC_INSTITUTIONS_URL
+    from data.http import get_with_retry
+    # By holding company: FDIC's NAME filter wants the exact legal name
+    # ("Citizens Bank of Kentucky" finds nothing without ", Inc.").
+    hits: dict[int, dict] = {}
+    needles = [phrase] + ([_fdic_abbreviated(phrase)] if _fdic_abbreviated(phrase) else [])
+    for needle in needles:
+        resp = get_with_retry(FDIC_INSTITUTIONS_URL, params={
+            "filters": f'NAMEHCR:"{needle}" AND ACTIVE:1',
+            "fields": "CERT,NAME,NAMEHCR", "limit": 100}, timeout=30)
+        if resp is None:
+            return None, False
+        try:
+            rows = [d["data"] for d in resp.json().get("data", [])]
+        except Exception:
+            return None, False
+        for r in rows:
+            if (_fdic_norm(r.get("NAMEHCR") or "") == want_hc
+                    and _fdic_norm(r.get("NAME") or "") in want_banks):
+                hits[int(r["CERT"])] = r
+    return (next(iter(hits)) if len(hits) == 1 else None), True
 
 
 def _universe_info(ticker: str | None) -> tuple[int | None, int | None] | None:
@@ -271,7 +309,9 @@ def _find_pending_425(cik, subject_name: str) -> tuple[list[dict], bool]:
     # (their EX-99 press releases carry the value/ratio).
     docs = episode[:2]
     lo = (date.fromisoformat(announce) - timedelta(days=2)).isoformat()
-    hi = (date.fromisoformat(announce) + timedelta(days=2)).isoformat()
+    # +4: the Item 1.01 8-K can follow a Friday announcement on Monday
+    # (Isabella/Grand River 06-12 -> 06-15, which carries the $2.18M fee).
+    hi = (date.fromisoformat(announce) + timedelta(days=4)).isoformat()
     docs += [f for f in filings
              if f["form"] == "8-K" and lo <= f["date"] <= hi
              and ({i.strip() for i in (f["items"] or "").split(",")}
@@ -889,6 +929,10 @@ def find_pending_deals(cik, subject_name: str,
         if r["direction"] == "acquisition" and not r.get("counterparty_cert"):
             c_cert, _c_name, c_ok = fdic_cert_for_name(r["counterparty_name"])
             ok = ok and c_ok
+            if not c_cert and c_ok and isinstance(terms, dict) and terms.get("subsidiary_names"):
+                c_cert, c_ok = fdic_cert_for_subsidiary(r["counterparty_name"],
+                                                        terms["subsidiary_names"])
+                ok = ok and c_ok
             if c_cert:
                 r["counterparty_cert"] = c_cert
         # Price when unpriced; re-check a STATED price that was never compared

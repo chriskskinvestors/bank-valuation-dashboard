@@ -687,7 +687,11 @@ _TERM_FEE_B_RE = re.compile(
 _EXPECTED_CLOSE_RE = re.compile(
     r"(?:(?:expected|anticipated|expects?|anticipates?|expect)\s+to\s+"
     r"(?:close|be\s+completed|be\s+consummated|complete|consummate)"
-    r"(?:\s+(?:the|this)\s+(?:transaction|merger|acquisition|mergers))?"
+    r"(?:\s+(?:the|this)\s+(?:proposed\s+|pending\s+)?(?:transaction|merger|acquisition|mergers))?"
+    # Isabella/Grand River 2026-06-12: "We currently expect the pending
+    # transaction to close in the fourth quarter of 2026".
+    r"|expects?\s+the\s+(?:proposed\s+|pending\s+)?(?:transaction|merger|acquisition)\s+"
+    r"to\s+(?:close|be\s+completed)"
     r"|(?:closing|completion)\s+(?:of\s+the\s+(?:transaction|merger|"
     r"acquisition|mergers)\s+)?is\s+(?:expected|anticipated)"
     r"|anticipate\s+closing(?:\s+the\s+(?:merger|transaction|acquisition))?"
@@ -741,8 +745,11 @@ _MIX_STOCK_CASH_RE = re.compile(
     r"(\d{1,3})\s?%\s+of\s+the\s+shares\s+of\s+[^.]{0,60}?exchanged\s+for\s+the\s+"
     r"per\s+share\s+stock\s+consideration\s+and\s+(\d{1,3})\s?%\s+of\s+the\s+shares",
     re.IGNORECASE)
+# "approximately 75% cash and 25% Valley common stock" (Valley/Bluevine
+# 2026-09-28): the issuer's name may sit between the percent and the stock.
 _MIX_CASH_STOCK_RE = re.compile(
-    r"(\d{1,3})\s?%\s+cash\s*(?:and|/|\|)\s*(\d{1,3})\s?%\s+(?:common\s+)?stock",
+    r"(\d{1,3})\s?%\s+cash\s*(?:and|/|\|)\s*(\d{1,3})\s?%\s+(?:[A-Z][\w&'\-]*\s+){0,3}?"
+    r"(?:common\s+)?stock",
     re.IGNORECASE)
 _PRORATION_RE = re.compile(
     r"(\d{1,3})\s?%\s+of\s+[^.]{0,80}?receive\s+the\s+cash\s+consideration"
@@ -847,10 +854,11 @@ def extract_implied_price(text: str) -> float | None:
 #   "Core Deposit Premium (2): 8.5%" / "8.0 % Premium on core deposits³" /
 #   "Core Deposit Premium – 3.8%" (First Financial Bancorp/Finward)
 # Forward multiples ("Price / 2027E Earnings") are never read.
+# "Deal Value / TBV: 118%" (Peoples/Citizens National deck 2026-04-21).
 _DECK_PTBV_RE = re.compile(
     r"(\d{2,3})\s?%\s+of\s+tangible\s+book\s+value|"
-    r"price\s*/\s*tangible\s+book\s+value(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*(\d{2,3})\s?%|"
-    r"(?:price\s*/\s*(?:tangible\s+book(?:\s+value)?|tbv)|p\s*/\s*tbv)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*"
+    r"(?:price|deal\s+value)\s*/\s*(?:tangible\s+book\s+value|tbv)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*(\d{2,3})\s?%|"
+    r"(?:(?:price|deal\s+value)\s*/\s*(?:tangible\s+book(?:\s+value)?|tbv)|p\s*/\s*tbv)(?:\s+per\s+share)?\s*(?:\(\d\))?:?\s*"
     r"(\d\.\d{1,2})\s?x\b", re.IGNORECASE)
 _DECK_PE_RE = re.compile(
     r"(\d{1,2}\.\d)\s?x\s+ltm\s+(?:earnings|eps)|"
@@ -1098,6 +1106,27 @@ def implied_offer(terms: dict, acq_price, *, basis_label: str) -> tuple[float | 
     return None, None
 
 
+# "the parent company of Citizens Bank of Kentucky, Inc. (“Citizens Bank”)"
+# (Peoples/Citizens National 2026-04-21): the bank a holdco name stands for.
+_PARENT_OF_RE = re.compile(
+    r"(?:parent|holding)\s+company\s+(?:of|for)\s+(?:the\s+)?"
+    r"((?-i:[A-Z])[\w.&'\- ]{2,70}?)(?=\s*[(“\"]|,\s|\.\s|;|\.$)", re.IGNORECASE)
+
+
+def extract_subsidiary_names(text: str) -> list[str]:
+    """Bank names a release gives as some holdco's subsidiary, in order, at
+    most six. Which holdco each belongs to is checked against FDIC's own
+    NAMEHCR by the caller, never assumed from position."""
+    out: list[str] = []
+    for m in _PARENT_OF_RE.finditer(text):
+        n = m.group(1).strip(" ,.")
+        if n and n not in out and re.search(r"(?i)\b(?:bank|savings|trust)\b", n):
+            out.append(n)
+        if len(out) >= 6:
+            break
+    return out
+
+
 def extract_terms(text: str) -> dict:
     """Pure (no network) term extraction from announcement text."""
     ratio_hit = extract_exchange_ratio(text)
@@ -1114,9 +1143,15 @@ def extract_terms(text: str) -> dict:
             if n_cash > 0 and n_stock > 0:
                 sp = round(100 * n_stock / (n_cash + n_stock), 1)
                 pcts, mix_basis = (sp, round(100 - sp, 1)), "derived"
+    consideration = classify_consideration(text, ratio, cash)
+    if (consideration is None and not ratio and not cash
+            and pcts and pcts[0] > 0 and pcts[1] > 0):
+        # Split stated only in aggregate (Bluevine: "approximately 75% cash and
+        # 25% Valley common stock"): mixed, per-share legs unknown.
+        consideration = "mixed"
     return {
         "mix_basis": mix_basis,
-        "consideration": classify_consideration(text, ratio, cash),
+        "consideration": consideration,
         "exchange_ratio": ratio,
         "acq_side": ratio_hit[1] if ratio_hit else None,
         "tgt_side": ratio_hit[2] if ratio_hit else None,
@@ -1128,6 +1163,7 @@ def extract_terms(text: str) -> dict:
         "expected_close_phrase": phrase,
         "expected_close_date": close_date,
         "termination_fee_usd": extract_termination_fee(text),
+        "subsidiary_names": extract_subsidiary_names(text),
         **extract_deck_metrics(text),
     }
 
@@ -1821,6 +1857,31 @@ def expand_defined_term(short: str, text: str) -> str:
     return next(iter(names)) if len(names) == 1 else short
 
 
+# Fields a same-deal follow-up 8-K may supply when the announcement is
+# silent. Pricing fields (ratio, cash, consideration, implied price) never
+# merge: they come from one document or are n/a.
+_FOLLOW_UP_FIELDS = (("termination_fee_usd",), ("expected_close_phrase", "expected_close_date"),
+                     ("deck_p_tbv",), ("deck_p_e_ltm",), ("deck_core_dep_premium",))
+
+
+def _same_deal_week(older: str, newer: str) -> bool:
+    try:
+        return 0 <= (date.fromisoformat(newer) - date.fromisoformat(older)).days <= 7
+    except (TypeError, ValueError):
+        return False
+
+
+def _fill_missing_terms(dst, src) -> None:
+    """Fill dst's empty follow-up fields from src, in place (field groups
+    move together: a close phrase never pairs with another filing's date)."""
+    if not isinstance(dst, dict) or not isinstance(src, dict):
+        return
+    for group in _FOLLOW_UP_FIELDS:
+        if all(dst.get(k) is None for k in group) and src.get(group[0]) is not None:
+            for k in group:
+                dst[k] = src.get(k)
+
+
 def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
     """
     Recent announcement 8-Ks with NO completion/termination anchor IN THE
@@ -1906,6 +1967,10 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
     # Peoples' 2026-09-30 Capital announcement off behind two earnings
     # 8-Ks, an earlier deal and an approvals 8-K (pass 4, 2026-10-07).
     by_tok: dict[str, dict] = {}
+    # Announce-shaped 8-Ks naming no readable counterparty (Isabella's
+    # 2026-06-15 Item 1.01 8-K, anchored on its voting-agreement exhibit,
+    # carries the $2.18M fee the 06-12 release omits).
+    unattributed: list[tuple[str, str]] = []
     for ann in sorted(recent, key=lambda g: g["file_date"], reverse=True)[:_ANN_SCAN_CAP]:
         time.sleep(_PAUSE_S)
         text, t_ok = _accession_text(ann["cik"], ann["adsh"], ann["doc"])
@@ -1999,6 +2064,7 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 if len(withs) == 1:
                     counterparty = withs.pop()
         if not counterparty or _is_self(counterparty):
+            unattributed.append((ann["file_date"], text))
             continue
         # A capture that is not a company name — a dateline run-on
         # ("Cincinnati, Ohio - July 21, 2026. First Financial Bancorp", live
@@ -2009,8 +2075,13 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
         ct = row_token(counterparty)
         if not ct:
             continue
-        if ct in by_tok and by_tok[ct]["announce_date"] <= ann["file_date"]:
-            continue              # an older 8-K already carries this deal
+        _prev_row = by_tok.get(ct)
+        if _prev_row and _prev_row["announce_date"] <= ann["file_date"]:
+            # an older 8-K already carries this deal; a follow-up within the
+            # week may still state what the release did not
+            if _same_deal_week(_prev_row["announce_date"], ann["file_date"]):
+                _fill_missing_terms(_prev_row.get("terms"), extract_terms(text))
+            continue
         # Self as the acquire object -> we are the target (seller side).
         for m in _ACQUIRE_OBJ_RE.finditer(text):
             if _is_self(_clean_company_name(m.group(1))):
@@ -2048,6 +2119,10 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                 note = comp["value_note"]
         terms, t_ok = build_terms(text, ann["file_date"])
         fetch_failed = fetch_failed or not t_ok
+        if _prev_row and _same_deal_week(ann["file_date"], _prev_row["announce_date"]):
+            # the newer follow-up (Item 1.01 8-K, Isabella 2026-06-15) is
+            # replaced by the announcement but keeps its stated fee/close
+            _fill_missing_terms(terms, _prev_row.get("terms"))
         by_tok[ct] = {
             "announce_date": ann["file_date"],
             "direction": direction,
@@ -2062,6 +2137,14 @@ def find_open_announcements(cik, subject_name: str) -> tuple[list[dict], bool]:
                              f"{ann['doc']}"),
             "accession": ann["adsh"],
         }
+    for fd, text in unattributed:
+        low = text.lower()
+        near = [r for r in by_tok.values()
+                if _same_deal_week(r["announce_date"], fd)
+                and (tok := row_token(r["counterparty_name"]))
+                and len(re.findall(r"\b" + re.escape(tok) + r"\b", low)) >= 2]
+        if len(near) == 1:          # the follow-up of exactly one deal
+            _fill_missing_terms(near[0].get("terms"), extract_terms(text))
     rows = sorted(by_tok.values(), key=lambda r: r["announce_date"], reverse=True)
     return rows, not fetch_failed
 

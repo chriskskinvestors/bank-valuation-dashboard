@@ -137,6 +137,19 @@ class TestFindPendingDeals(_Harness):
         self.assertIn("2.095", r["value_note"])
         self.assertEqual(r["target_cik"], 356171)
 
+    def test_merger_agreement_8k_after_a_weekend_is_read(self):
+        # Isabella/Grand River: announced Friday 06-12, Item 1.01 8-K with
+        # the fee filed Monday 06-15 (3 days) — the old +2 window missed it.
+        fee = ("further provides that a termination fee of $80.0 million will be payable "
+               "by TriCo upon termination of the Merger Agreement under certain circumstances.")
+        texts = {"d4_425.htm": (LEGEND_425, True), "agmt8k.htm": (fee, True)}
+        rows, ok = self._run(_filings([
+            ("8-K", "2026-07-16", "0001-26-2", "agmt8k.htm", "1.01,9.01"),
+            ("425", "2026-07-13", "0001-26-1", "d4_425.htm", ""),
+        ]), texts=texts, today="2026-07-20")
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["terms"]["termination_fee_usd"], 80_000_000)
+
     def test_stale_episode_dropped(self):
         rows, ok = self._run(_filings([
             ("425", "2024-01-05", "0001-24-1", "x.htm", "")]))

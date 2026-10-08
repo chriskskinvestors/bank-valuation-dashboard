@@ -67,5 +67,21 @@ class TestCombinedCompanyMultiple(unittest.TestCase):
                           "deck_core_dep_premium": 0.053})
 
 
+class TestAggregateOnlySplit(unittest.TestCase):
+
+    def test_bluevine_split_names_the_issuer(self):
+        # Valley/Bluevine EX-99.1 2026-09-28, verbatim
+        from data.ma_announcements import extract_terms
+        t = extract_terms(
+            "Under the terms of the proposed transaction, Valley will acquire Bluevine for "
+            "total consideration of approximately $340 million. The consideration is expected "
+            "to consist of approximately 75% cash and 25% Valley common stock, subject to the "
+            "terms of the definitive agreement and customary adjustments.")
+        self.assertEqual((t["consideration"], t["stock_pct"], t["cash_pct"], t["mix_basis"]),
+                         ("mixed", 25.0, 75.0, "stated"))
+        self.assertIsNone(t["exchange_ratio"])
+        self.assertIsNone(t["cash_per_share"])
+
+
 if __name__ == "__main__":
     unittest.main()
