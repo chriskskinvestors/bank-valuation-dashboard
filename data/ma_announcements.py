@@ -1693,7 +1693,9 @@ _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
 # Exhibits worth reading with the primary document: EX-99 press releases
 # and investor decks under any file name ("projectpioneerinvestorde.htm",
 # Peoples 2026-09-30, carried the deck metrics and was skipped).
-_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentation|deck", re.IGNORECASE)
+# "presentati": EDGAR truncates long names ("q12026earningspresentati.htm",
+# Peoples 2026-04-21, the deck stating Citizens National at 118% of TBV).
+_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentati|deck", re.IGNORECASE)
 _EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
 # An 8-K body's file name: inline-XBRL "pebo-20260930.htm", "d947601d8k.htm",
 # "tm2618469d1_8k.htm", "hbt-20260810x8k.htm".
