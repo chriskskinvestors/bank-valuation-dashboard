@@ -110,15 +110,65 @@ def _release_qend(title: str, filed_date: str) -> str | None:
     return _quarter_end_before(filed_date)
 
 
+_STORY_KEY = "wire_story_html:v1:"
+_DENIED_RE = re.compile(r"(?i)<title>\s*access denied\s*</title>")
+# Business Wire refuses server fetches for good (403 since 2026-10-07): an
+# unreachable story there is skipped, never retried as a transient failure.
+_PERMANENT_BLOCK_HOST_RE = re.compile(r"(?i)://(?:www\.)?businesswire\.com/")
+_HOST_BACKOFF_S = 1800
+_host_down: dict[str, float] = {}     # host → time of its last refusal
+
+
+def _story_key(url: str) -> str:
+    # Hashed: the cache key column is VARCHAR(255) and wire URLs carry the
+    # whole headline as a slug.
+    import hashlib
+    return _STORY_KEY + hashlib.sha1(url.encode("utf-8")).hexdigest()
+
+
 def _fetch_story(url: str) -> str | None:
     """Full wire-story HTML, or None. Wire pages (GlobeNewswire etc.) render
-    the release body incl. real <table> markup, so table extraction works."""
-    from data.http import get_with_retry
+    the release body incl. real <table> markup, so table extraction works.
+
+    A published story never changes, so a successful fetch is kept for good
+    and served at any age: GlobeNewswire began refusing server fetches on
+    2026-10-08 (Akamai "Access Denied" 403), and every re-extraction (an
+    envelope version bump, the EPS-history backfill's retry) would otherwise
+    need a page the wire no longer serves."""
+    if not url:
+        return None
+    from data import cache
+    try:
+        hit = cache.get(_story_key(url), max_age_s=None)
+    except Exception:
+        hit = None
+    if isinstance(hit, dict) and hit.get("html"):
+        return hit["html"]
+    import time
+    from urllib.parse import urlparse
+    from data.http import get_with_retry, is_http_404
+    host = (urlparse(url).netloc or "").lower()
+    # From Cloud Run the block is a read timeout, not a fast 403: three
+    # 30s attempts per story. One refusal backs the whole host off for a
+    # while, so a warm pass pays it once, not once per bank.
+    if time.time() - _host_down.get(host, 0.0) < _HOST_BACKOFF_S:
+        return None
     try:
         resp = get_with_retry(url, headers=_UA, timeout=30)
-    except Exception:
+    except Exception as e:
+        if not is_http_404(e):
+            _host_down[host] = time.time()
         return None
-    return resp.text if resp is not None else None
+    html = resp.text if resp is not None else None
+    if html and _DENIED_RE.search(html[:2000]):
+        _host_down[host] = time.time()
+        return None          # a bot wall served as 200 is a failed fetch
+    if html and len(html) >= 2000:
+        try:
+            cache.put(_story_key(url), {"url": url, "html": html})
+        except Exception:
+            pass
+    return html
 
 
 # ── IR-site fallback (owner directive 2026-07-16: "The PDFs posted need to
@@ -673,34 +723,48 @@ def backfill_eps_history(ticker: str,
     hist = get_eps_history(ticker)
     if hist.get("backfill"):
         return False
+    if _ir_checked_within({"ir_checked_at": hist.get("backfill_blocked_at")},
+                          _IR_CRAWL_TTL_S):
+        return False                  # a blocked attempt retries daily
     latest_url = env["url"]
-    docs: list[tuple[str, str | None, str | None, str]] = []
+    docs: list[tuple[str, str | None, str | None, str, bool]] = []
     for pr in _earnings_prs(ticker):
         if pr["url"] == latest_url:
             continue
         qend = _release_qend(pr.get("title") or "",
                              (pr["published_at"] or "")[:10])
-        docs.append((pr["url"], pr.get("title"), qend, "html"))
+        docs.append((pr["url"], pr.get("title"), qend, "html", True))
     if not docs:
         for c in _ir_release_candidates(ticker):
             if c["url"] == latest_url:
                 continue
-            docs.append((c["url"], c.get("title"), c["qend"], c["kind"]))
+            docs.append((c["url"], c.get("title"), c["qend"], c["kind"],
+                         False))
     tried: list[str] = []
-    for url, title, qend, kind in docs[:max_releases]:
+    blocked = False
+    for url, title, qend, kind, wire in docs[:max_releases]:
         tried.append(url)
         if not qend or not _is_quarter_end(qend):
             continue                  # period unprovable → never extracted
-        text = _fetch_document(url, kind)
+        text = _fetch_story(url) if wire else _fetch_document(url, kind)
         if not text:
+            # An unreachable wire story is a failure, not an absent quarter:
+            # writing the once-only marker over it (GlobeNewswire, blocked
+            # 2026-10-08) would lose that quarter for good. Business Wire
+            # refuses server fetches permanently — that one is skipped.
+            if wire and not _PERMANENT_BLOCK_HOST_RE.search(url):
+                blocked = True
             continue
         metrics = extract_release_metrics(text, expected_qend=qend)
         series = extract_table_series(text, "eps_diluted")
         _append_eps_history(ticker, url=url, qend=qend,
                             eps=metrics.get("eps_diluted"), series=series)
     hist = get_eps_history(ticker)
-    hist["backfill"] = {"done_at": datetime.now().isoformat(timespec="seconds"),
-                        "urls": tried}
+    now = datetime.now().isoformat(timespec="seconds")
+    if blocked:
+        hist["backfill_blocked_at"] = now
+    else:
+        hist["backfill"] = {"done_at": now, "urls": tried}
     try:
         _cache.put(_hist_key(ticker),
                    {"cached_at": datetime.now().isoformat(), "value": hist})

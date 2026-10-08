@@ -419,7 +419,7 @@ class TestBackfill(_StoreBase):
         _seed_envelope(self.store, "T", "2026-06-30", 0.42)
         orl._earnings_prs = lambda t: self._prs(6)
         fetched = []
-        orl._fetch_document = lambda u, k: fetched.append(u) or (
+        orl._fetch_story = lambda u: fetched.append(u) or (
             "<p>Diluted earnings per share were $0.36 for the quarter.</p>")
         crawls = []
         orl._ir_release_candidates = lambda t: crawls.append(1) or []
