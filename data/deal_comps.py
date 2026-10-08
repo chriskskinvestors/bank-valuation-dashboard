@@ -287,6 +287,7 @@ def build_comps_snapshot(banks: list[dict],
     from data.ma_history import get_ma_history
 
     import time as _time
+    started = datetime.now().isoformat()
     by_key: dict[tuple, dict] = {}
     lookups_ok = True
     covered = 0
@@ -364,6 +365,7 @@ def build_comps_snapshot(banks: list[dict],
               f"{min_deals}) — snapshot NOT cached, previous still serves")
         return None
 
+    rows, pending_at = _keep_newer_pending(rows, get_comps_snapshot(), started)
     snapshot = {
         "built_at": datetime.now().isoformat(),
         "banks_covered": covered,
@@ -371,8 +373,30 @@ def build_comps_snapshot(banks: list[dict],
         "deals_priced": sum(1 for r in rows if r.get("p_tbv")),
         "deals": rows,
     }
+    if pending_at:
+        snapshot["pending_built_at"] = pending_at
     cache.put(SNAPSHOT_KEY, snapshot)
     return snapshot
+
+
+def _keep_newer_pending(rows: list[dict], served: dict | None,
+                        started: str) -> tuple[list[dict], str | None]:
+    """A full walk runs for hours; a pending pass that finished AFTER the
+    walk started carries newer pending rows (and possibly newer code: the
+    2026-10-08 nightly started 11:30Z on the pre-deploy image, finished
+    14:16Z and erased the 13:39Z pass's company-stated multiples). Keep the
+    served pending rows then; the walk's own completed/terminated rows
+    still replace the served ones."""
+    pend_at = (served or {}).get("pending_built_at")
+    if not pend_at or pend_at <= started:
+        return rows, None
+    kept = [r for r in served.get("deals") or [] if r.get("status") == "pending"]
+    out = [r for r in rows if r.get("status") != "pending"] + kept
+    out.sort(key=lambda r: (r.get("announce_date") or r.get("completion_date")
+                            or r.get("termination_date") or ""), reverse=True)
+    print(f"[deal_comps] kept {len(kept)} pending rows from the {pend_at} pending "
+          f"pass (newer than this walk's start {started})")
+    return out, pend_at
 
 
 def _sale_to_unlisted(d: dict) -> bool:
