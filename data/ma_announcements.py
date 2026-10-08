@@ -863,23 +863,36 @@ _DECK_CDP_RE = re.compile(
     re.IGNORECASE)
 
 
+# A label followed by TWO multiples is a comparison-table row ("Price /
+# Tangible Book Value 1.62x 1.56x": peer median, then the deal — Third Coast /
+# Great Plains 2026-10-07). Which column is the deal is not knowable from the
+# text, so the row is skipped; the deck's own bullet states the deal alone.
+_DECK_COMPARE_TAIL_RE = re.compile(r"\s+\d{1,2}\.\d{1,2}\s?[x%]")
+
+
 def extract_deck_metrics(text: str) -> dict:
     """{deck_p_tbv (x), deck_p_e_ltm (x), deck_core_dep_premium (fraction)}
     as STATED in the corpus's investor presentation; each None unless one
     distinct plausible value."""
     ptbv = []
     for m in _DECK_PTBV_RE.finditer(text):
+        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+            continue
         pct, pct2, x = m.groups()
         v = float(x) if x else float(pct or pct2) / 100.0
         if 0.3 <= v <= 6.0:
             ptbv.append(round(v, 2))
     pe = []
     for m in _DECK_PE_RE.finditer(text):
+        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+            continue
         v = float(next(g for g in m.groups() if g))
         if 3.0 <= v <= 60.0:
             pe.append(round(v, 1))
     cdp = []
     for m in _DECK_CDP_RE.finditer(text):
+        if _DECK_COMPARE_TAIL_RE.match(text, m.end()):
+            continue
         v = float(next(g for g in m.groups() if g)) / 100.0
         if 0.0 <= v <= 0.30:
             cdp.append(round(v, 4))
