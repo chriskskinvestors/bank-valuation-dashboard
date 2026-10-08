@@ -444,7 +444,26 @@ def _fetch_pr_body(url: str) -> str:
     are removed FIRST, since they carry the junk that polluted extraction: JSON-LD
     'schema.org' URLs in <script>, and menu links like /corporate-profile in nav.
     A generous length bound keeps the actual PR body (often deep below the page
-    chrome) from being truncated away. '' on any failure."""
+    chrome) from being truncated away. '' on any failure.
+
+    A wire story never changes, so its text is kept for good once fetched:
+    the snapshot is rebuilt from scratch every ~30 min, and when GlobeNewswire
+    began refusing server fetches (2026-10-08) each refused body dropped that
+    bank's call details on the next rebuild. Bank IR pages are not cached —
+    some event links are news LISTS whose content moves."""
+    import hashlib
+    from urllib.parse import urlparse
+    from data import cache
+    host = (urlparse(url or "").netloc or "").lower()
+    key = None
+    if any(host == h or host.endswith("." + h) for h in _WIRE_HOSTS):
+        key = "pr_body_text:v1:" + hashlib.sha1(url.encode("utf-8")).hexdigest()
+        try:
+            hit = cache.get(key, max_age_s=None)
+        except Exception:
+            hit = None
+        if isinstance(hit, dict) and hit.get("text"):
+            return hit["text"]
     try:
         from data.events.ir_site import _fetch
         html = _fetch(url, timeout=8)
@@ -457,7 +476,13 @@ def _fetch_pr_body(url: str) -> str:
     text = re.sub(r'(?is)<a\b[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
                   r"\2 \1 ", html)
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text)[:40000]
+    text = re.sub(r"\s+", " ", text)[:40000]
+    if key and len(text) >= 500 and "Access Denied" not in text[:300]:
+        try:
+            cache.put(key, {"url": url, "text": text})
+        except Exception:
+            pass
+    return text
 
 
 def refresh_pr_call_snapshot(max_fetch: int = 200, max_workers: int = 8) -> dict:
