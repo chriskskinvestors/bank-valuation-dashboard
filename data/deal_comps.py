@@ -413,6 +413,25 @@ def _as_target_view(b: dict, cert, d: dict) -> tuple[dict, object, dict]:
     return {"ticker": None, "name": cp.get("name")}, cp.get("cert"), deal
 
 
+# Owner 2026-10-08: "company-stated always wins". A multiple the acquirer's
+# own deck states replaces ours (bank-sub TBV basis: Great Plains 1.36x
+# computed vs 1.56x stated); ours is kept as <key>_computed for the hover.
+_STATED_MULTIPLES = (("p_tbv", "deck_p_tbv"), ("p_e", "deck_p_e_ltm"),
+                     ("core_dep_premium", "deck_core_dep_premium"))
+
+
+def _company_stated_wins(mult: dict, terms) -> dict:
+    out = dict(mult)
+    t = terms if isinstance(terms, dict) else {}
+    for key, deck in _STATED_MULTIPLES:
+        if t.get(deck) is None:
+            continue
+        out[f"{key}_computed"] = mult.get(key)
+        out[key] = t[deck]
+        out[f"{key}_basis"] = "stated"
+    return out
+
+
 def _snapshot_row(b: dict, cert, d: dict, mult: dict) -> dict:
     return {
         "buyer_ticker": b.get("ticker"),
@@ -433,7 +452,7 @@ def _snapshot_row(b: dict, cert, d: dict, mult: dict) -> dict:
         "target_ticker": (d.get("terms") or {}).get("tgt_ticker"),
         "terms": d.get("terms"),
         "milestones": d.get("milestones"),
-        **mult,
+        **_company_stated_wins(mult, d.get("terms")),
     }
 
 

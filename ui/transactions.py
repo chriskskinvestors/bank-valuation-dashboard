@@ -9,11 +9,11 @@ are BUILT — no empty placeholders:
       2026-10-06: closed and terminated deals stay off this board — they
       live in Detailed M&A History and Comparable Deal Analysis), newest
       first, one row per deal. Columns grouped
-      Deal / Terms (ratio, cash, implied $/sh at announce, value, stated
-      premium) / Valuation at announce (P/TBV, P/assets, core deposit
-      premium, P/E on TTM EPS, target assets) / Merger arb (target price,
-      implied offer at the acquirer's live price, gross and annualized
-      spread to the STATED expected-close period end) /
+      Deal / Merger arb (target price, implied offer at the acquirer's live
+      price, gross and annualized spread to the STATED expected-close period
+      end — first, owner 2026-10-08) / Terms (ratio, cash, implied $/sh at
+      announce, value, stated premium) / Valuation at announce (P/TBV,
+      P/assets, core deposit premium, P/E on TTM EPS, target assets) /
       Agreement (termination fee, disclosed votes and approvals). Reads
       ONLY the deal-comps snapshot (terms are compiled nightly by
       jobs/refresh_deal_comps from data/ma_announcements.build_terms) plus
@@ -107,8 +107,13 @@ def render_transactions():
 _ARB_PRICE_MAX_AGE_S = 4 * 86400    # a warm quote older than a long weekend
                                     # is not a live arb input — n/a
 _PE_MAX = 100.0                     # P/E beyond this is a denominator artifact
-_DECK_NOTE = ("as stated in the acquirer's investor presentation — our own "
-              "computation is n/a for this deal")
+_DECK_NOTE = ("as stated in the acquirer's investor presentation — "
+              "company-stated figures win over our computation")
+
+
+def _ours(v, fmt: str) -> str:
+    """Hover suffix naming our own computation behind a company-stated cell."""
+    return f" · our computation: {fmt.format(v)}" if v is not None else " · our computation: n/a"
 _FEE_MAX_SHARE = 0.25               # termination fee ÷ deal value beyond this
                                     # is an extraction artifact
 
@@ -252,7 +257,10 @@ def _render_recent_deals():
 
         # ── Valuation at announce ──
         p = d.get("p_tbv")
-        if p:
+        if p and d.get("p_tbv_basis") == "stated":
+            ptbv_note = _DECK_NOTE + _ours(d.get("p_tbv_computed"), "{:.2f}x")
+            ptbv_cell = f"{p:.2f}xᵈ"
+        elif p:
             ptbv_note = (f"{d.get('tbv_basis')} TBV {_fmt_bn(d.get('tbv_usd'))} "
                          f"as of {d.get('tbv_asof')}")
             if d.get("value_note"):
@@ -274,13 +282,21 @@ def _render_recent_deals():
             # 1,345.7x on a $0.01 TTM EPS (William Penn) is not a multiple.
             pe_note = f"P/E {pe:.0f}x above the {_PE_MAX:.0f}x plausibility cap — n/a"
             pe, pe_cell = None, "n/a†"
+        elif pe and d.get("p_e_basis") == "stated":
+            pe_cell = f"{pe:.1f}xᵈ"
+            pe_note = _DECK_NOTE + " (LTM)" + _ours(d.get("p_e_computed"), "{:.1f}x")
         else:
             pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
         if pe_cell == "—" and terms.get("deck_p_e_ltm"):
             pe_cell, pe_note = f"{terms['deck_p_e_ltm']:.1f}xᵈ", _DECK_NOTE + " (LTM)"
         cdp = d.get("core_dep_premium")
         cdp_cell, cdp_note = _fmt_pct(cdp), None
-        if cdp is None and terms.get("deck_core_dep_premium") is not None:
+        if cdp is not None and d.get("core_dep_premium_basis") == "stated":
+            cdp_cell = f"{cdp * 100:.1f}%ᵈ"
+            cdp_note = _DECK_NOTE + _ours(
+                None if d.get("core_dep_premium_computed") is None
+                else d["core_dep_premium_computed"] * 100, "{:.1f}%")
+        elif cdp is None and terms.get("deck_core_dep_premium") is not None:
             cdp_cell = f"{terms['deck_core_dep_premium'] * 100:.1f}%ᵈ"
             cdp_note = _DECK_NOTE
         assets = d.get("comp_assets") or d.get("target_assets")
@@ -336,6 +352,13 @@ def _render_recent_deals():
             "<tr>"
             + _td(ann_cell, "left") + _td(tgt_cell, "left") + _td(acq_cell, "left")
             + _td(mix_cell, "left", mix_title)
+            # Owner 2026-10-08: "make the merger arb section first".
+            + _td(_fmt_px(tgt_px), title=tgt_px_note)
+            + _td(_fmt_px(arb["implied_offer"]), title=arb["offer_note"])
+            + _td(_fmt_pct(arb["gross_spread"]))
+            + _td(close_cell, "left", close_note)
+            + _td(days_cell)
+            + _td(_fmt_pct(arb["annualized_spread"]))
             + _td(f"{ratio:g}" if ratio else "—")
             + _td(_fmt_px(cash) if cash or mix != "stock" else "none",
                   title=("all-stock deal — no cash consideration"
@@ -348,12 +371,6 @@ def _render_recent_deals():
             + _td(cdp_cell, title=cdp_note)
             + _td(pe_cell, title=pe_note)
             + _td(_fmt_bn(assets))
-            + _td(_fmt_px(tgt_px), title=tgt_px_note)
-            + _td(_fmt_px(arb["implied_offer"]), title=arb["offer_note"])
-            + _td(_fmt_pct(arb["gross_spread"]))
-            + _td(close_cell, "left", close_note)
-            + _td(days_cell)
-            + _td(_fmt_pct(arb["annualized_spread"]))
             + _td(fee_cell, title=fee_note)
             + _td(approvals_cell, "left")
             + "</tr>")
@@ -375,6 +392,8 @@ def _render_recent_deals():
                              if d.get("price_assets") is not None else None),
             "Core deposit premium (%)": (d["core_dep_premium"] * 100
                                          if d.get("core_dep_premium") is not None else None),
+            "P/TBV computed (x)": (d.get("p_tbv_computed") if d.get("p_tbv_basis") == "stated"
+                                   else d.get("p_tbv")),
             "P/TBV (deck, x)": terms.get("deck_p_tbv"),
             "P/E LTM (deck, x)": terms.get("deck_p_e_ltm"),
             "Core deposit premium (deck, %)": (terms["deck_core_dep_premium"] * 100
@@ -403,9 +422,9 @@ def _render_recent_deals():
 
     group = ('<tr>'
              '<th colspan="4" style="text-align:left;">Deal</th>'
+             '<th colspan="6" style="text-align:left;">Merger arb (live)</th>'
              '<th colspan="5" style="text-align:left;">Terms</th>'
              '<th colspan="5" style="text-align:left;">Valuation at announce</th>'
-             '<th colspan="6" style="text-align:left;">Merger arb (live)</th>'
              '<th colspan="2" style="text-align:left;">Agreement</th>'
              '</tr>')
     cols = ('<tr>'
@@ -413,13 +432,13 @@ def _render_recent_deals():
             '<th style="text-align:left;">Target</th>'
             '<th style="text-align:left;">Acquirer</th>'
             '<th style="text-align:left;">Consid.</th>'
+            '<th>Target px</th><th>Implied offer</th><th>Gross spread</th>'
+            '<th style="text-align:left;">Exp. close</th><th>Days</th>'
+            '<th>Annualized</th>'
             '<th>Ratio</th><th>Cash/sh</th><th>Implied $/sh</th>'
             '<th>Deal value</th><th>Premium</th>'
             '<th>P/TBV</th><th>P/Assets</th><th>Core dep prem</th>'
             '<th>P/E</th><th>Target assets</th>'
-            '<th>Target px</th><th>Implied offer</th><th>Gross spread</th>'
-            '<th style="text-align:left;">Exp. close</th><th>Days</th>'
-            '<th>Annualized</th>'
             '<th>Term. fee</th><th style="text-align:left;">Vote / approvals</th>'
             '</tr>')
     st.markdown(
@@ -434,7 +453,8 @@ def _render_recent_deals():
                "fee ≤ 25% of value — hover) · premium* = implied \$/sh ÷ the "
                "target's last close before announcement − 1 where the release "
                "states none · ᵈ = as stated in the acquirer's "
-               "investor presentation where our own computation is n/a · P/E = "
+               "investor presentation; company-stated wins over our computation "
+               "(hover for ours) · P/E = "
                "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
                "announce (n/m = loss) · arb: implied offer at the acquirer's "
                "current price, gross spread = offer ÷ target price − 1, "
@@ -458,6 +478,7 @@ def _render_recent_deals():
                               "Deal value ($)": "usd", "Premium as stated (%)": "pct",
                               "P/TBV (x)": "x", "P/Assets (%)": "pct",
                               "Core deposit premium (%)": "pct",
+                              "P/TBV computed (x)": "x",
                               "P/TBV (deck, x)": "x", "P/E LTM (deck, x)": "x",
                               "Core deposit premium (deck, %)": "pct",
                               "P/E at announce (x)": "x",
@@ -1037,7 +1058,8 @@ def _render_comps():
                         f"{d.get('buyer_ticker') or ''} → "
                         f"{d.get('target_name') or ''}<br>"
                         f"{_date(d)} · {_fmt_bn(d.get('value_usd'))} · "
-                        f"{d['p_tbv']:.2f}x ({d.get('tbv_basis')})")
+                        f"{d['p_tbv']:.2f}x ("
+                        f"{'company-stated' if d.get('p_tbv_basis') == 'stated' else d.get('tbv_basis')})")
             others = [d for d in base if d.get("buyer_ticker") != overlay]
             mine = [d for d in base if overlay and d.get("buyer_ticker") == overlay]
             fig = go.Figure()
@@ -1086,7 +1108,10 @@ def _render_comps():
                        '<span style="color:var(--danger,#dc2626);'
                        'font-weight:600;">Terminated</span>')
         p = d.get("p_tbv")
-        if p:
+        if p and d.get("p_tbv_basis") == "stated":
+            note = _DECK_NOTE + _ours(d.get("p_tbv_computed"), "{:.2f}x")
+            ptbv_cell = f'<span title="{_h.escape(note)}">{p:.2f}xᵈ</span>'
+        elif p:
             note = (f"{d.get('tbv_basis')} TBV {_fmt_bn(d.get('tbv_usd'))} "
                     f"as of {d.get('tbv_asof')}")
             if d.get("value_note"):
@@ -1111,7 +1136,8 @@ def _render_comps():
             f'<td style="text-align:right;">{_fmt_bn(assets)}</td>'
             f'<td style="text-align:right;">{ptbv_cell}</td>'
             f'<td style="text-align:right;">{f"{pa*100:.1f}%" if pa else "—"}</td>'
-            f'<td style="text-align:right;">{f"{cdp*100:.1f}%" if cdp else "—"}</td>'
+            f'<td style="text-align:right;">{f"{cdp*100:.1f}%" if cdp else "—"}'
+            f'{"ᵈ" if cdp and d.get("core_dep_premium_basis") == "stated" else ""}</td>'
             "</tr>")
     st.markdown(
         '<div class="ksk-grid"><table><thead><tr>'
@@ -1131,7 +1157,8 @@ def _render_comps():
                f"{', capped at 250' if len(shown) > 250 else ''}) · deals "
                "without a sourceable value price the count only · "
                "† = multiple outside the 0.2x–8x sanity band (basis "
-               "mismatch guard) · sources: FDIC structure history + "
+               "mismatch guard) · ᵈ = company-stated (acquirer's deck), which "
+               "wins over our computation · sources: FDIC structure history + "
                "financials, EDGAR announcement 8-Ks, SEC companyfacts.")
 
     try:
@@ -1157,6 +1184,10 @@ def _render_comps():
             "TBV ($)": d.get("tbv_usd"), "TBV basis": d.get("tbv_basis"),
             "TBV as of": d.get("tbv_asof"),
             "P/TBV (x)": d.get("p_tbv"),
+            "P/TBV basis": ("company-stated" if d.get("p_tbv_basis") == "stated"
+                            else ("computed" if d.get("p_tbv") else None)),
+            "P/TBV computed (x)": (d.get("p_tbv_computed") if d.get("p_tbv_basis") == "stated"
+                                   else d.get("p_tbv")),
             "P/Assets (%)": (d["price_assets"] * 100
                              if d.get("price_assets") is not None else None),
             "Core deposit premium (%)": (d["core_dep_premium"] * 100
@@ -1176,7 +1207,8 @@ def _render_comps():
                               "Buyer FDIC cert": "int", "Target FDIC cert": "int",
                               "Deal value ($)": "usd", "Target assets ($)": "usd",
                               "Comp assets ($)": "usd", "TBV ($)": "usd",
-                              "P/TBV (x)": "x", "P/Assets (%)": "pct",
+                              "P/TBV (x)": "x", "P/TBV computed (x)": "x",
+                              "P/Assets (%)": "pct",
                               "Core deposit premium (%)": "pct"},
                      provenance={"Page": "Transactions › Comparable Deal Analysis",
                                  "Source": "FDIC structure history + financials, EDGAR "
