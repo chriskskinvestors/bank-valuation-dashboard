@@ -15,7 +15,13 @@ signatures and holdings dropped; element structure and values verbatim):
     and DNT Asset Trust. Listed in JPM's submissions feed (CIK 19617).
   * 0001225208-26-007727 — issuer JPMORGAN CHASE & CO (0000019617); Robin
     Leopold, Head of Human Resources, open-market sale of 2,500 sh @ 352.8106.
-Fetched 2026-10-05.
+  * 0000070858-26-000250 — a misfile: BAC subsidiary Banc of America
+    Preferred Funding Corp's VKI (Invesco Advantage Municipal Income
+    Trust II) stake, filed with BANK OF AMERICA CORP /DE/ (0000070858)
+    typed into the issuer block (trading symbol VKI) AND listed as a
+    reporting owner. Its issuerCik matches BAC, so only the
+    self-as-owner rule keeps it out. Fetched 2026-10-06.
+Fetched 2026-10-05 unless noted.
 """
 
 import unittest
@@ -215,6 +221,140 @@ INSIDER_SALE_XML = """<?xml version="1.0"?>
     <footnotes></footnotes>
 </ownershipDocument>"""
 
+BAC_CIK = 70858
+SELF_OWNER_ACC = "0000070858-26-000250"  # BAC as issuer AND reporting owner
+
+BAC_SELF_OWNER_XML = """<?xml version="1.0"?>
+<ownershipDocument>
+    <schemaVersion>X0609</schemaVersion>
+    <documentType>4</documentType>
+    <periodOfReport>2026-04-30</periodOfReport>
+    <notSubjectToSection16>0</notSubjectToSection16>
+    <issuer>
+        <issuerCik>0000070858</issuerCik>
+        <issuerName>BANK OF AMERICA CORP /DE/</issuerName>
+        <issuerTradingSymbol>VKI</issuerTradingSymbol>
+    </issuer>
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0000070858</rptOwnerCik>
+            <rptOwnerName>BANK OF AMERICA CORP /DE/</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerRelationship>
+            <isDirector>0</isDirector>
+            <isOfficer>0</isOfficer>
+            <isTenPercentOwner>1</isTenPercentOwner>
+            <isOther>0</isOther>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+    <reportingOwner>
+        <reportingOwnerId>
+            <rptOwnerCik>0001565450</rptOwnerCik>
+            <rptOwnerName>Banc of America Preferred Funding Corp</rptOwnerName>
+        </reportingOwnerId>
+        <reportingOwnerRelationship>
+            <isDirector>0</isDirector>
+            <isOfficer>0</isOfficer>
+            <isTenPercentOwner>1</isTenPercentOwner>
+            <isOther>0</isOther>
+        </reportingOwnerRelationship>
+    </reportingOwner>
+    <aff10b5One>0</aff10b5One>
+    <nonDerivativeTable>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Invesco Advantage Municipal Income Trust II [VKI]</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-04-30</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>J</transactionCode>
+                <equitySwapInvolved>0</equitySwapInvolved>
+                <footnoteId id="F1"/>
+            </transactionCoding>
+            <transactionTimeliness>
+                <value></value>
+            </transactionTimeliness>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>1469</value>
+                    <footnoteId id="F1"/>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <footnoteId id="F1"/>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>D</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>0</value>
+                    <footnoteId id="F1"/>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Subsidiary</value>
+                    <footnoteId id="F2"/>
+                    <footnoteId id="F3"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+        <nonDerivativeTransaction>
+            <securityTitle>
+                <value>Invesco Advantage Municipal Income Trust II [VKI]</value>
+            </securityTitle>
+            <transactionDate>
+                <value>2026-04-30</value>
+            </transactionDate>
+            <transactionCoding>
+                <transactionFormType>4</transactionFormType>
+                <transactionCode>J</transactionCode>
+                <equitySwapInvolved>0</equitySwapInvolved>
+                <footnoteId id="F1"/>
+            </transactionCoding>
+            <transactionTimeliness>
+                <value></value>
+            </transactionTimeliness>
+            <transactionAmounts>
+                <transactionShares>
+                    <value>1469</value>
+                    <footnoteId id="F1"/>
+                </transactionShares>
+                <transactionPricePerShare>
+                    <footnoteId id="F1"/>
+                </transactionPricePerShare>
+                <transactionAcquiredDisposedCode>
+                    <value>A</value>
+                </transactionAcquiredDisposedCode>
+            </transactionAmounts>
+            <postTransactionAmounts>
+                <sharesOwnedFollowingTransaction>
+                    <value>1469</value>
+                    <footnoteId id="F1"/>
+                </sharesOwnedFollowingTransaction>
+            </postTransactionAmounts>
+            <ownershipNature>
+                <directOrIndirectOwnership>
+                    <value>I</value>
+                </directOrIndirectOwnership>
+                <natureOfOwnership>
+                    <value>By Trust</value>
+                    <footnoteId id="F1"/>
+                    <footnoteId id="F2"/>
+                    <footnoteId id="F3"/>
+                </natureOfOwnership>
+            </ownershipNature>
+        </nonDerivativeTransaction>
+    </nonDerivativeTable>
+</ownershipDocument>"""
+
 _XML_BY_ACC = {OWNER_ACC: BANK_AS_OWNER_XML, INSIDER_ACC: INSIDER_SALE_XML}
 
 
@@ -325,6 +465,56 @@ class TestFirehoseExcludesForeignIssuer(unittest.TestCase):
         self.assertEqual((tx["insider"], tx["accession"]),
                          ("Leopold Robin", INSIDER_ACC))
 
+
+class TestSelfAsOwnerMisfile(unittest.TestCase):
+    """A filing that lists the bank as its own reporting owner is not insider
+    activity, even when its issuerCik is the bank (0000070858-26-000250)."""
+
+    def test_issuer_match_alone_does_not_admit_it(self):
+        # Read fine → False (skipped like a foreign filing), never None
+        # (which would count it unread and n/a the coverage windows).
+        self.assertIs(f4._issuer_matches(BAC_SELF_OWNER_XML, BAC_CIK), False)
+        self.assertIs(f4._issuer_matches(BAC_SELF_OWNER_XML, "0000070858"),
+                      False)
+
+    def test_officer_filings_still_match(self):
+        # The owner check never trips on a person's filing on the bank.
+        self.assertIs(f4._issuer_matches(INSIDER_SALE_XML, JPM_CIK), True)
+
+    def test_nightly_sweep_skips_it_as_read(self):
+        clear = getattr(f4.fetch_insider_history, "clear", None)
+        if clear:
+            clear()
+        saved = {}
+        today = datetime.now().strftime("%Y-%m-%d")
+        submissions = {"filings": {"recent": {
+            "form": ["4"], "accessionNumber": [SELF_OWNER_ACC],
+            "filingDate": [today]}}}
+        with patch.object(f4.requests, "get",
+                          lambda url, *a, **k: _Resp(submissions)), \
+             patch.object(f4, "_fetch_form4_xml",
+                          lambda acc, cik, primary_doc=None: BAC_SELF_OWNER_XML), \
+             patch.object(f4, "load_json", lambda prefix, name: None), \
+             patch.object(f4, "save_json",
+                          lambda prefix, name, obj: saved.__setitem__(name, obj)):
+            hist = f4.fetch_insider_history(BAC_CIK, force=True)
+        self.assertEqual(hist["transactions"], [])
+        self.assertIsNone(hist["complete_since"])  # read, not unread
+        self.assertEqual(saved[f"{BAC_CIK}.json"]["transactions"], [])
+
+    def test_firehose_does_not_merge_it(self):
+        saved = {}
+        feed = [{"cik": BAC_CIK, "accession": SELF_OWNER_ACC,
+                 "filed": "2026-05-04", "filed_at": None}]
+        with patch.object(f4, "_recent_form4_filings", lambda pages: feed), \
+             patch.object(f4, "_fetch_form4_xml",
+                          lambda acc, cik: BAC_SELF_OWNER_XML), \
+             patch.object(f4, "load_json", lambda prefix, name: None), \
+             patch.object(f4, "save_json",
+                          lambda prefix, name, obj: saved.__setitem__(name, obj)):
+            result = f4.poll_form4_firehose({"BAC": BAC_CIK})
+        self.assertEqual(result, (0, 0))
+        self.assertEqual(saved, {})
 
 if __name__ == "__main__":
     unittest.main()

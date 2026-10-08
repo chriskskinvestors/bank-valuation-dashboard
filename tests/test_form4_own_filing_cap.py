@@ -23,6 +23,8 @@ Fixtures:
   Both trimmed (addresses, holdings, derivative table, footnote text and
   signatures dropped; element structure and values verbatim). Each feed row
   is served the fixture of its real class — the walk only needs the class.
+  One OWN row, 0000070858-26-000250, is really a self-as-owner misfile (see
+  tests/test_form4_issuer_filter.py); only the test that says so serves it.
 """
 
 import unittest
@@ -364,6 +366,24 @@ class TestOwnFilingCap(_BacWalk):
         # The walk stops at the 30th own filing (feed row 57), no further.
         self.assertEqual(_OWN_ACCS.index(self.fetched[-1]), 29)
         self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED[:57]])
+
+    def test_self_owner_misfile_does_not_spend_the_cap(self):
+        # Row 41 (0000070858-26-000250) is OWN by issuerCik alone, but its real
+        # document lists BAC as its own reporting owner (a VKI fund stake).
+        # Served that document, the walk skips it as read and takes row 58.
+        from tests.test_form4_issuer_filter import (BAC_SELF_OWNER_XML,
+                                                    SELF_OWNER_ACC)
+        self.assertEqual(_OWN_ACCS.index(SELF_OWNER_ACC), 18)
+        self.xml_for[SELF_OWNER_ACC] = BAC_SELF_OWNER_XML
+
+        hist = f4.fetch_insider_history(BAC_CIK, force=True)
+
+        own = [a for a in _OWN_ACCS[:31] if a != SELF_OWNER_ACC]
+        self.assertEqual(self._kept(), set(own))
+        self.assertNotIn(SELF_OWNER_ACC, self._kept())
+        self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED[:58]])
+        self.assertFalse(any(t["insider"] == "BANK OF AMERICA CORP /DE/"
+                             for t in hist["transactions"]))
 
     def test_fetch_bound_holds_when_nothing_matches(self):
         # All failed: the bound holds for the walk; the one-retry pass then
