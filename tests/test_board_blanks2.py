@@ -167,5 +167,56 @@ class TestIsabellaGrandRiver(unittest.TestCase):
                          (2_180_000, "2026-12-31"))
 
 
+
+TCBX_DECK = ("Third Coast Bancshares, Inc. and Great Plains Bancshares, Inc. Transaction details. "
+             "Great Plains will continue operating under the Great Plains brand. "
+             "Implied aggregate transaction value of $240 million • Price / tangible book "
+             "value per share: 1.56x LIGHT GRAY Transaction Value (2) 210, 210, 210 • Price "
+             "/ LTM EPS: 9.3x and Multiples (2) • Core deposit premium: 7.7% 0, 0, 0")
+
+
+class TestWireRowEnrichedFromOwnFilings(unittest.TestCase):
+
+    def _filings(self):
+        return [{"form": "425", "date": "2026-10-07", "accession": "a425", "doc": "d425.htm",
+                 "items": ""},
+                {"form": "8-K", "date": "2026-10-07", "accession": "a8k", "doc": "d8k.htm",
+                 "items": "7.01,8.01,9.01"},
+                {"form": "8-K", "date": "2026-09-18", "accession": "old", "doc": "o.htm",
+                 "items": "5.02"}]
+
+    def _row(self):
+        return {"counterparty_name": "Great Plains Bancshares, Inc", "announce_date": "2026-10-07",
+                "terms": {"termination_fee_usd": None, "expected_close_phrase": None,
+                          "expected_close_date": None, "deck_p_tbv": None, "deck_p_e_ltm": None,
+                          "deck_core_dep_premium": None, "exchange_ratio": None}}
+
+    def test_deck_from_the_acquirers_425(self):
+        from data import ma_pending
+        r = self._row()
+        texts = {"a425": TCBX_DECK, "a8k": "Third Coast announced earnings."}
+        with patch("data.ma_pending._accession_text",
+                   side_effect=lambda c, a, d: (texts[a], True)) as at,              patch("data.ma_pending.time.sleep", lambda *_: None):
+            self.assertTrue(ma_pending._enrich_from_own_filings(1781730, r, self._filings()))
+        self.assertEqual((r["terms"]["deck_p_tbv"], r["terms"]["deck_p_e_ltm"],
+                          r["terms"]["deck_core_dep_premium"]), (1.56, 9.3, 0.077))
+        self.assertIsNone(r["terms"]["exchange_ratio"])
+        self.assertNotIn("old", [c.args[1] for c in at.call_args_list])   # out of window
+
+    def test_filing_not_naming_the_target_twice_is_ignored(self):
+        from data import ma_pending
+        r = self._row()
+        other = TCBX_DECK.replace("Great Plains", "Lone Star")
+        with patch("data.ma_pending._accession_text", return_value=(other, True)),              patch("data.ma_pending.time.sleep", lambda *_: None):
+            ma_pending._enrich_from_own_filings(1781730, r, self._filings())
+        self.assertIsNone(r["terms"]["deck_p_e_ltm"])
+
+    def test_fetch_failure_is_not_ok(self):
+        from data import ma_pending
+        with patch("data.ma_pending._accession_text", return_value=(None, False)),              patch("data.ma_pending.time.sleep", lambda *_: None):
+            self.assertFalse(ma_pending._enrich_from_own_filings(1781730, self._row(),
+                                                                 self._filings()))
+
+
 if __name__ == "__main__":
     unittest.main()
