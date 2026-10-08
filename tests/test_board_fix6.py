@@ -97,6 +97,20 @@ class TestUnlistedBuyerRow(unittest.TestCase):
                                          "ticker": "JMSB"})
         self.assertFalse(_sale_to_unlisted(d_listed))
 
+    def test_target_view_yields_to_the_listed_acquirers_row(self):
+        # Finward's sale row named "First Financial Bancorp" without a
+        # ticker; FFBC's own row already carries the deal (board 10-07 23:36).
+        from data.deal_comps import _drop_shadowed_target_views
+        ffbc = {"buyer_ticker": "FFBC", "status": "pending", "target_ticker": "FNWD",
+                "target_cert": 28520}
+        dup = {"buyer_ticker": None, "status": "pending", "target_ticker": "FNWD",
+               "target_cert": 28520}
+        fsea = {"buyer_ticker": None, "status": "pending", "target_ticker": "FSEA",
+                "target_cert": 4561}
+        done = {"buyer_ticker": None, "status": "completed", "target_ticker": "FNWD"}
+        self.assertEqual(_drop_shadowed_target_views([ffbc, dup, fsea, done]),
+                         [ffbc, fsea, done])
+
     def test_cash_deal_spread_needs_no_acquirer_price(self):
         # $17.25 cash vs FSEA 16.90 -> 17.25 / 16.90 - 1 = 2.071%
         from data.deal_spreads import build_spread_histories
@@ -107,7 +121,9 @@ class TestUnlistedBuyerRow(unittest.TestCase):
                        "expected_close_date": "2026-09-30"}}
         built = build_spread_histories(
             [d], history=lambda t: [{"date": "2026-05-06", "close": 16.90}] if t == "FSEA" else None)
-        s = next(iter(built["deals"].values()))["series"]
+        entry = next(iter(built["deals"].values()))
+        self.assertEqual(entry["label"], "FSEA ← Cambridge Financial")
+        s = entry["series"]
         self.assertAlmostEqual(s[0]["gross"], 17.25 / 16.90 - 1, places=5)
         self.assertIsNone(s[0]["acq"])
 
