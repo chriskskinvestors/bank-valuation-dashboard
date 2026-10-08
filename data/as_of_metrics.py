@@ -50,7 +50,8 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
 
     q = pd.Timestamp(quarter)
     repdte = q.strftime("%Y%m%d")
-    key = f"as_of_metrics:{repdte}:{len(cert_to_id)}:w{window}"
+    # v2: entries written while every FDIC page 400'd (2026-10-05..08) hold [].
+    key = f"as_of_metrics:v2:{repdte}:{len(cert_to_id)}:w{window}"
     cached = cache.get(key)
     if is_fresh(cached, _CACHE_TTL_S) and isinstance(cached.get("metrics"), list):
         return cached["metrics"]
@@ -76,8 +77,10 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
         out.append(m)
 
     # Stamp the WRITE time (the quarter is already in the key): a quarter-date
-    # stamp was always past _CACHE_TTL_S, so this key could never hit.
-    cache.put(key, {"metrics": out, "cached_at": pd.Timestamp.today().isoformat()})
+    # stamp was always past _CACHE_TTL_S, so this key could never hit. An empty
+    # quarter (not yet published by FDIC) is not cached — it fills in later.
+    if out:
+        cache.put(key, {"metrics": out, "cached_at": pd.Timestamp.today().isoformat()})
     return out
 
 
