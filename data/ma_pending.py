@@ -55,6 +55,8 @@ from data.ma_announcements import (
     _COMPLETED_RE,
     _accession_text,
     _clean_company_name,
+    _fill_missing_terms,
+    extract_terms,
     _close_before,
     _digits_in_name,
     _shares_outstanding_asof,
@@ -802,6 +804,38 @@ def _dedupe_tok(name: str | None) -> str | None:
     return row_token(name)
 
 
+def _enrich_from_own_filings(cik: int, r: dict, filings: list[dict]) -> bool:
+    """A wire-sourced row's empty fee / close / deck fields from the
+    acquirer's OWN same-week 8-K or 425 (Third Coast/Great Plains 2026-10-07:
+    the 8-K says "definitive merger agreement", not the EFTS phrase, and its
+    425 copy carries no Subject Company legend, so the row came from PR
+    Newswire without the deck's 9.3x P/E). Only filings naming the target at
+    least twice count; pricing fields never merge. Returns ok (False on a
+    transient fetch failure)."""
+    tok = row_token(r.get("counterparty_name") or "")
+    if not tok or not r.get("announce_date"):
+        return True
+    a = date.fromisoformat(r["announce_date"])
+    near = []
+    for f in filings:
+        if f.get("form") not in ("8-K", "425") or not f.get("date"):
+            continue
+        if not -2 <= (date.fromisoformat(f["date"]) - a).days <= 4:
+            continue
+        items = {i.strip() for i in (f.get("items") or "").split(",")}
+        if f["form"] == "425" or items & _ANNOUNCE_8K_ITEMS:
+            near.append(f)
+    ok = True
+    for f in near[:3]:
+        time.sleep(_PAUSE_S)
+        text, t_ok = _accession_text(cik, f["accession"], f["doc"])
+        ok = ok and t_ok
+        if (text and not _COMPLETED_RE.search(text)
+                and len(re.findall(r"\b" + re.escape(tok) + r"\b", text.lower())) >= 2):
+            _fill_missing_terms(r["terms"], extract_terms(text))
+    return ok
+
+
 def find_pending_deals(cik, subject_name: str,
                        ticker: str | None = None) -> tuple[list[dict], bool]:
     """
@@ -964,6 +998,9 @@ def find_pending_deals(cik, subject_name: str,
                 r["value_note"] = (f"computed: implied ${ip:,.2f}/sh "
                                    f"({terms.get('implied_price_basis') or 'n/a'}) × "
                                    f"{shares:,} target shares ({sh_end})")
+        if (r.get("source") == "wire" and cik and r["direction"] == "acquisition"
+                and isinstance(terms, dict)):
+            ok = _enrich_from_own_filings(int(cik), r, subj_filings) and ok
         if r.get("source") == "wire" and not cik:
             # No EDGAR to consult: the wire completion check above and the
             # FDIC completion dedupe in ma_history are this row's gates.
