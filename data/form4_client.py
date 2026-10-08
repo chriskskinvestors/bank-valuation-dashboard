@@ -177,7 +177,13 @@ def _issuer_matches(xml_text: str, cik: int) -> bool | None:
     None: skipped (never guessed), and the sweep counts it as UNREAD, not as
     a read foreign filing. The element is schema-required on every real EDGAR
     ownership document; one absent entirely carries no conflicting issuer,
-    so it is kept."""
+    so it is kept.
+
+    A company is never its own Section 16 reporting owner, so a filing that
+    lists `cik` as a reportingOwner is False even when its issuerCik says
+    `cik`: BAC's 0000070858-26-000250 reports a subsidiary's VKI fund stake
+    with BAC's own CIK and name typed into the issuer block (trading symbol
+    VKI) — read fine, but not the bank's insider activity."""
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError:
@@ -185,12 +191,19 @@ def _issuer_matches(xml_text: str, cik: int) -> bool | None:
     if root.tag != "ownershipDocument":
         return None
     raw = root.findtext("issuer/issuerCik")
-    if raw is None:
-        return True
-    try:
-        return int(raw.strip()) == int(cik)
-    except (TypeError, ValueError):
-        return None
+    if raw is not None:
+        try:
+            if int(raw.strip()) != int(cik):
+                return False
+        except (TypeError, ValueError):
+            return None
+    for owner_cik in root.findall("reportingOwner/reportingOwnerId/rptOwnerCik"):
+        try:
+            if int((owner_cik.text or "").strip()) == int(cik):
+                return False
+        except ValueError:
+            continue  # an unparseable owner CIK names no one; the issuer matched
+    return True
 
 
 def _parse_form4(xml_text: str) -> list[dict]:
