@@ -43,5 +43,16 @@ class TestCompanyStatedWins(unittest.TestCase):
         self.assertIn('d.get("core_dep_premium_basis") == "stated"', src)
 
 
+class TestTruncatedDeckName(unittest.TestCase):
+
+    def test_edgar_truncated_presentation_name_is_an_exhibit(self):
+        # Peoples 2026-04-21 accession: the Citizens National deal slide lives in
+        # "q12026earningspresentati.htm" (EDGAR-truncated) — it was never read.
+        from data.ma_announcements import _EX99_NAME_RE
+        self.assertTrue(_EX99_NAME_RE.search("q12026earningspresentati.htm"))
+        self.assertTrue(_EX99_NAME_RE.search("isba-gnrvinvestorpresent.htm"))
+        self.assertFalse(_EX99_NAME_RE.search("pebo-20260421.htm"))
+
+
 if __name__ == "__main__":
     unittest.main()
