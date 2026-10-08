@@ -104,7 +104,7 @@ class TestFailuresRaise(unittest.TestCase):
 
 
 class TestAsOfNeverCachesAFailureOrEmpty(_IsolatedCache):
-    KEY = "as_of_metrics:v2:20211231:1:w2"
+    KEY = "as_of_metrics:v3:20211231:1:w2"
 
     def test_error_propagates_and_nothing_is_cached(self):
         with patch.object(fc, "fetch_quarter_financials",

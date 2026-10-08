@@ -50,8 +50,9 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
 
     q = pd.Timestamp(quarter)
     repdte = q.strftime("%Y%m%d")
-    # v2: entries written while every FDIC page 400'd (2026-10-05..08) hold [].
-    key = f"as_of_metrics:v2:{repdte}:{len(cert_to_id)}:w{window}"
+    # v3: v2 rows (and earlier) could carry TODAY's SEC/8-K values (ticker passed
+    # to the engine); v2 also held the [] written while FDIC 400'd (10-05..08).
+    key = f"as_of_metrics:v3:{repdte}:{len(cert_to_id)}:w{window}"
     cached = cache.get(key)
     if is_fresh(cached, _CACHE_TTL_S) and isinstance(cached.get("metrics"), list):
         return cached["metrics"]
@@ -70,7 +71,11 @@ def as_of_quarter_metrics(quarter, cert_to_id: dict, *, window: int = _WINDOW) -
             continue  # didn't file at Q (chartered later / already exited)
         # newest-first history across the window (skip quarters it didn't file)
         hist = [by_quarter[rd][c] for rd in repdtes if c in by_quarter[rd]]
-        m = build_bank_metrics(id_, anchor, {}, {}, hist)
+        # ticker=None: FDIC-only. A ticker made the engine pull TODAY's SEC
+        # capital return and 8-K book value into the as-of row (BAC "as of
+        # Q4 2021" showed its 2026 TBVPS 29.37; actual ~21.68) and cost ~6s a
+        # bank — past the request timeout for the universe. Same as Trends.
+        m = build_bank_metrics(None, anchor, {}, {}, hist)
         m["ticker"] = id_
         m["_as_of"] = repdte
         m["_fdic_cert"] = c     # lets the table link defunct banks to FDIC BankFind

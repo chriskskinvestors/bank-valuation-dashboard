@@ -74,7 +74,7 @@ class TestAsOfQuarterMetricsCacheHits(_IsolatedCache):
                 patch("analysis.metrics.build_bank_metrics",
                       return_value={"total_assets": 1.0}):
             aom.as_of_quarter_metrics(self.QUARTER, self.CERTS, window=self.WINDOW)
-        row = cache.get(f"as_of_metrics:v2:20230630:1:w{self.WINDOW}", max_age_s=None)
+        row = cache.get(f"as_of_metrics:v3:20230630:1:w{self.WINDOW}", max_age_s=None)
         self.assertIsNotNone(row)
         _assert_stamped_now(self, row)
 
