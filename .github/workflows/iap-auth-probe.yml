@@ -1,0 +1,55 @@
+name: IAP auth probe
+
+# Manual check of the deploy smoke's IAP credential, without a deploy.
+# Mints the bearer exactly as deploy.yml does (ops/iap_token.py, chosen mode)
+# and requests APP_URL with it, printing only the HTTP status — never the token.
+# Used by docs/ACCESS-RUNBOOK.md around the IAP external-identities switch:
+#   - gcip BEFORE the switch: the exchange succeeding proves the Google provider
+#     + the deployer SA's Identity Platform user are set up (HTTP 401 from IAP is
+#     expected then — IAP still wants a Google token).
+#   - gcip AFTER the switch: expect HTTP 200 before setting IAP_AUTH_MODE=gcip.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Token mode to mint (iam = Google OIDC, gcip = Identity Platform)"
+        required: true
+        type: choice
+        options: [gcip, iam]
+        default: gcip
+
+env:
+  PROJECT_ID: ace-beanbag-486220-a8
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+      - name: Mint and present the IAP bearer
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+          IAP_CLIENT_ID: ${{ secrets.IAP_CLIENT_ID }}
+          SA: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          IAP_AUTH_MODE: ${{ inputs.mode }}
+          GCIP_API_KEY: ${{ vars.GCIP_API_KEY }}
+          GCIP_GOOGLE_CLIENT_ID: ${{ vars.GCIP_GOOGLE_CLIENT_ID }}
+        run: |
+          TOKEN="$(ACCESS_TOKEN="$(gcloud auth print-access-token)" python ops/iap_token.py)" || {
+            echo "::error::token mint failed in ${IAP_AUTH_MODE} mode (error above)"; exit 1; }
+          echo "Minted a ${IAP_AUTH_MODE} token (${#TOKEN} chars)."
+          CODE="$(curl -s -o /tmp/body -w '%{http_code}' -H "Authorization: Bearer ${TOKEN}" "$APP_URL")"
+          echo "IAP answered HTTP ${CODE} for ${APP_URL}"
+          if grep -qi streamlit /tmp/body; then echo "Body is the Streamlit shell."; fi

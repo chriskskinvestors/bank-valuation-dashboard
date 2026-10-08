@@ -185,16 +185,16 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
           IAP_CLIENT_ID: ${{ secrets.IAP_CLIENT_ID }}
           SA: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          # iam = Google identities + IAM (today); gcip = IAP external
+          # identities (Identity Platform). See ops/iap_token.py and
+          # docs/ACCESS-RUNBOOK.md — flip this repo variable WITH the IAP toggle.
+          IAP_AUTH_MODE: ${{ vars.IAP_AUTH_MODE || 'iam' }}
+          GCIP_API_KEY: ${{ vars.GCIP_API_KEY }}
+          GCIP_GOOGLE_CLIENT_ID: ${{ vars.GCIP_GOOGLE_CLIENT_ID }}
         run: |
           python -m pip install --quiet playwright mitmproxy
           python -m playwright install --with-deps chromium
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
-          IAP_TOKEN="$(curl -s -X POST \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"audience\":\"${IAP_CLIENT_ID}\",\"includeEmail\":true}" \
-            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:generateIdToken" \
-            | python -c 'import sys,json; print(json.load(sys.stdin)["token"])')"
+          IAP_TOKEN="$(ACCESS_TOKEN="$(gcloud auth print-access-token)" python ops/iap_token.py)" || true
           IAP_TOKEN="$IAP_TOKEN" APP_URL="$APP_URL" python tests/smoke_live.py --warm || true
 
       # backfill-fdic-history: the ONE-TIME deep FDIC call-report backfill
@@ -387,6 +387,10 @@ jobs:
   #     github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com \
   #     --member=serviceAccount:github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com \
   #     --role=roles/iam.serviceAccountOpenIdTokenCreator
+  # After IAP moves to external identities (Identity Platform), IAM no longer
+  # gates IAP and the bearer must be an Identity Platform token: set variables
+  # IAP_AUTH_MODE=gcip and GCIP_API_KEY (+ GCIP_GOOGLE_CLIENT_ID if the Google
+  # provider's client is not the IAP client). Steps: docs/ACCESS-RUNBOOK.md.
   smoke:
     needs: deploy
     if: vars.LIVE_SMOKE_ENABLED == 'true'
@@ -430,17 +434,14 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
           IAP_CLIENT_ID: ${{ secrets.IAP_CLIENT_ID }}
           SA: github-deployer@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          IAP_AUTH_MODE: ${{ vars.IAP_AUTH_MODE || 'iam' }}
+          GCIP_API_KEY: ${{ vars.GCIP_API_KEY }}
+          GCIP_GOOGLE_CLIENT_ID: ${{ vars.GCIP_GOOGLE_CLIENT_ID }}
         run: |
-          # Under Workload Identity Federation the active credential isn't a SA key,
-          # so `gcloud auth print-identity-token --audiences` is rejected. Mint the
-          # IAP-audience OIDC token via the IAM Credentials API instead (the SA holds
-          # roles/iam.serviceAccountOpenIdTokenCreator on itself).
-          ACCESS_TOKEN="$(gcloud auth print-access-token)"
-          IAP_TOKEN="$(curl -s -X POST \
-            -H "Authorization: Bearer ${ACCESS_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{\"audience\":\"${IAP_CLIENT_ID}\",\"includeEmail\":true}" \
-            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${SA}:generateIdToken" \
-            | python -c 'import sys,json; print(json.load(sys.stdin)["token"])')"
-          if [ -z "$IAP_TOKEN" ]; then echo "::error::failed to mint IAP token"; exit 1; fi
+          # The bearer comes from ops/iap_token.py: the SA's Google OIDC token
+          # (iam mode, minted via the IAM Credentials API — WIF rejects
+          # `gcloud auth print-identity-token --audiences`), or that token
+          # exchanged for an Identity Platform ID token (gcip mode).
+          IAP_TOKEN="$(ACCESS_TOKEN="$(gcloud auth print-access-token)" python ops/iap_token.py)" || true
+          if [ -z "$IAP_TOKEN" ]; then echo "::error::failed to mint IAP token (IAP_AUTH_MODE=${IAP_AUTH_MODE})"; exit 1; fi
           IAP_TOKEN="$IAP_TOKEN" APP_URL="$APP_URL" python tests/smoke_live.py
