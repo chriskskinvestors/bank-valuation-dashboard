@@ -151,7 +151,10 @@ def build_spread_histories(deals: list[dict], history=None) -> dict:
         if d.get("status") != "pending":
             continue
         key = deal_key(d)
-        label = f"{d.get('target_ticker') or d.get('target_name')} ← {d.get('buyer_ticker')}"
+        # An unlisted buyer (First Seacoast's mutual holding company) has no
+        # ticker: the label read "FSEA ← None" on prod 2026-10-07.
+        label = (f"{d.get('target_ticker') or d.get('target_name')} ← "
+                 f"{d.get('buyer_ticker') or d.get('buyer_name') or 'n/a'}")
         reason = _skip_reason(d)
         if reason:
             out["skipped"].append({"key": key, "label": label,

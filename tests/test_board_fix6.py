@@ -121,7 +121,9 @@ class TestUnlistedBuyerRow(unittest.TestCase):
                        "expected_close_date": "2026-09-30"}}
         built = build_spread_histories(
             [d], history=lambda t: [{"date": "2026-05-06", "close": 16.90}] if t == "FSEA" else None)
-        s = next(iter(built["deals"].values()))["series"]
+        entry = next(iter(built["deals"].values()))
+        self.assertEqual(entry["label"], "FSEA ← Cambridge Financial")
+        s = entry["series"]
         self.assertAlmostEqual(s[0]["gross"], 17.25 / 16.90 - 1, places=5)
         self.assertIsNone(s[0]["acq"])
 
