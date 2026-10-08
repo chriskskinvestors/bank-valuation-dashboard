@@ -128,10 +128,104 @@ class TestGetPvp(unittest.TestCase):
         self.assertIsNone(pvp["years"][0]["net_income"])
 
     def test_no_ecd_is_none(self):
-        self.assertIsNone(self._run({"facts": {"us-gaap": {}}}))
-        self.assertIsNone(self._run({}))
+        # No PvP in companyfacts AND no proxy on file (pre-2023 / non-
+        # reporting filers) → None. The proxy fallback is TestProxyFallback.
+        with patch("data.sec_filing_scraper.latest_filing", return_value=None):
+            self.assertIsNone(self._run({"facts": {"us-gaap": {}}}))
+            self.assertIsNone(self._run({}))
         with patch("data.sec_client.fetch_company_facts", return_value={}):
             self.assertIsNone(get_pay_versus_performance(None))
+
+
+class TestProxyFallback(unittest.TestCase):
+    """AUB (2026-10-08): SEC companyfacts carries NO `ecd` namespace for the
+    CIK although every proxy since 2023 tags the PvP table, so the
+    Compensation tab hid every year. The latest DEF 14A's own XBRL fills it."""
+
+    META = {"accession": "000110465926034176", "doc": "aub-20260505xdef14a.htm",
+            "date": "2026-03-25", "form": "DEF 14A"}
+
+    def _facts(self):
+        from data.sec_filing_scraper import Fact
+        f = lambda c, v, end, m=None: Fact(c, v, end, end[:4] + "-01-01", m or {}, "usd")
+        return [
+            f("ecd:PeoTotalCompAmt", 5_066_713.0, "2025-12-31"),
+            f("ecd:PeoTotalCompAmt", 4_255_285.0, "2024-12-31"),
+            f("ecd:PeoActuallyPaidCompAmt", 4_444_172.0, "2025-12-31"),
+            f("ecd:TotalShareholderRtnAmt", 128.26, "2025-12-31"),
+            f("us-gaap:NetIncomeLoss", 273_715_000.0, "2025-12-31"),
+            # adjustment rows (another axis) and unkept tags never land
+            f("ecd:AdjToCompAmt", 1.0, "2025-12-31",
+              {"ecd:ExecutiveCategoryAxis": "ecd:PeoMember"}),
+            f("ecd:PeoTotalCompAmt", 9.0, "2025-12-31",
+              {"ecd:ExecutiveCategoryAxis": "ecd:PeoMember", "ecd:AdjToCompAxis": "x"}),
+            f("us-gaap:Assets", 1e9, "2025-12-31"),
+        ]
+
+    def _run(self, blob, facts=None, meta=META):
+        store = {}
+        with patch("data.sec_client.fetch_company_facts", return_value=blob), \
+             patch("data.sec_filing_scraper.latest_filing", return_value=meta) as lf, \
+             patch("data.sec_filing_scraper.instance_facts",
+                   return_value=self._facts() if facts is None else facts) as inst, \
+             patch("data.cache.get", side_effect=lambda k, **kw: store.get(k)), \
+             patch("data.cache.put", side_effect=lambda k, v: store.__setitem__(k, v)):
+            out = get_pay_versus_performance(883948)
+            out2 = get_pay_versus_performance(883948)
+        return out, out2, lf, inst
+
+    def test_no_ecd_in_companyfacts_reads_the_proxy(self):
+        pvp, again, _, inst = self._run({"facts": {"us-gaap": {}}})
+        self.assertEqual([r["fy_end"] for r in pvp["years"]], ["2025-12-31", "2024-12-31"])
+        r = pvp["years"][0]
+        self.assertEqual(r["peo_total"], [5_066_713.0])      # adjustment row excluded
+        self.assertEqual(r["peo_paid"], [4_444_172.0])
+        self.assertEqual(r["tsr"], 128.26)
+        self.assertEqual(r["net_income"], 273_715_000.0)
+        self.assertEqual(pvp["filed"], "2026-03-25")
+        self.assertEqual(pvp["source_url"],
+                         "https://www.sec.gov/Archives/edgar/data/883948/"
+                         "000110465926034176/0001104659-26-034176-index.htm")
+        self.assertEqual(inst.call_count, 1)                 # immutable per accession
+        self.assertEqual(again, pvp)
+
+    def test_current_companyfacts_never_fetches_the_proxy(self):
+        from datetime import date
+        fresh = date.today().isoformat()
+        blob = _facts_blob({"PeoTotalCompAmt": [_fact("2025-12-31", 1.0, fresh)]})
+        pvp, _, lf, inst = self._run(blob)
+        self.assertEqual(pvp["years"][0]["peo_total"], [1.0])
+        lf.assert_not_called()
+        inst.assert_not_called()
+
+    def test_stale_companyfacts_merges_newer_proxy(self):
+        blob = _facts_blob({"PeoTotalCompAmt": [_fact("2023-12-31", 3_554_480.0, "2024-03-26"),
+                                                _fact("2024-12-31", 9.0, "2024-03-26")]})
+        pvp, _, _, _ = self._run(blob)
+        years = {r["fy_end"]: r["peo_total"] for r in pvp["years"]}
+        self.assertEqual(years["2024-12-31"], [4_255_285.0])   # newer proxy wins the year
+        self.assertEqual(years["2023-12-31"], [3_554_480.0])   # companyfacts kept
+
+    def test_per_peo_individual_axis_kept(self):
+        from data.sec_filing_scraper import Fact
+        two = [Fact("ecd:PeoTotalCompAmt", 5e6, "2025-12-31", "2025-01-01",
+                    {"ecd:IndividualAxis": "aub:SmithMember"}, "usd"),
+               Fact("ecd:PeoTotalCompAmt", 2e6, "2025-12-31", "2025-01-01",
+                    {"ecd:IndividualAxis": "aub:JonesMember"}, "usd")]
+        pvp, _, _, _ = self._run({}, facts=two)
+        self.assertEqual(pvp["years"][0]["peo_total"], [5e6, 2e6])
+        self.assertTrue(pvp["multi_peo"])
+
+    def test_failures_are_none_and_uncached(self):
+        with patch("data.sec_client.fetch_company_facts", return_value={}), \
+             patch("data.sec_filing_scraper.latest_filing", return_value=self.META), \
+             patch("data.sec_filing_scraper.instance_facts", side_effect=RuntimeError("503")), \
+             patch("data.cache.get", return_value=None), \
+             patch("data.cache.put") as put:
+            self.assertIsNone(get_pay_versus_performance(883948))
+        put.assert_not_called()
+        pvp, _, _, _ = self._run({}, meta=None)
+        self.assertIsNone(pvp)
 
 
 class TestFilingUrl(unittest.TestCase):
