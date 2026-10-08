@@ -1597,10 +1597,36 @@ def _wire_releases_since(ticker: str, since: str) -> list[dict] | None:
         return None
 
 
+_WIRE_STORY_KEY = "wire_story_text:v1:"
+# Hosts that refuse server fetches for good (Business Wire, 403 since
+# 2026-10-07): an unreachable story there is skipped, not a failure.
+_PERMANENT_BLOCK_HOST_RE = re.compile(r"(?i)://(?:www\.)?businesswire\.com/")
+
+
 def _wire_story_text(url: str) -> str | None:
+    """A wire story's text. A published release never changes, so a
+    successful fetch is cached for good: GlobeNewswire began refusing server
+    fetches on 2026-10-08 (Akamai "Access Denied") and TowneBank's blueharbor
+    deal, fetched fine at 13:39Z, vanished from the board on the next pass."""
+    if not url:
+        return None
+    from data import cache
+    key = _WIRE_STORY_KEY + url
+    try:
+        hit = cache.get(key, max_age_s=None)
+    except Exception:
+        hit = None
+    if isinstance(hit, str) and hit:
+        return hit
     from data.otc_release import _fetch_story
     html = _fetch_story(url)
-    return _strip_html(html) if html else None
+    text = _strip_html(html) if html else None
+    if text and len(text) >= 500 and "Access Denied" not in text[:300]:
+        try:
+            cache.put(key, text)
+        except Exception:
+            pass
+    return text
 
 
 def resolve_announcement_wire(acquirer_ticker: str, target_name: str,

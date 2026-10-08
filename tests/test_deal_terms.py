@@ -2361,7 +2361,7 @@ class TestFlipAndConditions(unittest.TestCase):
 
 class TestWireStoryUnreachable(unittest.TestCase):
 
-    def test_unreachable_story_is_skipped_not_a_failure(self):
+    def test_business_wire_story_is_skipped_not_a_failure(self):
         from data import ma_pending
         prs = [{"title": "John Marshall Bancorp and Eagle Financial Services Announce "
                          "Definitive Merger Agreement",
