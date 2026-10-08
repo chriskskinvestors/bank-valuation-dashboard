@@ -110,11 +110,26 @@ def main() -> int:
               f"yielding <{_MIN_UNIVERSE_DEALS} deals) — the previous snapshot "
               "still serves", flush=True)
         return 1
-    _refresh_spreads(snap)
     print(f"✓ snapshot: {snap['deals_total']} deals "
           f"({snap['deals_priced']} priced) across "
           f"{snap['banks_covered']} banks in {time.time() - t0:.0f}s",
           flush=True)
+    # The walk's PENDING rows come from the per-bank ma_history cache, which
+    # can predate today's code: the 2026-10-08 walk put Bank of Hawaii, HBT
+    # "acquiring" Tri-County at 0.28x and other long-fixed rows back on the
+    # board. The pending pass recomputes every bank's pending leg with the
+    # current code and splices it in (a bank whose leg fails keeps the walk's
+    # row, as in any pending pass).
+    from data.deal_comps import refresh_pending_snapshot
+    fresh = refresh_pending_snapshot(banks)
+    if fresh:
+        snap = fresh
+        print(f"✓ pending rows recomputed ({len(fresh.get('pending_banks_failed') or [])} "
+              "banks kept the walk's rows)", flush=True)
+    else:
+        print("✗ pending recompute wrote nothing — the walk's pending rows serve",
+              flush=True)
+    _refresh_spreads(snap)
     return 0
 
 
