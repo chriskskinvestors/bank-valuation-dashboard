@@ -350,7 +350,7 @@ def build_comps_snapshot(banks: list[dict],
             mult, m_ok = compute_multiples(d)
             lookups_ok = lookups_ok and m_ok
             by_key[k] = _snapshot_row(row_b, row_cert, d, mult)
-    rows = list(by_key.values())
+    rows = _drop_shadowed_target_views(list(by_key.values()))
     if not lookups_ok:
         print("[deal_comps] lookups failed during build — snapshot NOT cached")
         return None
@@ -381,6 +381,23 @@ def _sale_to_unlisted(d: dict) -> bool:
     Financial Group, a mutual holding company, $17.25 cash)."""
     return (d.get("direction") == "sale" and d.get("status") == "pending"
             and not (d.get("counterparty") or {}).get("ticker"))
+
+
+def _drop_shadowed_target_views(rows: list[dict]) -> list[dict]:
+    """Drop a target-side row (no buyer ticker) when a universe acquirer's
+    own pending row carries the same target. The target's sale row can miss
+    the buyer's ticker (Finward's row named "First Financial Bancorp" with
+    no ticker, 2026-10-07), and the board then showed the deal twice."""
+    seen = set()
+    for r in rows:
+        if r.get("buyer_ticker") and r.get("status") == "pending":
+            if r.get("target_ticker"):
+                seen.add(("t", r["target_ticker"]))
+            if r.get("target_cert"):
+                seen.add(("c", r["target_cert"]))
+    return [r for r in rows
+            if r.get("buyer_ticker") or r.get("status") != "pending"
+            or not ({("t", r.get("target_ticker")), ("c", r.get("target_cert"))} & seen)]
 
 
 def _as_target_view(b: dict, cert, d: dict) -> tuple[dict, object, dict]:
@@ -519,7 +536,7 @@ def refresh_pending_snapshot(banks: list[dict]) -> dict | None:
 
     kept = [r for r in snap["deals"]
             if r.get("status") != "pending" or r.get("buyer_cert") in failed]
-    rows = kept + list(by_key.values())
+    rows = _drop_shadowed_target_views(kept + list(by_key.values()))
     rows.sort(key=lambda r: (r.get("announce_date")
                              or r.get("completion_date")
                              or r.get("termination_date") or ""),
