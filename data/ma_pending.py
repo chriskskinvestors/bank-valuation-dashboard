@@ -64,6 +64,7 @@ from data.ma_announcements import (
     _wire_releases_since,
     expand_defined_term,
     _wire_story_text,
+    _PERMANENT_BLOCK_HOST_RE,
     brand_token,
     build_terms,
     row_token,
@@ -741,13 +742,14 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         time.sleep(_PAUSE_S)
         text = _wire_story_text(p.get("url") or "")
         if not text:
-            # An unreachable story is skipped, not a failure: Business Wire
-            # refuses server fetches permanently (403), and treating that as
-            # a transient failure marked the bank's whole pending leg failed
-            # on EVERY pass — its stale rows (Northrim's condition-as-approval,
-            # John Marshall, Eagle) were then kept forever (2026-10-07). The
-            # EDGAR legs still carry SEC filers; a transient miss is picked
-            # up by the next pass.
+            # Business Wire refuses server fetches permanently (403): treating
+            # that as a failure marked the bank's whole pending leg failed on
+            # EVERY pass and kept its stale rows forever (2026-10-07), so it
+            # is skipped. Any OTHER unreachable story is a failure — the bank
+            # keeps its previous rows. Skipping it erased TowneBank/blueharbor
+            # from the board when GlobeNewswire began refusing (2026-10-08).
+            if not _PERMANENT_BLOCK_HOST_RE.search(p.get("url") or ""):
+                fetch_failed = True
             continue
         if _COMPLETED_RE.search(text) or not _ANNOUNCE_RE.search(text):
             continue
