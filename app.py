@@ -978,6 +978,7 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
     # ── Sort + as-of option lists (built before the builder renders) ───
     from data.as_of_metrics import (recent_quarter_ends, quarter_label,
                                      as_of_quarter_metrics)
+    from data.fdic_client import FdicQuarterFetchError
     from data.entity_graph import KNOWN_PUBLIC_FAILURES, lineage_predecessors
     _qs_list = recent_quarter_ends(20)   # ~5 years, enough to reach the 2023 failures
     _asof_opts = ["Latest (live)"] + [quarter_label(q) for q in _qs_list]
@@ -1194,10 +1195,18 @@ elif section == "Screen & Compare" and sc_sub == "Screen" and screening_tab:
                             "(first load fetches a few years of FDIC history; then cached)"):
                 for _c, _info in lineage_predecessors(set(_cand), _q).items():
                     _cand.setdefault(_c, _info.get("name") or f"CERT:{_c}")
-                screen_metrics = as_of_quarter_metrics(_q, _cand)
+                try:
+                    screen_metrics = as_of_quarter_metrics(_q, _cand)
+                    _asof_failed = False
+                except FdicQuarterFetchError as _e:
+                    print(f"[screen] as-of {_asof_pick}: {_e}", flush=True)
+                    screen_metrics, _asof_failed = [], True
             for _m in screen_metrics:
                 _m["_defunct"] = _m.get("_fdic_cert") not in _company_certs
-            if not screen_metrics:
+            if _asof_failed:
+                st.warning(f"FDIC data for {_asof_pick} could not be fetched right "
+                           "now — nothing was cached. Try again in a minute.")
+            elif not screen_metrics:
                 st.warning(f"No FDIC filings reconstructed for {_asof_pick}.")
         else:
             screen_metrics = all_metrics
@@ -1869,6 +1878,7 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
     from ui.bank_scope import scope_type_options, render_scope_sub
     from ui.trends_table import render_trends_table, render_trends_chart
     from data.as_of_metrics import metric_grid, TREND_METRICS
+    from data.fdic_client import FdicQuarterFetchError
     from data.sec_per_share import (sec_metric_grid, SEC_TREND_METRICS,
                                     SEC_TREND_KEYS, SEC_TREND_FMT)
 
@@ -1945,13 +1955,21 @@ elif section == "Screen & Compare" and sc_sub == "Trends":
     else:
         with st.spinner(f"Building {_mlabels[_metric]} across {_nq} quarters for "
                         f"{len(_idmap)} banks…"):
-            _labels, _rows = _grid(True)
-        st.markdown(
-            f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
-            f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
-            f'{_tlabel} · {_nq} quarters · {_src}</div>',
-            unsafe_allow_html=True)
-        _show_trend(_rows, _labels)
+            try:
+                _labels, _rows = _grid(True)
+            except FdicQuarterFetchError as _e:
+                print(f"[trends] {_e}", flush=True)
+                _labels = _rows = None
+        if _rows is None:
+            st.warning("FDIC data could not be fetched right now — nothing was "
+                       "cached. Try again in a minute.")
+        else:
+            st.markdown(
+                f'<div style="font-size:var(--fs-xs);color:var(--text-secondary);'
+                f'margin:1px 0 7px;">{_mlabels[_metric]} · {len(_rows)} banks · '
+                f'{_tlabel} · {_nq} quarters · {_src}</div>',
+                unsafe_allow_html=True)
+            _show_trend(_rows, _labels)
 
 elif section == "Earnings":
     # ── EARNINGS ANALYSIS: Aggregate tracking ───────────────────────────

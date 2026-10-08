@@ -131,16 +131,29 @@ def _coerce_fin_record(d: dict) -> dict:
     return null_undefined_quotients(null_unreported_capital(rec))
 
 
+# FDIC caps `limit` at 500 once a request names more than 250 fields (measured
+# 2026-10-08: 250 fields → limit 1000 OK, 251+ → 400 "must be ≤ 500"). The base
+# field set crossed 250 in #272 (2026-10-05) and every quarter fetch 400'd —
+# as-of screens, Trends and earnings comparisons went silently empty.
+_FIN_PAGE = 500
+
+
+class FdicQuarterFetchError(RuntimeError):
+    """A quarter page could not be fetched. Raised, never swallowed: an empty
+    return was indistinguishable from "no bank filed" and got cached as such."""
+
+
 def _fetch_fin_page(filters: str, fields: str, offset: int) -> list[dict]:
     try:
         resp = _get_with_retry(FDIC_FINANCIALS_URL, {
             "filters": filters, "fields": fields,
-            "limit": 1000, "offset": offset, "sort_by": "CERT", "sort_order": "ASC",
+            "limit": _FIN_PAGE, "offset": offset, "sort_by": "CERT", "sort_order": "ASC",
         })
-        return resp.json().get("data", []) if resp is not None else []
     except Exception as e:
-        print(f"[FDIC] fetch_quarter_financials error: {e}")
-        return []
+        raise FdicQuarterFetchError(f"FDIC financials request failed: {e}") from e
+    if resp is None:
+        raise FdicQuarterFetchError("FDIC financials request exhausted its 429 retries")
+    return resp.json().get("data", [])
 
 
 def _is_still_filing_call_reports(cert: int, max_age_days: int = 200) -> bool:
@@ -181,32 +194,27 @@ def fetch_quarter_financials(repdte: str, certs=None) -> dict[int, dict]:
     hundred banks costs a handful of calls per quarter instead of a full-system
     sweep. Without ``certs`` it paginates the whole banking system. Records carry
     numpy/Timestamp values, so the caller (as_of_metrics) caches the BUILT metric
-    list (JSON-clean), not these raw records."""
+    list (JSON-clean), not these raw records. Raises FdicQuarterFetchError when
+    any page fails — a partial quarter is never returned as if complete."""
     fields = ",".join(sorted(_BASE_FINANCIALS_FIELDS | get_fdic_fields()))
     cert_list = sorted({int(c) for c in certs if c}) if certs else None
+    # One filter per ≤200-cert chunk (keeps the URL sane); None = whole system.
+    filters = ([f"REPDTE:{repdte} AND CERT:(" + " OR ".join(str(c) for c in
+                cert_list[i:i + 200]) + ")" for i in range(0, len(cert_list), 200)]
+               if cert_list else [f"REPDTE:{repdte}"])
 
     out: dict[int, dict] = {}
-    if cert_list:
-        for i in range(0, len(cert_list), 200):       # chunk to keep filter URL sane
-            chunk = cert_list[i:i + 200]
-            flt = f"REPDTE:{repdte} AND CERT:(" + " OR ".join(str(c) for c in chunk) + ")"
-            for r in _fetch_fin_page(flt, fields, 0):
-                d = r.get("data", {})
-                if d.get("CERT") is not None:
-                    out[int(d["CERT"])] = _coerce_fin_record(d)
-    else:
+    for flt in filters:
         offset = 0
         while True:
-            page = _fetch_fin_page(f"REPDTE:{repdte}", fields, offset)
-            if not page:
-                break
+            page = _fetch_fin_page(flt, fields, offset)
             for r in page:
                 d = r.get("data", {})
                 if d.get("CERT") is not None:
                     out[int(d["CERT"])] = _coerce_fin_record(d)
-            if len(page) < 1000:
+            if len(page) < _FIN_PAGE:
                 break
-            offset += 1000
+            offset += _FIN_PAGE
 
     return out
 
