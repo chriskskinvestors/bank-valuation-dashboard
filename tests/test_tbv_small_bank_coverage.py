@@ -153,7 +153,11 @@ class TestReleaseFallbackNotGatedOnMissingCik(unittest.TestCase):
 class TestCacheVersionsStayCoupled(unittest.TestCase):
     """otc_release's extractions are immutable per URL, so an extraction-spec
     bump in release_metrics that isn't mirrored here leaves OTC banks pinned to
-    pre-fix values until their next release (~a quarter)."""
+    pre-fix values until their next release (~a quarter).
+
+    SUSPENDED for otc_release while GlobeNewswire blocks server fetches
+    (owner hold 2026-10-09, tests/test_wire_block_lanes.TestVersionHold):
+    bump release_metrics alone and record the owed otc_release bump."""
 
     def test_both_versions_bumped_together(self):
         rm = (REPO / "data/release_metrics.py").read_text(encoding="utf-8")
