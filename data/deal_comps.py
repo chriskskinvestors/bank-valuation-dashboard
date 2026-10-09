@@ -381,21 +381,22 @@ def build_comps_snapshot(banks: list[dict],
 
 def _keep_newer_pending(rows: list[dict], served: dict | None,
                         started: str) -> tuple[list[dict], str | None]:
-    """A full walk runs for hours; a pending pass that finished AFTER the
-    walk started carries newer pending rows (and possibly newer code: the
-    2026-10-08 nightly started 11:30Z on the pre-deploy image, finished
-    14:16Z and erased the 13:39Z pass's company-stated multiples). Keep the
-    served pending rows then; the walk's own completed/terminated rows
-    still replace the served ones."""
+    """Pending rows belong to the pending pass; the walk owns completed and
+    terminated rows. The walk's pending rows come from the per-bank
+    ma_history cache built by whatever code ran then, so serving them put
+    long-fixed rows back on the board (2026-10-08 14:16Z and 20:18Z; 10-09
+    14:14Z until the in-job recompute landed). Whenever the served snapshot's
+    pending rows came from a pending pass, they carry over until the next
+    pass replaces them."""
     pend_at = (served or {}).get("pending_built_at")
-    if not pend_at or pend_at <= started:
+    if not pend_at:
         return rows, None
     kept = [r for r in served.get("deals") or [] if r.get("status") == "pending"]
     out = [r for r in rows if r.get("status") != "pending"] + kept
     out.sort(key=lambda r: (r.get("announce_date") or r.get("completion_date")
                             or r.get("termination_date") or ""), reverse=True)
     print(f"[deal_comps] kept {len(kept)} pending rows from the {pend_at} pending "
-          f"pass (newer than this walk's start {started})")
+          f"pass (walk started {started}; the pending recompute replaces them)")
     return out, pend_at
 
 
