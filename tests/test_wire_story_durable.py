@@ -28,18 +28,24 @@ def _prs(url):
 
 class TestUnreachableStory(unittest.TestCase):
 
-    def _run(self, url):
+    def _run(self, url, story_required=True):
         from data import ma_pending
         with patch("data.ma_pending._wire_releases", return_value=_prs(url)), \
              patch("data.ma_pending._wire_story_text", return_value=None), \
              patch("data.events.fmp_news._is_subject", return_value=True), \
              patch("data.ma_pending.time.sleep", lambda *_: None), \
              patch("data.ma_pending.date", _FakeDate):
-            return ma_pending.find_pending_wire("TOWN", "TowneBank")
+            return ma_pending.find_pending_wire("TOWN", "TowneBank",
+                                                story_required=story_required)
 
-    def test_blocked_globenewswire_story_is_a_failure(self):
-        # ok=False: the bank keeps its previous pending rows
+    def test_blocked_story_fails_a_wire_only_bank(self):
+        # TowneBank files nothing on EDGAR: ok=False keeps its previous rows
         self.assertEqual(self._run(GNW), ([], False))
+
+    def test_blocked_story_is_skipped_for_an_sec_filer(self):
+        # 2026-10-09: failing SEC filers on blocked GlobeNewswire stories kept
+        # 17 banks' stale rows; their EDGAR legs carry the deals
+        self.assertEqual(self._run(GNW, story_required=False), ([], True))
 
     def test_business_wire_permanent_block_is_still_skipped(self):
         self.assertEqual(self._run("https://www.businesswire.com/news/home/x/en/"), ([], True))

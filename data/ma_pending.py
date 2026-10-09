@@ -710,7 +710,8 @@ _WIRE_RESOLVED_TITLE_RE = re.compile(
 _WIRE_PENDING_SCAN = 4
 
 
-def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]:
+def find_pending_wire(ticker: str, subject_name: str,
+                      story_required: bool = False) -> tuple[list[dict], bool]:
     """Live announced deals from the ACQUIRER's own wire releases — the only
     detection route for FDIC-registered / OTC acquirers (TowneBank announced
     blueharbor bank on the wire 2026-10-06 and files nothing on EDGAR).
@@ -742,13 +743,14 @@ def find_pending_wire(ticker: str, subject_name: str) -> tuple[list[dict], bool]
         time.sleep(_PAUSE_S)
         text = _wire_story_text(p.get("url") or "")
         if not text:
-            # Business Wire refuses server fetches permanently (403): treating
-            # that as a failure marked the bank's whole pending leg failed on
-            # EVERY pass and kept its stale rows forever (2026-10-07), so it
-            # is skipped. Any OTHER unreachable story is a failure — the bank
-            # keeps its previous rows. Skipping it erased TowneBank/blueharbor
-            # from the board when GlobeNewswire began refusing (2026-10-08).
-            if not _PERMANENT_BLOCK_HOST_RE.search(p.get("url") or ""):
+            # For a bank with no EDGAR filings (story_required: TowneBank)
+            # the wire IS the deal, so an unreachable story fails the leg and
+            # the bank keeps its previous rows — skipping it erased
+            # TowneBank/blueharbor when GlobeNewswire began refusing
+            # (2026-10-08). An SEC filer's EDGAR legs carry its deals, and
+            # failing it kept 17 banks' stale rows (Ottawa acquiring itself,
+            # 2026-10-09); Business Wire's permanent 403 is skipped always.
+            if story_required and not _PERMANENT_BLOCK_HOST_RE.search(p.get("url") or ""):
                 fetch_failed = True
             continue
         if _COMPLETED_RE.search(text) or not _ANNOUNCE_RE.search(text):
@@ -911,7 +913,7 @@ def find_pending_deals(cik, subject_name: str,
                        "terms": c.get("terms")})
     ok3 = True
     if ticker:
-        wire, ok3 = find_pending_wire(ticker, subject_name)
+        wire, ok3 = find_pending_wire(ticker, subject_name, story_required=not cik)
         for w in wire:
             tok = brand_token(w["counterparty_name"] or "")
             if tok and tok in seen:
