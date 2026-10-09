@@ -402,6 +402,14 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     default 24h read ceiling would drop the record after any >24h gap and
     force a full re-crawl + re-extraction per bank."""
     from data import cache as _cache
+    # VERSION HOLD (owner, 2026-10-09): no bump until GlobeNewswire serves
+    # server fetches again. 30 banks' envelopes come from GlobeNewswire
+    # stories fetched before the story cache existed; a bump discards them
+    # and the blocked re-fetch leaves those banks blank. Until then a
+    # release_metrics bump goes in WITHOUT the coupled bump here — list it
+    # under "Owed" below so the catch-up bump re-extracts once
+    # (tests/test_wire_block_lanes.TestVersionHold enforces the hold).
+    # Owed: (none)
     key = f"otc_release:v17:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)

@@ -208,5 +208,26 @@ class TestPrBodyCache(_Store):
         self.assertEqual(self.store, {})
 
 
+class TestVersionHold(unittest.TestCase):
+    """Owner, 2026-10-09: hold otc_release version bumps until GlobeNewswire
+    serves server fetches again. 30 banks' envelopes come from GlobeNewswire
+    stories fetched before the story cache existed: a bump discards them and
+    the blocked re-fetch leaves those banks blank.
+
+    Lift the hold only after GlobeNewswire answers 200 from Cloud Run (not
+    just locally) — then delete this test and do the owed bump listed at the
+    key in data/otc_release._env_record."""
+
+    def test_envelope_version_is_held_at_v17(self):
+        from pathlib import Path
+        src = (Path(__file__).parent.parent / "data/otc_release.py").read_text(
+            encoding="utf-8")
+        self.assertIn('key = f"otc_release:v17:', src,
+                      "otc_release version bumps are ON HOLD (owner 2026-10-09) "
+                      "while GlobeNewswire blocks server fetches; bump "
+                      "release_metrics alone and add it to the 'Owed' list at "
+                      "the key. See TestVersionHold's docstring.")
+
+
 if __name__ == "__main__":
     unittest.main()
