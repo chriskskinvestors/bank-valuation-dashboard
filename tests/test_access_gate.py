@@ -58,6 +58,25 @@ class TestHeaderParse(unittest.TestCase):
             _parse_iap_email_header("accounts.google.com:User@Gmail.com"),
             "user@gmail.com")
 
+    def test_external_identities_prefix(self):
+        # IAP with Identity Platform (project-level and tenant forms, per the
+        # signed-headers doc) — the email must survive the new namespace.
+        self.assertEqual(
+            _parse_iap_email_header(
+                "securetoken.google.com/ace-beanbag-486220-a8:Chris@KSKInvestors.com"),
+            "chris@kskinvestors.com")
+        self.assertEqual(
+            _parse_iap_email_header("securetoken.google.com/proj/tenant-1:a@fund.com"),
+            "a@fund.com")
+
+    def test_external_identities_smoke_sa_still_trusted(self):
+        # The deploy smoke's SA reaches the app via an Identity Platform user
+        # carrying the SA email; arming the gate must not break the deploy.
+        email = _parse_iap_email_header(
+            "securetoken.google.com/ace-beanbag-486220-a8:"
+            "github-deployer@ace-beanbag-486220-a8.iam.gserviceaccount.com")
+        self.assertEqual(access_decision(email, PW, None), "allow")
+
     def test_plain_email(self):
         self.assertEqual(_parse_iap_email_header("a@b.com"), "a@b.com")
 

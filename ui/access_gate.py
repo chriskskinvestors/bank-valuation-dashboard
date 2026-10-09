@@ -31,8 +31,9 @@ def _configured_password() -> str:
 
 
 def _parse_iap_email_header(raw: str | None) -> str | None:
-    """IAP sends 'accounts.google.com:user@domain'. Return the lowercased email,
-    or None."""
+    """IAP sends 'accounts.google.com:user@domain' (Google identities) or
+    'securetoken.google.com/PROJECT[/TENANT]:user@domain' (external identities,
+    Identity Platform). Return the lowercased email, or None."""
     if not raw:
         return None
     return raw.split(":")[-1].strip().lower() or None
