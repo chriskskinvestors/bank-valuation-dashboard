@@ -138,6 +138,13 @@ def _ticker_link(ticker: str | None) -> str:
     return f'<a href="?s=Company&bank={esc}" target="_self">{esc}</a>'
 
 
+def _same_party(a: str | None, b: str | None) -> bool:
+    """Both names carry the same brand token (generic names carry none)."""
+    from data.ma_announcements import brand_token
+    ta, tb = brand_token(a or ""), brand_token(b or "")
+    return bool(ta and ta == tb)
+
+
 def _pending_rows(deals: list[dict]) -> list[dict]:
     """Every pending deal, newest announcement first. Completed and
     terminated deals are off this board (owner 2026-10-06)."""
@@ -148,6 +155,10 @@ def _pending_rows(deals: list[dict]) -> list[dict]:
             # "spread") — never shown.
             and not (d.get("target_ticker") and d.get("buyer_ticker")
                      and d["target_ticker"] == d["buyer_ticker"])
+            # ... or by NAME when one side has no ticker: a stale row showed
+            # "OTTW Ottawa Bancorp" acquiring "Ottawa Bancorp, Inc" (the deal
+            # is Pontiac Bancorp acquiring Ottawa, 2026-08-20).
+            and not _same_party(d.get("buyer_name"), d.get("target_name"))
             # The target's view of a deal (its terms name a different
             # acquirer) is never a row: "Eagle acquiring John Marshall" at a
             # 298% spread, 2026-10-07.
