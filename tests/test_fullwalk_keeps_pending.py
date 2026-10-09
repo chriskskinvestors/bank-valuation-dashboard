@@ -29,11 +29,22 @@ class TestKeepNewerPending(unittest.TestCase):
         self.assertEqual([(r["target_name"], r["p_tbv"]) for r in rows],
                          [("GP", 1.56), ("Old", 1.5)])      # walk's completed rows win
 
-    def test_older_pass_is_replaced_by_the_walk(self):
+    def test_older_pass_still_beats_the_walks_cached_pending_rows(self):
+        # 2026-10-09 14:14Z: the walk's cached pending rows (Bank of Hawaii,
+        # Ottawa acquiring itself) replaced a correct pass until the recompute.
         from data.deal_comps import _keep_newer_pending
-        served = {"pending_built_at": "2026-10-08T09:00:00",
-                  "deals": [{"status": "pending", "target_name": "GP", "p_tbv": 9.9}]}
-        rows, at = _keep_newer_pending(self._rows(), served, "2026-10-08T11:30:00")
+        served = {"pending_built_at": "2026-10-08T22:04:59",
+                  "deals": [{"status": "pending", "announce_date": "2026-10-07",
+                             "target_name": "GP", "p_tbv": 1.56}]}
+        rows, at = _keep_newer_pending(self._rows(), served, "2026-10-09T11:30:00")
+        self.assertEqual(at, "2026-10-08T22:04:59")
+        self.assertEqual([(r["target_name"], r["p_tbv"]) for r in rows],
+                         [("GP", 1.56), ("Old", 1.5)])
+
+    def test_served_walk_without_a_pass_is_replaced(self):
+        from data.deal_comps import _keep_newer_pending
+        served = {"deals": [{"status": "pending", "target_name": "GP", "p_tbv": 9.9}]}
+        rows, at = _keep_newer_pending(self._rows(), served, "2026-10-09T11:30:00")
         self.assertIsNone(at)
         self.assertEqual(rows, self._rows())
 
