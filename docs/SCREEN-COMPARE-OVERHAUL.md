@@ -220,6 +220,51 @@ Build order (each its own verified, shippable batch):
     JWT health in Secret Manager (local copy expired ~2026-08-31); run the
     mislabel diagnostic in prod.
 
+- **B12** ✅ SHIPPED 2026-10-05..08 (PRs #249, #350, #353) — **AOCI % TCE
+  columns** (owner: "use your recommendations") + **As-of / Trends repair**.
+  Prod-verified 2026-10-08/09.
+  - **AOCI % TCE, both bases** (B9 deferred item, RESOLVED #249): five
+    Rate & Funding Risk columns — AOCI % TCE (HoldCo), AOCI+HTM % TCE
+    (HoldCo, HTM pre-tax), TCE GW prior FY (flag), AOCI % TCE (Bank), AOCI+HTM
+    % TCE (Bank, HTM pre-tax). HoldCo = SEC AccumulatedOtherComprehensiveIncome-
+    LossNetOfTax read only AT the parent-equity date ÷ (equity − preferred −
+    the goodwill+intangibles adjustment tangible book uses). Bank = RC-R Part I
+    item 3 (B530) ÷ (EQTOT − INTAN), strict-summed across charters. HTM mark =
+    SCHF − SCHA, pre-tax, on both. n/a: AOCI from another period, preferred
+    unresolved, TCE ≤ 0, any charter missing the item. Owner decisions
+    applied: ship holdco at the coverage SEC data allows; year-end-only
+    goodwill used as last reported and FLAGGED (21 banks, e.g. ZION); both
+    bases as columns. **Prod 2026-10-09: HoldCo filled for 321 banks (~92% of
+    the ~347 SEC filers; non-SEC banks n/a); 8/8 reference banks within
+    0.2pt** (JPM −2.6/−2.5, C −23.3/−23.4, BNY −17.0/−17.0, USB −15.6/−15.6,
+    BAC −5.9/−5.8, WFC −5.9/−5.7, TFC −16.6/−16.5, FHB −19.7/−19.7). **Bank
+    columns are n/a for every bank**: the store's newest RC-R quarter is
+    2026-03-31 because the prod FFIEC token expired ~2026-08-30 (health check
+    2026-10-05: −36 days) — the code correctly refuses Q1 AOCI against Q2
+    equity. Units checked on stored rows (Citibank AOCI −$23.5B).
+  - **As-of screens, Trends and earnings comparisons were empty 10-05..08**
+    (#350): FDIC caps `limit` at 500 once a request names >250 fields
+    (measured: 250 → 200, 251+ → 400). #272 took the base field set to 253;
+    every quarter fetch 400'd and `_fetch_fin_page` swallowed it as "no bank
+    filed" — "No FDIC filings reconstructed for Q4 2021" (cached 24h), the
+    nightly all-banks Trends grid failed, earnings prior/YoY went blank. Now
+    pages at 500; a failed page raises `FdicQuarterFetchError` (screen/Trends
+    say FDIC could not be fetched; nothing cached); empty unpublished quarters
+    not cached. Q4 2021 whole system 4,904 rows = FDIC meta.total.
+  - **As-of rows carried TODAY's SEC/8-K values and never finished** (#353,
+    found verifying #350): the engine got the ticker, so "as of Q4 2021"
+    showed BAC TBVPS 29.37 (its 2026 8-K; actual ≈ 21.68) and JPM buybacks
+    $31.7B (current TTM), at ~6.4 s/bank — past the request timeout for the
+    universe. Engine now gets ticker=None (FDIC-only, as designed; SEC/market
+    n/a); cache key v3. Prod: Q4 2021 → 836 banks incl. 243 since-exited
+    (SVB, Signature, First Republic, Silvergate) in ~2½ min first load; CRE %
+    JPM 3.9 (= 42,314,000 / 1,085,106,000), WFC 10.6, BAC 6.2, C 1.9.
+  - **Still open (owner)**: renew the FFIEC token in Secret Manager, then
+    refresh-ffiec for 06/30/2026 fills bank AOCI (and every other FFIEC-fed
+    view stuck at Q1); the Nov 1 scheduled run also fails until renewed. Run
+    the mislabel diagnostic in prod. All-banks Trends grid repopulates on the
+    next nightly refresh-trends (not yet verified).
+
 ## Do-not-touch (other lanes)
 
 Market & Macro + `docs/HOME-MACRO-PLAN.md`; `tests/smoke_live.py` + the deploy smoke job;
