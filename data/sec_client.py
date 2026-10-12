@@ -1840,18 +1840,7 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
         # $13K PaymentsOfDividendsPreferredStock in every window since 2023
         # against $773M of equity with no preferred on its balance sheet —
         # both rendered a clean bank n/a (2026-10-06).
-        equity = _equity_total_at(facts, as_of)
-        for concept in (
-            "PreferredStockDividendsIncomeStatementImpact",
-            "DividendsPreferredStock",
-            "PaymentsOfDividendsPreferredStockAndPreferenceStock",
-            "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
-        ):
-            fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
-            if (fact and fact.get("end", "") > zero_end
-                    and _preferred_evidence_material(fact, concept, equity)):
-                has_preferred = True
-                break
+        has_preferred = _preferred_flow_evidence(facts, as_of, zero_end)
 
     if not has_preferred:
         # No preferred outstanding — subtract nothing.
@@ -1868,11 +1857,21 @@ def _resolve_preferred_stock(facts: dict, as_of: str | None = None) -> tuple[flo
         # never an earlier historical column) and not behind a fresh
         # explicit zero count.
         rec = facts.get("_preferred_total")
-        if (rec and rec.get("value") and rec.get("end")
+        if (rec and rec.get("value") is not None and rec.get("end")
                 and rec["end"] == _balance_sheet_date(facts)
                 and rec["end"] >= zero_end
                 and (as_of is None or as_of >= rec["end"])):
-            value = rec["value"]
+            if rec["value"] == 0 and not _preferred_flow_evidence(
+                    facts, as_of, zero_end):
+                # The filing's equity statement carries no preferred at all
+                # (resolve_preferred_total's zero shape) and the only
+                # "presence" was a share count — PNBK's 2025 footnote tagged
+                # into 2026. Nothing to subtract; the filer has none. A bank
+                # paying preferred dividends has preferred whatever the
+                # statement's shape: the zero never applies to it.
+                return 0.0, False
+            if rec["value"]:
+                value = rec["value"]
     # Filer has preferred; value is None when only a par-zero/stale tag exists
     # (unresolved → caller renders n/a per the cardinal rule).
     return value, True
@@ -1897,6 +1896,24 @@ _PREFERRED_DIVIDEND_CONCEPTS = frozenset({
     "DividendsPreferredStock",
     "PaymentsOfDividendsPreferredStockAndPreferenceStock",
 })
+
+
+def _preferred_flow_evidence(facts: dict, as_of: str | None, zero_end: str) -> bool:
+    """True when a current-period income/cash-flow fact proves preferred
+    outstanding — positive, material (_preferred_evidence_material) and
+    ending after any fresh explicit zero share count."""
+    equity = _equity_total_at(facts, as_of)
+    for concept in (
+        "PreferredStockDividendsIncomeStatementImpact",
+        "DividendsPreferredStock",
+        "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+        "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock",
+    ):
+        fact = _latest_fact(facts, concept, max_age_years=1, as_of=as_of)
+        if (fact and fact.get("end", "") > zero_end
+                and _preferred_evidence_material(fact, concept, equity)):
+            return True
+    return False
 
 
 def _preferred_evidence_material(fact: dict, concept: str,
