@@ -236,6 +236,28 @@ class TestLivePriceReaction(unittest.TestCase):
         pc.assert_not_called()
 
 
+class TestCachedHistoryDates(unittest.TestCase):
+    """2026-10-12 prod: get_history's CACHE HIT rebuilt the frame from JSON
+    with string dates; the board's `d.date()` raised, its handler emptied the
+    history, and every row took the live 1D change as its "reaction"."""
+
+    def test_cache_hit_returns_datetime_dates_and_board_reacts(self):
+        from data import fmp_client
+        records = [{"date": "2026-10-08 00:00:00", "close": 10.0},
+                   {"date": "2026-10-09 00:00:00", "close": 10.42}]
+        with mock.patch.object(fmp_client, "_has_key", return_value=True), \
+                mock.patch.object(fmp_client, "_cache_get", return_value=records):
+            df = fmp_client.get_history("AMBK", "1M")
+            self.assertTrue(hasattr(df["date"].iloc[0], "date"))
+            row = {"ticker": "AMBK", "reaction_session": "2026-10-09",
+                   "awaiting": False}
+            with mock.patch.object(fmp_client, "get_price_change") as pc:
+                er._fill_price_reactions([row], date(2026, 10, 12))
+        self.assertAlmostEqual(row["px_react"], 4.2, places=6)
+        self.assertFalse(row["px_react_live"])
+        pc.assert_not_called()
+
+
 class TestStoreDateInferredFlag(unittest.TestCase):
     def setUp(self):
         import data.db as db
