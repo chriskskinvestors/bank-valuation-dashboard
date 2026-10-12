@@ -206,8 +206,13 @@ def _render_recent_deals():
 
     # Live prices for each deal's two sides (warm cache, bulk read; frozen
     # quotes were dropped at ingest; stale rows are n/a here).
+    # The target ticker falls back to the FDIC cert (as the Target cell
+    # does): CZNL showed as the target with no price because its row carries
+    # no ticker and only target_ticker was requested (2026-10-12).
+    cert_map = _cert_ticker_map()
     syms = sorted({t for d in rows
-                   for t in (d.get("buyer_ticker"), d.get("target_ticker"))
+                   for t in (d.get("buyer_ticker"),
+                             d.get("target_ticker") or cert_map.get(d.get("target_cert") or 0))
                    if t})
     try:
         warm = get_prices(syms, max_age_s=_ARB_PRICE_MAX_AGE_S) if syms else {}
@@ -215,7 +220,6 @@ def _render_recent_deals():
         print(f"[transactions] warm prices: {type(e).__name__}: {e}")
         warm = {}
 
-    cert_map = _cert_ticker_map()
     body = ""
     export_rows = []
     for d in rows:
