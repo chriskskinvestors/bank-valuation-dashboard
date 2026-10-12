@@ -60,6 +60,7 @@ Provides:
 from __future__ import annotations
 import math
 
+import numpy as np
 import pandas as pd
 
 from data.db import USE_POSTGRES as _USE_POSTGRES
@@ -916,6 +917,85 @@ _COMPETITOR_PAIR_COLS = [
 ]
 
 
+# Competitor-side columns a pair carries (the candidate fetch reads only
+# these — a national subject's candidate set is ~the whole survey year).
+_CAND_COLS = ["cert", "brnum", "ticker", "bank_name", "branch_name", "address",
+              "city", "state", "zip", "deposits", "lat", "lng", "serv_type"]
+_SUBJ_PAIR_COLS = {"subj_brnum": "brnum", "subj_branch_name": "branch_name",
+                   "subj_address": "address", "subj_city": "city",
+                   "subj_state": "state", "subj_lat": "lat", "subj_lng": "lng",
+                   "subj_deposits": "deposits"}
+
+
+def _haversine_miles_vec(lat1: float, lng1: float, lat2: np.ndarray,
+                         lng2: np.ndarray) -> np.ndarray:
+    """haversine_miles from one point to many — the same formula,
+    element-wise."""
+    p1, p2 = math.radians(lat1), np.radians(lat2)
+    dphi = np.radians(lat2 - lat1)
+    dlmb = np.radians(lng2 - lng1)
+    a = (np.sin(dphi / 2.0) ** 2
+         + math.cos(p1) * np.cos(p2) * np.sin(dlmb / 2.0) ** 2)
+    return 2.0 * _EARTH_RADIUS_MILES * np.arcsin(np.sqrt(np.minimum(1.0, a)))
+
+
+def _pairs_within(subj: pd.DataFrame, cand: pd.DataFrame,
+                  radius_miles: float) -> pd.DataFrame:
+    """Every (subject branch, candidate branch) pair within radius_miles —
+    per subject branch: its _bbox, then the exact haversine cut.
+
+    Vectorised (UX review P1-05 follow-up, 2026-10-12): candidates are
+    sorted by latitude once; each subject branch takes its latitude band by
+    binary search and filters longitude + distance in numpy. The old loop
+    re-filtered the WHOLE candidate frame in pandas per subject branch and
+    built one dict per pair — for JPM 5,142 branches x a ~national candidate
+    set, ~20 s before anything rendered. Same pairs, columns and order
+    (subject order, then candidate order, then sorted by (subj_brnum,
+    distance_miles))."""
+    if subj.empty or cand.empty:
+        return pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
+    c_lat = cand["lat"].to_numpy(dtype=float)
+    c_lng = cand["lng"].to_numpy(dtype=float)
+    order = np.argsort(c_lat, kind="stable")
+    lat_sorted = c_lat[order]
+    s_lat_all = subj["lat"].to_numpy(dtype=float)
+    s_lng_all = subj["lng"].to_numpy(dtype=float)
+    s_parts, c_parts, d_parts = [], [], []
+    for i in range(len(subj)):
+        s_lat, s_lng = float(s_lat_all[i]), float(s_lng_all[i])
+        lat_min, lat_max, lng_min, lng_max = _bbox(s_lat, s_lng, radius_miles)
+        lo = np.searchsorted(lat_sorted, lat_min, side="left")
+        hi = np.searchsorted(lat_sorted, lat_max, side="right")
+        if lo >= hi:
+            continue
+        idx = order[lo:hi]
+        idx = np.sort(idx[(c_lng[idx] >= lng_min) & (c_lng[idx] <= lng_max)])
+        if not idx.size:
+            continue
+        d = _haversine_miles_vec(s_lat, s_lng, c_lat[idx], c_lng[idx])
+        keep = d <= radius_miles
+        if not keep.any():
+            continue
+        s_parts.append(np.full(int(keep.sum()), i))
+        c_parts.append(idx[keep])
+        d_parts.append(d[keep])
+    if not s_parts:
+        return pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
+    sd = subj.iloc[np.concatenate(s_parts)].reset_index(drop=True)
+    cd = cand.iloc[np.concatenate(c_parts)].reset_index(drop=True)
+    out = pd.DataFrame({k: sd[v] for k, v in _SUBJ_PAIR_COLS.items()})
+    for col in _CAND_COLS:
+        out[col] = cd[col] if col in cd.columns else None
+    for col in ("subj_brnum", "cert", "brnum"):
+        out[col] = out[col].astype(int)
+    for col in ("subj_lat", "subj_lng", "lat", "lng"):
+        out[col] = out[col].astype(float)
+    out["distance_miles"] = np.concatenate(d_parts)
+    return (out[_COMPETITOR_PAIR_COLS]
+            .sort_values(["subj_brnum", "distance_miles"])
+            .reset_index(drop=True))
+
+
 def get_branch_competitors(cert: int, radius_miles: float = 5.0,
                            year: int | None = None) -> dict:
     """Competitor branches within `radius_miles` of EACH subject-bank branch.
@@ -979,7 +1059,7 @@ def get_branch_competitors(cert: int, radius_miles: float = 5.0,
     lng_max = max(b[1][3] for b in boxes)
     cand = _q_to_df(
         f"""
-        SELECT * FROM branches
+        SELECT {", ".join(_CAND_COLS)} FROM branches
         WHERE year = :year AND {_owner_key()} <> :okey
           AND lat IS NOT NULL AND lng IS NOT NULL
           AND lat BETWEEN :lat_min AND :lat_max
@@ -989,48 +1069,10 @@ def get_branch_competitors(cert: int, radius_miles: float = 5.0,
          "lat_min": lat_min, "lat_max": lat_max,
          "lng_min": lng_min, "lng_max": lng_max},
     )
-    rows: list[dict] = []
-    if not cand.empty:
-        for s in with_coords.itertuples(index=False):
-            s_lat, s_lng = float(s.lat), float(s.lng)
-            b_lat_min, b_lat_max, b_lng_min, b_lng_max = _bbox(
-                s_lat, s_lng, radius_miles)
-            near = cand[cand["lat"].between(b_lat_min, b_lat_max)
-                        & cand["lng"].between(b_lng_min, b_lng_max)]
-            for c in near.itertuples(index=False):
-                d = haversine_miles(s_lat, s_lng, float(c.lat), float(c.lng))
-                if d > radius_miles:
-                    continue
-                rows.append({
-                    "subj_brnum": int(s.brnum),
-                    "subj_branch_name": s.branch_name,
-                    "subj_address": s.address,
-                    "subj_city": s.city,
-                    "subj_state": s.state,
-                    "subj_lat": s_lat,
-                    "subj_lng": s_lng,
-                    "subj_deposits": s.deposits,
-                    "cert": int(c.cert),
-                    "brnum": int(c.brnum),
-                    "ticker": c.ticker,
-                    "bank_name": c.bank_name,
-                    "branch_name": c.branch_name,
-                    "address": c.address,
-                    "city": c.city,
-                    "state": c.state,
-                    "zip": c.zip,
-                    "deposits": c.deposits,
-                    "lat": float(c.lat),
-                    "lng": float(c.lng),
-                    "serv_type": c.serv_type,
-                    "distance_miles": d,
-                })
-    pairs = (pd.DataFrame(rows, columns=_COMPETITOR_PAIR_COLS)
-             .sort_values(["subj_brnum", "distance_miles"])
-             .reset_index(drop=True))
+    pairs = _pairs_within(with_coords, cand, radius_miles)
     return {"pairs": pairs, "n_subject_branches": len(subj),
             "n_subject_missing_coords": n_subj_missing,
             "n_competitor_missing_coords": n_missing_comp,
             "year": int(year),
-            "reason": None if rows else
+            "reason": None if len(pairs) else
             f"no competitor branches within {radius_miles} miles"}
