@@ -694,7 +694,7 @@ def get_events_by_type(event_type: str, limit: int = 600) -> list[dict]:
     from sqlalchemy import text
     sql = """
         SELECT ticker, source, event_type, headline, summary, url,
-               published_at, external_id
+               published_at, external_id, raw_json
         FROM events
         WHERE event_type = :et AND source <> :topic_src
         ORDER BY published_at DESC
@@ -703,7 +703,21 @@ def get_events_by_type(event_type: str, limit: int = 600) -> list[dict]:
     params = {"et": event_type, "topic_src": TOPIC_SOURCE, "n": limit}
     with _get_engine().connect() as conn:
         rows = conn.execute(text(sql), params).mappings().all()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        # Only the date_inferred flag leaves the store, not the payload: an
+        # IR-site HTML scrape with no date stamps the scrape time, and the
+        # Results board must not read that as a publication date.
+        raw = d.pop("raw_json", None)
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError:
+                raw = None
+        d["date_inferred"] = bool(isinstance(raw, dict) and raw.get("date_inferred"))
+        out.append(d)
+    return out
 
 
 def get_topic_news(category: str, hours: int = 24, limit: int = 50) -> list[dict]:
