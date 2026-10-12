@@ -313,7 +313,8 @@ def tangible_common_equity_at(cik: int, asof_iso: str,
 
 
 def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
-                       build_if_missing: bool = True, scope_id: str | None = None):
+                       build_if_missing: bool = True, scope_id: str | None = None,
+                       rebuild: bool = False):
     """Full SEC per-share series for a cohort → same payload shape as
     as_of_metrics.quarterly_series: {"labels", "rows":[{ticker,_fdic_cert,series}]}.
     None when not cached and build_if_missing is False (all-banks is pre-warmed)."""
@@ -339,7 +340,8 @@ def sec_per_share_grid(cik_to_id: dict, n_quarters: int = 20, *,
     # main-path mirror.)
     key = f"sec_pershare:v8:{scope_id or _cohort_key(cik_to_id.keys())}:{n}"
     cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
-    if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
+    # rebuild=True: the nightly pre-warm always rebuilds (see as_of_metrics.quarterly_series).
+    if not rebuild and is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached
     if not build_if_missing:
         return None
