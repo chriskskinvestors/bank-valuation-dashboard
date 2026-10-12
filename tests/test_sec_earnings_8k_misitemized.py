@@ -395,7 +395,7 @@ class TestCachingAndFailure(_Site):
         self.serve(_npb_site())
         se8k._latest_earnings_8k(NPB)
         n = len(self.calls)
-        cache.invalidate("earnings_8k_latest:v3:1336706")   # past the 2h TTL
+        cache.invalidate(se8k._submissions_ckey(NPB))   # past the 2h TTL
         self.assertEqual(se8k._latest_earnings_8k(NPB)["accession_dash"],
                          "0001336706-26-000059")
         self.assertEqual(len(self.calls), n + 1)        # submissions only
@@ -413,12 +413,15 @@ class TestCachingAndFailure(_Site):
             # Never the older Q1 2.02 8-K in place of an unverified newer one.
             self.assertIsNone(se8k._latest_earnings_8k(FBP))
             self.assertEqual(se8k.latest_periodic_filing(FBP)["form"], "10-Q")
-        self.assertIsNone(cache.get("earnings_8k_latest:v3:1057706",
+        self.assertIsNone(cache.get(se8k._submissions_ckey(FBP),
                                     max_age_s=None))
         self.assertIsNone(cache.get(
-            "earnings_8k_misitemized:v2:000105770626000020", max_age_s=None))
+            se8k._misitemized_ckey("000105770626000020"), max_age_s=None))
 
-    def test_checks_bounded_without_any_202(self):
+    def test_fetch_budget_per_call_resumes_next_call(self):
+        # No 2.02 at all, ten routine 8.01 8-Ks: each call checks at most
+        # _MISITEMIZED_MAX_FETCHES new exhibits and caches nothing until
+        # every candidate has a verdict; then the record is cached.
         rows = [("8-K", f"2026-09-{d:02d}", f"0000000088-26-0000{d:02d}", "8.01")
                 for d in range(20, 10, -1)]
         site = {"https://data.sec.gov/submissions/CIK0000000088.json":
@@ -427,9 +430,90 @@ class TestCachingAndFailure(_Site):
             site[f"{_ARCH}/88/{acc.replace('-', '')}/{acc}-index.htm"] = \
                 _index(88, acc, [("8-K", "d.htm", "8-K")])
         self.serve(site)
+        budget = se8k._MISITEMIZED_MAX_FETCHES
         self.assertIsNone(se8k._latest_earnings_8k(88))
-        self.assertEqual(len(self.calls),
-                         1 + se8k._MISITEMIZED_MAX_CHECKS)
+        self.assertEqual(len(self.calls), 1 + budget)
+        self.assertIsNone(cache.get(se8k._submissions_ckey(88),
+                                    max_age_s=None))
+        self.assertIsNone(se8k._latest_earnings_8k(88))
+        self.assertIsNone(se8k._latest_earnings_8k(88))   # 4 + 4 + 2 = 10
+        n = len(self.calls)
+        self.assertEqual(n, 3 + 10)
+        self.assertIsNotNone(cache.get(se8k._submissions_ckey(88),
+                                       max_age_s=None))
+        se8k._latest_earnings_8k(88)
+        self.assertEqual(len(self.calls), n)               # served cached
+
+    def test_candidates_older_than_age_bound_not_checked(self):
+        # Newest filing 2026-09-20; an 8.01 filed > 200 days earlier is
+        # never fetched (a release that old would be stale anyway).
+        rows = [("8-K", "2026-09-20", "0000000089-26-000020", "8.01"),
+                ("8-K", "2026-02-01", "0000000089-26-000001", "8.01")]
+        site = {"https://data.sec.gov/submissions/CIK0000000089.json":
+                _subs(rows),
+                f"{_ARCH}/89/000000008926000020/0000000089-26-000020-index.htm":
+                    _index(89, "0000000089-26-000020", [("8-K", "d.htm", "8-K")])}
+        self.serve(site)
+        self.assertIsNone(se8k._latest_earnings_8k(89))
+        self.assertEqual(len(self.calls), 2)
+
+
+# HBAN 2Q26 shape (2026-09-24, ir_provider): routine 8.01/7.01/5.02 + 9.01
+# filings AFTER the release. Here the release itself is mis-itemized (2.01)
+# behind five routine 8-Ks with no EX-99.1, ahead of the Q1 2.02 8-K.
+_ROUTINE = [("8-K", f"2026-09-{d:02d}", f"0001057706-26-0001{d:02d}", "8.01,9.01")
+            for d in (25, 18, 11, 4)] + [
+            ("8-K", "2026-08-20", "0001057706-26-000150", "5.02,9.01")]
+
+
+class TestReleaseBehindRoutine8Ks(_Site):
+    def test_release_found_on_a_later_call(self):
+        site = _fbp_site()
+        site["https://data.sec.gov/submissions/CIK0001057706.json"] = _subs(
+            list(_ROUTINE) + [
+                ("8-K", "2026-07-22", "0001057706-26-000020", "2.01,9.01"),
+                ("8-K", "2026-04-22", "0001057706-26-000010", "2.02,9.01")])
+        for _, _, acc, _ in _ROUTINE:
+            site[f"{_ARCH}/1057706/{acc.replace('-', '')}/{acc}-index.htm"] = \
+                _index(FBP, acc, [("8-K", "d.htm", "8-K")])
+        self.serve(site)
+        # Call 1 spends its budget on four routine 8-Ks: unverified -> None,
+        # never the Q1 8-K. Call 2 reaches the release.
+        self.assertIsNone(se8k._latest_earnings_8k(FBP))
+        self.assertEqual(se8k._latest_earnings_8k(FBP)["accession_dash"],
+                         "0001057706-26-000020")
+
+
+class TestDatelineBeforeHeadline(_Site):
+    """114 of 288 real 2Q26 releases (2026-10-12 dry run) open on their own
+    dateline -- a date AFTER the quarter-end -- before the headline."""
+
+    def _pick(self, ex991):
+        self.serve(_fbp_site(ex991))
+        return se8k._latest_earnings_8k(FBP)["accession_dash"]
+
+    def test_wfc_style_dateline_first_is_accepted(self):
+        # WFC 2Q26 EX-99.1 opening: "News Release | July 14, 2026 Wells
+        # Fargo Reports Second Quarter 2026 Net Income ..." -- here on
+        # FBP's 2.01 8-K filed 2026-07-22.
+        doc = (b"<html><body><p>Exhibit 99.1</p><p>News Release | July 22, "
+               b"2026</p><p><b>First BanCorp. Reports Second Quarter 2026 Net "
+               b"Income of $96.1 million, or $0.62 per Diluted Share</b></p>"
+               b"<p>Quarter ended Jun 30, 2026</p></body></html>")
+        self.assertEqual(self._pick(doc), "0001057706-26-000020")
+
+    def test_dateline_then_prior_quarter_still_rejected(self):
+        doc = (b"<html><body><p>News Release | July 22, 2026</p><p><b>First "
+               b"BanCorp. Reports First Quarter 2026 Results</b></p>"
+               b"</body></html>")
+        self.assertEqual(self._pick(doc), "0001057706-26-000010")
+
+
+# NPB 2Q26 balance sheet total-equity row (the release prints it there and,
+# as "Stockholders' equity (GAAP)", atop the reconciliation).
+_NPB_BALANCE = (
+    "<table>" + _td("(Dollars in thousands)", "June 30,2026", "Mar 31,2026")
+    + _td("Total stockholders' equity", "611,648", "589,993") + "</table>")
 
 
 class TestNpbBookValueFromQ2Release(_Site):
@@ -444,6 +528,18 @@ class TestNpbBookValueFromQ2Release(_Site):
         # doesn't say COMMON and the release shows preferred → n/a.
         self.assertEqual(se8k.reported_bvps_status(NPB),
                          (None, "not_disclosed"))
+
+    def test_bvps_na_with_a_reconstruction(self):
+        # Since NPB gained a reconstruction, the no-reconstruction COMMON-
+        # label guard no longer runs and $17.69 passed the 15% band against
+        # per-common 16.96 (prod, 2026-10-12). The tie-out catches it:
+        # 611,648K / 34,581,842 "common shares at end of period" = 17.687.
+        self.serve(_npb_site(_npb_q2_991(_NPB_BALANCE + _NPB_RECON)))
+        self.assertEqual(se8k.reported_bvps_status(NPB, reconstructed=16.96),
+                         (None, "not_disclosed"))
+        # TBVPS is untouched: 585,750K TCE / the same shares = 16.938.
+        self.assertEqual(se8k.reported_tbvps_status(NPB, reconstructed=16.94),
+                         (16.94, "ok"))
 
 
 if __name__ == "__main__":
