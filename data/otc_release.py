@@ -494,7 +494,7 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # under "Owed" below so the catch-up bump re-extracts once
     # (tests/test_wire_block_lanes.TestVersionHold enforces the hold).
     # Owed: (none)
-    key = f"otc_release:v17:{ticker.upper()}"
+    key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
     except Exception:
@@ -534,6 +534,8 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v18 (2026-10-12): release_metrics v25 — split / comparison period
+    # headers (shared table parser; OTC tables re-extract under it).
     # v16 (2026-10-06): release_metrics v23 — revenue-basis facts (SEC
     # filers' envelope field; the OTC extraction itself is unchanged, bumped
     # under the unconditional coupling rule).

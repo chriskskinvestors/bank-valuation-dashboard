@@ -135,7 +135,7 @@ class TestBackfillBlocked(_Store):
         super().setUp()
         from data import otc_release as orl
         self.orl = orl
-        self.store["otc_release:v17:T"] = {
+        self.store["otc_release:v18:T"] = {
             "cached_at": "2026-10-08T00:00:00",
             "value": {"url": "latest", "qend": "2026-06-30", "metrics": {}}}
 
@@ -230,7 +230,7 @@ class TestFirstPartyFallback(_Store):
             self.addCleanup(p.stop)
 
     def _prev(self, **extra):
-        self.store["otc_release:v17:T"] = {
+        self.store["otc_release:v18:T"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": GNW, "qend": "2026-06-30",
                       "metrics": {"tbv_ps": 20.5}}, **extra}
@@ -247,7 +247,7 @@ class TestFirstPartyFallback(_Store):
         self.assertEqual((v["url"], v["transport"], v["wire_url"]),
                          (doc["url"], "ir_q4", self.PR["url"]))
         # the wire URL short-circuits the next pass: no second read
-        self.store["otc_release:v17:T"]["cached_at"] = "2020-01-01T00:00:00"
+        self.store["otc_release:v18:T"]["cached_at"] = "2020-01-01T00:00:00"
         with patch.object(self.orl, "_first_party_release") as fp:
             self.assertEqual(self.orl.otc_release_metrics("T")["qend"], "2026-09-30")
         fp.assert_not_called()
@@ -270,15 +270,15 @@ class TestFirstPartyFallback(_Store):
         with patch.object(self.orl, "_q4_release", return_value=None),              patch.object(self.orl, "_ir_release_candidates", return_value=[]) as crawl:
             v = self.orl.otc_release_metrics("T")
             self.assertEqual((v["qend"], v["metrics"]), ("2026-06-30", {"tbv_ps": 20.5}))
-            self.assertTrue(self.store["otc_release:v17:T"]["ir_checked_at"])
-            self.store["otc_release:v17:T"]["cached_at"] = "2020-01-01T00:00:00"
+            self.assertTrue(self.store["otc_release:v18:T"]["ir_checked_at"])
+            self.store["otc_release:v18:T"]["cached_at"] = "2020-01-01T00:00:00"
             self.assertEqual(self.orl.otc_release_metrics("T")["qend"], "2026-06-30")
         self.assertEqual(crawl.call_count, 1)
 
     def test_no_previous_and_nothing_found_is_none(self):
         with patch.object(self.orl, "_q4_release", return_value=None),              patch.object(self.orl, "_ir_release_candidates", return_value=[]):
             self.assertIsNone(self.orl.otc_release_metrics("T"))
-        self.assertTrue(self.store["otc_release:v17:T"]["value"]["empty"])
+        self.assertTrue(self.store["otc_release:v18:T"]["value"]["empty"])
 
     def test_unprovable_title_period_reads_nothing(self):
         self._prev()
@@ -355,7 +355,7 @@ class TestVersionHold(unittest.TestCase):
         from pathlib import Path
         src = (Path(__file__).parent.parent / "data/otc_release.py").read_text(
             encoding="utf-8")
-        self.assertIn('key = f"otc_release:v17:', src,
+        self.assertIn('key = f"otc_release:v18:', src,
                       "otc_release version bumps are ON HOLD (owner 2026-10-09) "
                       "while GlobeNewswire blocks server fetches; bump "
                       "release_metrics alone and add it to the 'Owed' list at "
