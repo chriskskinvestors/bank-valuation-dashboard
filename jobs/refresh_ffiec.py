@@ -255,6 +255,37 @@ def _refresh_one(
         return cert, 0, f"{type(e).__name__}: {str(e)[:80]}", statuses
 
 
+def _universe_certs() -> set[int]:
+    """Every cert to ingest: each universe ticker's lead cert (BANK_MAP +
+    resolved JSON) PLUS its charter-group siblings. Bank-side metrics
+    strict-sum RC-R over a holdco's whole charter group
+    (analysis/metrics._bank_aoci_by_ticker — any charter missing → n/a), so
+    ingesting lead certs alone left every multi-charter bank's "AOCI % TCE
+    (Bank)" n/a after the 2026-10-12 refresh (JPM, WFC, BAC …). Siblings come
+    from the persisted group map (data/cert_group.get_cert_group_cached — no
+    network; no map → lead cert only, the previous behaviour)."""
+    from data.bank_mapping import BANK_MAP
+    from data.cert_group import get_cert_group_cached
+    leads: set[int] = set()
+    for info in BANK_MAP.values():
+        if info.get("fdic_cert"):
+            leads.add(int(info["fdic_cert"]))
+    try:
+        from data.bank_mapping import _RESOLVED_FROM_JSON
+        for info in _RESOLVED_FROM_JSON.values():
+            if info.get("fdic_cert"):
+                leads.add(int(info["fdic_cert"]))
+    except Exception:
+        pass
+    out = set(leads)
+    for lead in leads:
+        try:
+            out.update(int(c) for c in get_cert_group_cached(lead))
+        except Exception:
+            pass
+    return out
+
+
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
 
@@ -301,23 +332,10 @@ def main() -> int:
     # Build the universe: only banks in our published watchlist + the
     # OTC-discovered set. ~400-500 banks vs. ~4,500 active FDIC institutions.
     # Saves ~90% of the FFIEC PWS request budget and drops runtime to ~10 min.
-    from data.bank_mapping import BANK_MAP
-    universe_certs: set[int] = set()
-    for ticker, info in BANK_MAP.items():
-        cert = info.get("fdic_cert")
-        if cert:
-            universe_certs.add(int(cert))
-    try:
-        from data.bank_mapping import _RESOLVED_FROM_JSON
-        for t, info in _RESOLVED_FROM_JSON.items():
-            cert = info.get("fdic_cert")
-            if cert:
-                universe_certs.add(int(cert))
-    except Exception:
-        pass
+    universe_certs = _universe_certs()
     print(f"[{time.strftime('%H:%M:%S')}] Universe size: "
-          f"{len(universe_certs)} certs (BANK_MAP + resolved JSON)",
-          flush=True)
+          f"{len(universe_certs)} certs (BANK_MAP + resolved JSON + "
+          f"charter-group siblings)", flush=True)
 
     print(f"[{time.strftime('%H:%M:%S')}] Enumerating active FDIC banks "
           "(to map CERT → FFIEC RSSD)...", flush=True)
