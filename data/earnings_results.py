@@ -483,11 +483,18 @@ def live_session_is_current(session: date | None, today: date) -> bool:
     return first == last
 
 
+# A dividend is declared apart from earnings: NEWT's 2026-09-14 Item 2.02
+# exhibit is a dividend announcement whose only extracted figure is
+# div_ps $0.19 — not evidence of a results report.
+_NON_RESULTS_FIGURES = {"div_ps"}
+
+
 def _rel_has_figures(rel) -> bool:
-    """Whether an attached release carries ANY extracted figure."""
+    """Whether an attached release carries any extracted RESULTS figure."""
     rel = rel or {}
     return any(v is not None for part in ("metrics", "capital")
-               for v in (rel.get(part) or {}).values())
+               for k, v in (rel.get(part) or {}).items()
+               if k not in _NON_RESULTS_FIGURES)
 
 
 def _rel_proves_report(rel) -> bool:
