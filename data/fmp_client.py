@@ -631,7 +631,17 @@ def get_history(ticker: str, period: str = "1Y", cache_only: bool = False,
                         allow_stale=(cache_only and allow_stale))
     if cached is not None:
         try:
-            return pd.DataFrame(cached)
+            df = pd.DataFrame(cached)
+            # The JSON round-trip stores dates as strings; a cache hit must
+            # return the same datetime column a live fetch does. 2026-10-12:
+            # the Results board's `d.date()` raised on every cache hit, its
+            # handler emptied the history, and every row fell through to the
+            # live 1D change — "Px React" showed today's move, not the
+            # release reaction.
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.dropna(subset=["date"]).reset_index(drop=True)
+            return df
         except Exception:
             pass
     if cache_only:
