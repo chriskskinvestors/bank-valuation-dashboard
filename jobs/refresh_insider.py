@@ -7,9 +7,10 @@ ONLY cached Form 4 JSON — it never fetches live on render. This nightly job
 populates that cache for the whole universe so the feed has real coverage,
 not just the handful of banks a user happened to open.
 
-Form 4 fetching is heavy (per bank: 1 submissions call + filing XMLs until 30
-of the bank's own, at most 75 — form4_client._MAX_XML_FETCHES), so the loop
-runs sequentially and politely. Calls are force=True: the
+Form 4 fetching is heavy (per bank: 1 submissions call + one request per
+12-month Form 4 — ~15k a night; form4_client._MAX_OWN_FILINGS/_MAX_XML_FETCHES
+are runaway guards above the busiest filer), so the loop runs sequentially
+and politely. Calls are force=True: the
 render path serves a per-CIK file for 4 days, so an unforced call would skip a
 file written yesterday (and a 24h check flipped on run-to-run jitter).
 
