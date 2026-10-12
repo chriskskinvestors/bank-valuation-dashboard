@@ -208,6 +208,139 @@ class TestPrBodyCache(_Store):
         self.assertEqual(self.store, {})
 
 
+class TestFirstPartyFallback(_Store):
+    """A refused wire story is read from the bank's OWN channels for the same
+    quarter (Q4 IR API body, then the IR-site crawl) — never a different
+    quarter's document, and never at the cost of the previous figures."""
+
+    PR = {"title": "T Bancorp Reports Third Quarter 2026 Results",
+          "url": GNW.replace("2026/07/22", "2026/10/21"),
+          "published_at": "2026-10-21 08:00:00"}
+    Q3 = ("<p>Net interest margin of 3.40% for the quarter. Tangible book "
+          "value per share was $21.07.</p>")
+
+    def setUp(self):
+        super().setUp()
+        from data import otc_release as orl
+        self.orl = orl
+        for p in (patch.object(orl, "_latest_earnings_pr", return_value=self.PR),
+                  patch.object(orl, "_fetch_story", return_value=None),
+                  patch.object(orl, "_append_eps_history")):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _prev(self, **extra):
+        self.store["otc_release:v17:T"] = {
+            "cached_at": "2020-01-01T00:00:00",
+            "value": {"url": GNW, "qend": "2026-06-30",
+                      "metrics": {"tbv_ps": 20.5}}, **extra}
+
+    def test_q4_body_for_the_same_quarter_is_read(self):
+        doc = {"url": "https://ir.t.com/news/q3", "title": self.PR["title"],
+               "html": self.Q3, "transport": "ir_q4"}
+        with patch.object(self.orl, "_q4_release", return_value=doc) as q4,              patch.object(self.orl, "_ir_release_candidates") as crawl:
+            v = self.orl.otc_release_metrics("T")
+        q4.assert_called_once_with("T", "2026-09-30")
+        crawl.assert_not_called()
+        self.assertEqual((v["qend"], v["metrics"]["tbv_ps"], v["metrics"]["nim"]),
+                         ("2026-09-30", 21.07, 3.4))
+        self.assertEqual((v["url"], v["transport"], v["wire_url"]),
+                         (doc["url"], "ir_q4", self.PR["url"]))
+        # the wire URL short-circuits the next pass: no second read
+        self.store["otc_release:v17:T"]["cached_at"] = "2020-01-01T00:00:00"
+        with patch.object(self.orl, "_first_party_release") as fp:
+            self.assertEqual(self.orl.otc_release_metrics("T")["qend"], "2026-09-30")
+        fp.assert_not_called()
+
+    def test_site_crawl_takes_only_the_same_quarter(self):
+        cands = [{"url": "https://t.com/q2.pdf", "title": "Q2 2026 Earnings",
+                  "qend": "2026-06-30", "kind": "pdf"},
+                 {"url": "https://t.com/q3.pdf", "title": "Q3 2026 Earnings",
+                  "qend": "2026-09-30", "kind": "pdf"}]
+        fetched = []
+        with patch.object(self.orl, "_q4_release", return_value=None),              patch.object(self.orl, "_ir_release_candidates", return_value=cands),              patch.object(self.orl, "_fetch_document",
+                          side_effect=lambda u, k: fetched.append(u) or self.Q3):
+            v = self.orl.otc_release_metrics("T")
+        self.assertEqual(fetched, ["https://t.com/q3.pdf"])
+        self.assertEqual((v["transport"], v["qend"], v["wire_url"]),
+                         ("ir_site", "2026-09-30", self.PR["url"]))
+
+    def test_nothing_first_party_keeps_previous_and_crawls_once_a_day(self):
+        self._prev()
+        with patch.object(self.orl, "_q4_release", return_value=None),              patch.object(self.orl, "_ir_release_candidates", return_value=[]) as crawl:
+            v = self.orl.otc_release_metrics("T")
+            self.assertEqual((v["qend"], v["metrics"]), ("2026-06-30", {"tbv_ps": 20.5}))
+            self.assertTrue(self.store["otc_release:v17:T"]["ir_checked_at"])
+            self.store["otc_release:v17:T"]["cached_at"] = "2020-01-01T00:00:00"
+            self.assertEqual(self.orl.otc_release_metrics("T")["qend"], "2026-06-30")
+        self.assertEqual(crawl.call_count, 1)
+
+    def test_no_previous_and_nothing_found_is_none(self):
+        with patch.object(self.orl, "_q4_release", return_value=None),              patch.object(self.orl, "_ir_release_candidates", return_value=[]):
+            self.assertIsNone(self.orl.otc_release_metrics("T"))
+        self.assertTrue(self.store["otc_release:v17:T"]["value"]["empty"])
+
+    def test_unprovable_title_period_reads_nothing(self):
+        self._prev()
+        bad = {**self.PR, "title": "T Bancorp Reports Fourth Quarter 2025 Results"}
+        with patch.object(self.orl, "_latest_earnings_pr", return_value=bad),              patch.object(self.orl, "_first_party_release") as fp:
+            self.assertEqual(self.orl.otc_release_metrics("T")["qend"], "2026-06-30")
+        fp.assert_not_called()
+        self.orl._fetch_story.assert_not_called()
+
+
+class TestQ4Release(unittest.TestCase):
+
+    def _items(self, *rows):
+        return {"GetPressReleaseListResult": [
+            {"Headline": h, "Body": b, "PressReleaseDate": d,
+             "LinkToDetailPage": "/news/" + str(i)}
+            for i, (h, b, d) in enumerate(rows)]}
+
+    def _run(self, payload, qend="2026-09-30"):
+        from data import otc_release as orl
+        resp = type("R", (), {"json": lambda self: payload})()
+        with patch("data.events.ir_site.get_ir_endpoints",
+                   return_value={"T": "https://ir.t.com/"}),              patch("data.events.ir_site._q4_site", return_value=(True, None)),              patch("data.http.get_with_retry", return_value=resp):
+            return orl._q4_release("T", qend)
+
+    def test_picks_the_same_quarter_results_release(self):
+        doc = self._run(self._items(
+            ("T Bancorp Declares Dividend", "<p>div</p>", "10/22/2026 08:00:00"),
+            ("T Bancorp Reports Third Quarter 2026 Results", "<p>Q3</p>",
+             "10/21/2026 08:00:00"),
+            ("T Bancorp Reports Second Quarter 2026 Results", "<p>Q2</p>",
+             "07/21/2026 08:00:00")))
+        self.assertEqual((doc["html"], doc["url"], doc["transport"]),
+                         ("<p>Q3</p>", "https://ir.t.com/news/1", "ir_q4"))
+
+    def test_other_quarter_or_empty_body_is_none(self):
+        self.assertIsNone(self._run(self._items(
+            ("T Bancorp Reports Third Quarter 2026 Results", "",
+             "10/21/2026 08:00:00"),
+            ("T Bancorp Reports Second Quarter 2026 Results", "<p>Q2</p>",
+             "07/21/2026 08:00:00"))))
+
+    def test_pdf_only_release_reads_its_document(self):
+        # FGFH: the Q4 item has no Body; the release is the attached PDF
+        from data import otc_release as orl
+        payload = {"GetPressReleaseListResult": [{
+            "Headline": "Foresight Reports 2026 Third Quarter Results",
+            "Body": "", "PressReleaseDate": "10/14/2026 08:00:00",
+            "DocumentPath": "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf"}]}
+        with patch.object(orl, "_fetch_document", return_value="Q3 text") as fd:
+            doc = self._run(payload)
+        fd.assert_called_once_with(
+            "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf", "pdf")
+        self.assertEqual((doc["html"], doc["url"]),
+                         ("Q3 text", "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf"))
+
+    def test_bank_without_q4_endpoint_is_none(self):
+        from data import otc_release as orl
+        with patch("data.events.ir_site.get_ir_endpoints", return_value={}):
+            self.assertIsNone(orl._q4_release("T", "2026-09-30"))
+
+
 class TestVersionHold(unittest.TestCase):
     """Owner, 2026-10-09: hold otc_release version bumps until GlobeNewswire
     serves server fetches again. 30 banks' envelopes come from GlobeNewswire
