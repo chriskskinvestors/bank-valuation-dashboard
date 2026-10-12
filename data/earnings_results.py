@@ -492,13 +492,14 @@ def _rel_has_figures(rel) -> bool:
 
 def _rel_proves_report(rel) -> bool:
     """An attached 8-K exhibit proves a report when it carries any figure,
-    or (figure-less) is not a call/webcast notice — WBHC's nine-month
-    shareholder letter has no QUARTERLY figure yet is its Q3 report."""
+    or (figure-less) STATES results — WBHC's nine-month shareholder letter
+    has no QUARTERLY figure yet is its Q3 report. "Not a call notice" is not
+    enough: NEWT furnished a dividend announcement under Item 2.02."""
     if not rel or rel.get("withheld"):
         return bool(rel)
     if _rel_has_figures(rel):
         return True
-    return rel.get("call_notice") is False
+    return rel.get("results_stated") is True
 
 
 def drop_unproven_8k_rows(rows: list[dict], today: date) -> list[dict]:
@@ -737,6 +738,8 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
                           "rev_basis": rm.get("rev_basis"),
                           # v26: the exhibit is a call/webcast notice
                           "call_notice": rm.get("call_notice"),
+                          # v27: a figure-less exhibit states results
+                          "results_stated": rm.get("results_stated"),
                           "url": rm.get("url")}
             # Actuals fill (owner, 2026-07-13): FMP's consensus feed lags a
             # fresh report ("pending") — the bank's own release already
@@ -987,7 +990,7 @@ def _board_key(days_back: int) -> str:
     #      mint pending rows; inferred-date events ignored; ET dates; an
     #      8-K-only row needs figures in its exhibit; live px only for the
     #      current session. Rows gained `pr_source`, `from_fmp`.
-    return f"earnings_results_board_v15:{days_back}"
+    return f"earnings_results_board_v16:{days_back}"
 
 
 def results_board_available(days_back: int = 30) -> bool:

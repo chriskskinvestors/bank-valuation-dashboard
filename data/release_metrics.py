@@ -583,11 +583,29 @@ _RESULTS_OPEN = re.compile(
 
 def is_call_notice(html: str) -> bool:
     """True when the document's opening (~500 chars) is call/webcast
-    logistics and does not report results. Used only to judge an 8-K exhibit
-    that yielded no figures: a notice is not a report; a figure-less letter
-    (WBHC's nine-month shareholder letter) still is."""
+    logistics and does not report results."""
     head = _flat_text(html)[:500]
     return bool(_NOTICE_OPEN.search(head)) and not _RESULTS_OPEN.search(head)
+
+
+# Results language: what a figure-less exhibit must STATE to count as a
+# report. Item 2.02 is not proof — NEWT furnished a DIVIDEND announcement
+# under 2.02 (2026-09-14, "NewtekOne, Inc. Declares Dividends on Common Stock
+# and Series B Preferred Shares") and WSBC a call notice (2026-10-02).
+_STATES_RESULTS = re.compile(
+    r"\bnet (?:income|earnings|loss)\b|\bearnings per (?:diluted |common |"
+    r"basic )?share\b|\bdiluted (?:eps|earnings)\b|"
+    r"\b(?:quarterly|quarter|financial|operating) results\b", re.I)
+
+
+def states_results(html: str) -> bool:
+    """True when an exhibit states results in its first ~2000 chars and is
+    not a call notice. Judges an 8-K exhibit that yielded no quarterly
+    figure: WBHC's nine-month shareholder letter ("Net Income for the nine
+    months ended …") is its Q3 report; a dividend announcement or a call
+    notice is not."""
+    return (not is_call_notice(html)
+            and bool(_STATES_RESULTS.search(_flat_text(html)[:2000])))
 
 
 def adjusted_eps_stated(html: str) -> bool:
@@ -1812,7 +1830,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v27:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v28:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1839,6 +1857,8 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v28 (2026-10-12): `results_stated` — whether a figure-less exhibit
+    # states results (NEWT's Item 2.02 dividend announcement does not).
     # v26 (2026-10-12): prose candidates in a MULTI-QUARTER context (nine/
     # six/twelve months, year-to-date, full year) are refused — WBHC's
     # letter states only nine-month EPS ($5.29), shipped as the quarter's.
@@ -1896,7 +1916,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v27:{int(cik)}"
+    key = f"release_metrics:v28:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -1968,6 +1988,7 @@ def release_metrics(cik) -> dict | None:
         # not) — the board's surprise-basis check (data/earnings_results).
         "eps_adj_stated": adjusted_eps_stated(rel["html"]),
         "call_notice": is_call_notice(rel["html"]),
+        "results_stated": states_results(rel["html"]),
         # The revenue surprise's basis check (data/earnings_results
         # .revenue_basis) — match targets only, never displayed.
         "rev_basis": revenue_basis_facts(rel["html"], qend),

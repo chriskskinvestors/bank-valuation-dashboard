@@ -176,15 +176,24 @@ def _row(**kw):
 class TestUnproven8kRows(unittest.TestCase):
     TODAY = date(2026, 10, 12)
 
-    def test_call_notice_exhibit_is_dropped_letter_is_kept(self):
+    def test_notice_and_dividend_exhibits_dropped_letter_kept(self):
         rows = [
             _row(ticker="WSBC", date="2026-10-02",
-                 rel={"metrics": {}, "capital": {}, "call_notice": True}),
+                 rel={"metrics": {}, "capital": {}, "call_notice": True,
+                      "results_stated": False}),
+            # NEWT 2026-09-14: a dividend announcement furnished under 2.02 —
+            # not a call notice, but it states no results either.
+            _row(ticker="NEWT", date="2026-09-14",
+                 rel={"metrics": {}, "capital": {}, "call_notice": False,
+                      "results_stated": False}),
             _row(ticker="WBHC",
                  rel={"metrics": {"eps_diluted": None}, "capital": {},
-                      "call_notice": False}),
+                      "call_notice": False, "results_stated": True}),
             _row(ticker="FIG", rel={"metrics": {"nim": 3.4}, "capital": {},
-                                    "call_notice": True}),
+                                    "results_stated": False}),
+            # a pre-v28 record (no results_stated) is not proof
+            _row(ticker="OLDREC", rel={"metrics": {}, "capital": {},
+                                       "call_notice": False}),
             _row(ticker="NOREL", rel=None),
             _row(ticker="ACT", rel=None, eps_act=1.0, pending=False),
             _row(ticker="WIRE", pr_source="prnewswire", rel=None),
@@ -331,6 +340,17 @@ class TestNineMonthEps(unittest.TestCase):
         self.assertTrue(rm.is_call_notice(notice))
         self.assertFalse(rm.is_call_notice(letter))
         self.assertFalse(rm.is_call_notice(results))
+        # NEWT 2026-09-14 EX-99.1 (Item 2.02), opening verbatim
+        dividend = ("<p>NewtekOne, Inc. Declares Dividends on Common Stock and "
+                    "Series B Preferred Shares</p><p>Boca Raton, FL September "
+                    "14, 2026 - NewtekOne, Inc. (the Company) (NASDAQ: NEWT) "
+                    "announced that its Board of Directors declared a "
+                    "quarterly cash dividend of $0.19 per share on the "
+                    "Company's outstanding common stock.</p>")
+        self.assertFalse(rm.states_results(notice))     # a notice, even if it
+        self.assertFalse(rm.states_results(dividend))   # mentions "results"
+        self.assertTrue(rm.states_results(letter))
+        self.assertTrue(rm.states_results(results))
 
 
 if __name__ == "__main__":
