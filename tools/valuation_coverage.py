@@ -23,6 +23,27 @@ sys.path.insert(0, str(REPO_ROOT))
 EXAMPLES = 12
 
 
+# The engine blanks a RESOLVED tangible book on purpose in two cases and
+# writes why into the row's _notes (analysis/valuation.compute_all_valuations):
+# a cover-page share count diverging >10% from the quarter-end count behind
+# book per share (BAFN: preferred converted into 22.9M common after 6/30),
+# and a holdco whose goodwill tag lapsed (CFR). Read the note; never guess.
+_DELIBERATE_NA = (
+    ("share-basis mismatch",
+     "share-basis mismatch — post-quarter issuance/conversion (n/a by rule)"),
+    ("stopped tagging goodwill",
+     "holdco goodwill tag lapsed — intangibles unknown (n/a by rule)"),
+)
+
+
+def _deliberate_na(row: dict) -> str | None:
+    note = ((row.get("_notes") or {}).get("tbvps") or "")
+    for marker, label in _DELIBERATE_NA:
+        if marker in note:
+            return label
+    return None
+
+
 def classify(row: dict, cik, sec: dict | None) -> dict[str, str]:
     """{stat: reason} for ptbv / pe / divyield; reason "ok" when present."""
     out = {}
@@ -46,7 +67,7 @@ def classify(row: dict, cik, sec: dict | None) -> dict[str, str]:
         elif sec.get("book_value_total") is None:
             out["ptbv"] = "equity total not tagged (or NCI unseparated)"
         else:
-            out["ptbv"] = "TBV n/a — other (intangibles untagged at date?)"
+            out["ptbv"] = _deliberate_na(row) or "TBV n/a — other (no note on the row)"
     elif tb <= 0:
         out["ptbv"] = "negative tangible book"
     else:
