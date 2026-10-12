@@ -117,6 +117,10 @@ _TABLE_TAIL = re.compile(r"^[\s,]*[($]?\d")
 # the conventional reported basis — and stay eligible.
 _CONNECTOR_EXCLUDE = re.compile(
     r"\b(?:adjusted|core|operating|normalized|underlying|pro forma)\b", re.I)
+# A table ROW label naming an exclusion ("Net interest margin FTE excluding
+# episodic items", FFIC) is a variant too — table readers only (prose
+# "excluding" handling lives in _EXCLUDE_*).
+_ROW_VARIANT = re.compile(r"\bexcluding\b", re.I)
 
 
 def _flat_text(html: str) -> str:
@@ -560,6 +564,13 @@ _MONTHS3 = {m[:3]: i for i, m in enumerate(
      "september", "october", "november", "december"), 1)}
 _Q_END = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
 _QTOK = re.compile(r"\b([1-4])Q\s?['’]?(\d{2}|\d{4})\b", re.I)
+# Q-first form ("Q2 2026", CUBB's reconciliation headers) — never a FISCAL
+# quarter label ("Fiscal Q4 2026" is not a calendar quarter; RVSB/SMBC).
+_QTOK_QF = re.compile(r"\bQ([1-4])\s?['’]?(\d{2}|\d{4})\b", re.I)
+_FISCAL = re.compile(r"(?i)\bfiscal\b|\bfy")
+# Numeric date ("6/30/2026", RF) — any valid date, like _DTOK, so a monthly
+# column ("7/31/2026") still counts as a column, never silently dropped.
+_NUMDATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])")
 _QWORD = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+"
                     r"(?:quarter|qtr\.?),?\s+(\d{4})", re.I)
 _QNUM = {"first": 1, "1st": 1, "second": 2, "2nd": 2,
@@ -575,8 +586,11 @@ _MONYR = re.compile(r"\b([A-Za-z]{3,9})\.?\s+(20\d{2})\b")
 _QE_MONTH = {3: 31, 6: 30, 9: 30, 12: 31}
 # Header cells that mark a trailing %-change/comparison column (FITB "Seq",
 # "Yr/Yr"; generic "% Change", "bps"; JPM "$ O/(U)" over/under, and the
-# analogous "B/(W)" better/worse) — never period columns.
-_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|change|bps|%)\b|%"
+# analogous "B/(W)" better/worse; HBAN "LQ" linked-quarter; RF "2Q26 vs.
+# 1Q26" comparisons, whose period tokens must never read as periods) —
+# never period columns.
+_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|lq|vs|versus|change|"
+                         r"bps|%)\b|%"
                          r"|[ob]/\([uw]\)")
 
 
@@ -588,6 +602,8 @@ def _period_qend(cell: str) -> str | None:
     the cell level — the table is skipped instead)."""
     from datetime import date as _date
     m = _QTOK.search(cell)
+    if not m and not _FISCAL.search(cell):
+        m = _QTOK_QF.search(cell)
     if m:
         q, y = int(m.group(1)), int(m.group(2))
         y += 2000 if y < 100 else 0
@@ -610,6 +626,13 @@ def _period_qend(cell: str) -> str | None:
         mon = _MONTHS3.get(m.group(1)[:3].lower())
         if mon and mon in _QE_MONTH:
             return _date(int(m.group(2)), mon, _QE_MONTH[mon]).isoformat()
+    m = _NUMDATE.search(cell)
+    if m:
+        try:
+            return _date(int(m.group(3)), int(m.group(1)),
+                         int(m.group(2))).isoformat()
+        except ValueError:
+            return None
     return None
 
 
@@ -766,7 +789,7 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
     # cells, then years — three rows; found 2026-08-20 wiring the EPS
     # tie-out, whose NI/share rows live in exactly those tables).
     for i, cells in enumerate(rows[:8]):
-        found = [q for c in cells if (q := _period_qend(c))]
+        found = [q for _, q in _row_periods(cells)]
         if len(found) >= 2:
             # A caption/banner row ("2Q26 Change vs. | 1Q26 | 2Q25") can
             # sit ABOVE the real period header (JPM, caught live
@@ -774,17 +797,30 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
             # MORE period tokens (value rows carry none, so this can
             # never walk past the header).
             while i + 1 < len(rows):
-                nxt = [q for c in rows[i + 1] if (q := _period_qend(c))]
+                nxt = [q for _, q in _row_periods(rows[i + 1])]
                 if len(nxt) <= len(found):
                     break
                 found, i = nxt, i + 1
             n_change = 0
             # Trailing change columns on the header row itself ("$ O/(U)"
-            # / "O/(U) %", "QoQ%", "% Change") — counted so value rows
-            # that carry the change cells still align. Any trailing
-            # non-change token → count nothing (rows with extras skip).
-            last_p = max(j for j, c in enumerate(rows[i])
-                         if _period_qend(c))
+            # / "O/(U) %", "QoQ%", "% Change", RF "2Q26 vs. 1Q26") —
+            # counted so value rows that carry the change cells still
+            # align. Any trailing non-change token → count nothing (rows
+            # with extras skip).
+            periods = _row_periods(rows[i])
+            if _novel_header(rows[i]) and (
+                    _ytd_only_head(rows, i, i)
+                    or any(_CHANGE_COL.search(c) for c in
+                           rows[i][periods[0][0]:periods[-1][0]] if c)):
+                # A header readable only through the new forms (numeric
+                # dates, Q-first tokens, dropped comparison cells) is
+                # refused under a lone year-to-date banner (KEY "Six months
+                # ended" over "6/30/2026 | 6/30/2025": six-month values) or
+                # with change columns BETWEEN its periods (AUB "6/30/2026 |
+                # 3/31/2026 | QoQ | QoQ % change | 6/30/2025 | …": a blank
+                # change cell would shift a period) — never guessed.
+                return None
+            last_p = periods[-1][0]
             trail = [c for c in rows[i][last_p + 1:] if c]
             if trail and all(_CHANGE_COL.search(c) for c in trail):
                 n_change = len(trail)
@@ -856,7 +892,240 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
                         mo, dy = _Q_END[q]
                         qends.append(_date(years[ri], mo, dy).isoformat())
                     return qends, i + 1, i - 1, 0
+        # Split shapes the legacy branches above refuse (_split_header).
+        got = _split_header(rows, i)
+        if got:
+            return got
     return None
+
+
+# ── Split (multi-row) period headers ────────────────────────────────────────
+# Colspans are lost in cell extraction, so a header split across rows is
+# placed only when the rows PROVE the pairing:
+#   period-part row ("June 30," / "1st Quarter" / "Q2" / bare "Second" over
+#   a "Quarter" row) then a years row  → 1:1 (equal counts), or
+#   ordinal parts + one trailing year-to-date cell over K+2 years whose
+#   tail is [latest, latest-1] (CUBB) → K quarters + 2 YTD columns;
+#   a years row ABOVE the parts (CFR "2026 | 2025" over "1st Qtr | 4th |
+#   3rd …", HBAN "2026 | 2025" over "Second | First | Fourth …" over
+#   "Quarter …") → 1:1, or one strictly-descending run of quarters per year.
+# A leading units/caption cell ("(dollars in thousands)") is allowed on any
+# header row; trailing cells must all be change columns. Anything else →
+# None (the table is skipped, never guessed).
+_YTD = "YTD"                 # a year-to-date column: kept, never a quarter
+_YEAR_CELL = re.compile(r"^20\d{2}$")
+_MON_CELL = re.compile(
+    r"(?i)^(january|february|march|april|may|june|july|august|september|"
+    r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|"
+    r"dec)\.?(?:\s+(\d{1,2}))?,?$")
+_ORD_CELL = re.compile(
+    r"(?i)^(?:(first|second|third|fourth|1st|2nd|3rd|4th)"
+    r"(\s+(?:quarter|qtr\.?))?|q([1-4]))$")
+_QTR_WORD = re.compile(r"(?i)^(?:quarter|qtr\.?)$")
+
+
+def _hdr_qend(cell: str) -> str | None:
+    """A header cell's period — None for a change/comparison column, whose
+    period tokens ("2Q26 vs. 1Q26") are never a period of their own."""
+    return None if _CHANGE_COL.search(cell) else _period_qend(cell)
+
+
+def _ytd_only_head(rows: list[list[str]], i: int, last: int) -> bool:
+    """A year-to-date banner with no quarter marker in the header band
+    (rows i-2 .. last) — FITB "Year to Date" over "June | June", KEY "Six
+    months ended" over "6/30/2026 | 6/30/2025": the columns are YTD."""
+    head = " ".join(c for r in rows[max(0, i - 2):last + 1] for c in r if c)
+    return bool(_YTD_HDR.search(head)) and not _QTR_HDR.search(head)
+
+
+def _novel_header(cells: list[str]) -> bool:
+    """True when a header row's reading depends on this module's newer
+    forms — a numeric or Q-first period cell, or comparison cells whose
+    period tokens _row_periods dropped (a legacy every-token reading, SFBS,
+    is not novel)."""
+    every = [j for j, c in enumerate(cells) if c and _period_qend(c)]
+    if [j for j, _ in _row_periods(cells)] != every:
+        return True
+    return any(not (_QTOK.search(cells[j]) or _QWORD.search(cells[j])
+                    or _DTOK.search(cells[j]) or _MONYR.search(cells[j]))
+               for j in every)
+
+
+def _row_periods(cells: list[str]) -> list[tuple[int, str]]:
+    """(cell index, qend) of a header row's period cells. Comparison cells
+    are dropped only when they TRAIL every period (RF "… | 2Q25 | 2Q26 vs.
+    1Q26 | 2Q26 vs. 2Q25"). One sitting BETWEEN period columns (SFBS "%
+    Change From Period Ending March 31, 2026 to …", whose value rows don't
+    follow the header's layout) keeps the legacy every-token reading: its
+    tokens duplicate the periods and the table is refused as before."""
+    every = [(j, q) for j, c in enumerate(cells) if (q := _period_qend(c))]
+    clean = [(j, q) for j, q in every if not _CHANGE_COL.search(cells[j])]
+    if clean and any(j < clean[-1][0] and _CHANGE_COL.search(cells[j])
+                     for j, _ in every):
+        return every
+    return clean
+
+
+def _header_parts(cells: list[str], kind) -> tuple | None:
+    """(parts, tail) of a header row: an optional leading units/caption
+    cell, then the run of `kind` cells, then the tail. The caption may not
+    itself be a period, a change column, a year-to-date marker or a non-GAAP
+    section heading (OCFC "Core Ratios (Annualized):")."""
+    nz = [c for c in cells if c]
+    if nz and not kind.match(nz[0]):
+        lab = nz.pop(0)
+        if (_hdr_qend(lab) or _CHANGE_COL.search(lab) or _YTD_HDR.search(lab)
+                or _CONNECTOR_EXCLUDE.search(lab)):
+            return None
+    k = 0
+    while k < len(nz) and kind.match(nz[k]):
+        k += 1
+    return nz[:k], nz[k:]
+
+
+def _part_quarter(c: str) -> tuple[int, bool] | None:
+    """(quarter number, self-proving) of a period-part cell — a quarter-end
+    month ("June 30,"; day, if any, must be the quarter-end) or an ordinal.
+    A bare ordinal word ("Second") proves nothing alone — it needs a
+    "Quarter" row beneath it."""
+    m = _MON_CELL.match(c)
+    if m:
+        mon = _MONTHS3.get(m.group(1)[:3].lower())
+        if mon not in _QE_MONTH or (m.group(2) and int(m.group(2))
+                                    != _QE_MONTH[mon]):
+            return None
+        return mon // 3, True
+    m = _ORD_CELL.match(c)
+    if m:
+        if m.group(3):
+            return int(m.group(3)), True
+        return _QNUM[m.group(1).lower()], bool(m.group(2))
+    return None
+
+
+def _split_header(rows: list[list[str]], i: int) -> tuple | None:
+    """A split period header starting at row i (see the block comment
+    above), as _period_header's tuple, or None."""
+    from datetime import date as _date
+
+    def row(j):
+        return rows[j] if 0 <= j < len(rows) else []
+
+    def is_change(tail):
+        return all(_CHANGE_COL.search(c) for c in tail)
+
+    def parts_at(j):
+        """(quarters, tail, last header row, n_change) of a period-part row
+        at j (+ an optional "Quarter" row beneath), or None."""
+        for kind in (_MON_CELL, _ORD_CELL):
+            p = _header_parts(row(j), kind)
+            if not p or len(p[0]) < 2:
+                continue
+            parts, tail = p
+            qs = [_part_quarter(c) for c in parts]
+            if not all(qs):
+                return None
+            last, n_chg = j, 0
+            qw = _header_parts(row(j + 1), _QTR_WORD)
+            if qw and len(qw[0]) == len(parts) and is_change(qw[1]):
+                last, n_chg = j + 1, len(qw[1])
+            elif not all(proof for _, proof in qs):
+                return None               # bare "Second" with no "Quarter"
+            return [q for q, _ in qs], tail, last, n_chg, kind
+        return None
+
+    def qend(y, q):
+        mo, dy = _Q_END[q]
+        return _date(y, mo, dy).isoformat()
+
+    def ytd_only(last):
+        return _ytd_only_head(rows, i, last)
+
+    # (A) parts row, then the years row beneath it.
+    p = parts_at(i)
+    if p:
+        qs, ptail, last, n_chg, kind = p
+        y = _header_parts(row(last + 1), _YEAR_CELL)
+        if y and y[0] and is_change(y[1]) and not ytd_only(last + 1):
+            years = [int(c) for c in y[0]]
+            if is_change(ptail) and len(years) == len(qs):
+                return ([qend(yy, q) for q, yy in zip(qs, years)], last + 1,
+                        i - 1, max(len(ptail), n_chg, len(y[1])))
+            # K ordinal quarters + one YTD cell ("Six Months Ended June 30,"
+            # — or a bare "June 30," under a "Six Months Ended" banner)
+            # over K+2 years ending [latest, latest-1] (CUBB 2Q26).
+            if (len(ptail) == 1 and not y[1] and not n_chg
+                    and len(years) == len(qs) + 2
+                    and kind is _ORD_CELL
+                    and (_YTD_HDR.search(ptail[0])
+                         or (_MON_CELL.match(ptail[0]) and _YTD_HDR.search(
+                             " ".join(c for c in row(i - 1) if c))))
+                    and years[-2:] == [max(years[:-2]), max(years[:-2]) - 1]):
+                return ([qend(yy, q) for q, yy in zip(qs, years)]
+                        + [_YTD, _YTD], last + 1, i - 1, 0)
+        return None
+    # (B) years row ABOVE the parts (CFR / HBAN).
+    nz = [c for c in row(i) if c]
+    if nz and all(_YEAR_CELL.match(c) for c in nz):
+        p = parts_at(i + 1)
+        if not p or not is_change(p[1]) or ytd_only(p[2]):
+            return None
+        qs, ptail, last, n_chg, _kind = p
+        years = [int(c) for c in nz]
+        n_change = max(len(ptail), n_chg)
+        if len(years) == len(qs):
+            return ([qend(yy, q) for q, yy in zip(qs, years)], last, i - 1,
+                    n_change)
+        # Exactly one strictly-descending run of quarters per year (the
+        # standard descending-recency layout) — else refused.
+        run_idx, ridx = [], 0
+        for j, q in enumerate(qs):
+            if j and q >= qs[j - 1]:
+                ridx += 1
+            run_idx.append(ridx)
+        if ridx + 1 == len(years):
+            return ([qend(years[ri], q) for q, ri in zip(qs, run_idx)], last,
+                    i - 1, n_change)
+    return None
+
+
+def _cmp_cols(hdr_cells: list[str], qends: list[str],
+              n_change: int) -> list[tuple[int, int]] | None:
+    """(A, B) period-column pairs of the header's trailing "A vs. B"
+    comparison cells (RF "2Q26 vs. 1Q26 | 2Q26 vs. 2Q25"), or None unless
+    EVERY change cell names two uniquely-placed periods."""
+    nz = [c for c in hdr_cells if c]
+    if not n_change or len(nz) < n_change:
+        return None
+    out = []
+    for c in nz[-n_change:]:
+        sides = re.split(r"(?i)\bvs\b\.?|\bversus\b", c)
+        if len(sides) != 2:
+            return None
+        a, b = (_period_qend(s) for s in sides)
+        if not a or not b or qends.count(a) != 1 or qends.count(b) != 1:
+            return None
+        out.append((qends.index(a), qends.index(b)))
+    return out
+
+
+def _cmp_proves(vals: list[float], n: int, cmp: list[tuple[int, int]]) -> bool:
+    """A row carrying a "$ change | % change" PAIR per comparison column
+    (n periods + 2 values each) aligns only when every dollar change equals
+    its two periods' difference to the printed precision — arithmetic proof
+    the period columns sit where the header says (RF 2Q26 NII: 1,277 −
+    1,248 = 29). Magnitudes only: parenthesized integers parse unsigned."""
+    if len(vals) != n + 2 * len(cmp):
+        return False
+
+    def ulp(v):
+        return 1.0 if float(v).is_integer() else 10.0 ** -_dec(v)
+
+    for k, (a, b) in enumerate(cmp):
+        d, va, vb = vals[n + 2 * k], vals[a], vals[b]
+        if abs(abs(d) - abs(va - vb)) > max(ulp(d), ulp(va), ulp(vb)) + 1e-9:
+            return False
+    return True
 
 
 def extract_table_metrics(html: str, expected_qend: str,
@@ -913,6 +1182,7 @@ def extract_table_metrics(html: str, expected_qend: str,
             col = qends.index(expected_qend)
         else:
             continue                      # ambiguous period row → skip table
+        cmp = _cmp_cols(rows[hdr_i], qends, n_change)
         # Magnitude sniff for "$K" specs: the table's own units statement
         # (e.g. "(dollars in thousands, except per share data)") — anywhere
         # in the table (WFC puts it below the header row). No stated unit →
@@ -970,9 +1240,11 @@ def extract_table_metrics(html: str, expected_qend: str,
             vals = _row_values(cells[label_idx:])
             if len(vals) == len(qends) + n_change and n_change:
                 vals = vals[:len(qends)]  # trailing change cols (header-counted)
+            elif cmp and _cmp_proves(vals, len(qends), cmp):
+                vals = vals[:len(qends)]  # "$ chg | % chg" per comparison
             if len(vals) != len(qends):
                 continue                  # colspan drift → alignment unproven
-            if _CONNECTOR_EXCLUDE.search(label):
+            if _CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label):
                 # adjusted/core variant row — only the opt-in specs may read it
                 _try(adj_specs, label, row_text, vals)
                 continue
@@ -1083,8 +1355,10 @@ _YTD_HDR = re.compile(
     r"|\bannual\b")
 # …and the words that PROVE a quarterly block ("Three Months Ended" — split
 # across cells in many small-bank statements, so the bare word counts —
-# "Quarter Ended", "Quarterly", "1st Qtr"). No proof → no series.
-_QTR_HDR = re.compile(r"(?i)\bthree\b|\bquarter|\bqtr\b|\b3[- ]months?\b")
+# "Quarter Ended", "Quarterly", "1st Qtr", CUBB "Q2" / "Q2 2026"). No proof
+# → no series.
+_QTR_HDR = re.compile(r"(?i)\bthree\b|\bquarter|\bqtr\b|\b3[- ]months?\b"
+                      r"|\bq[1-4]\b")
 
 
 def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float]:
@@ -1141,7 +1415,7 @@ def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float
                 vals = vals[:len(qends)]
             if len(vals) != len(qends):
                 continue
-            if _CONNECTOR_EXCLUDE.search(label):
+            if _CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label):
                 continue                  # adjusted/core variant row
             if not re.match(r"\s*" + lab_re, label, re.I):
                 continue
@@ -1330,7 +1604,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v24:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v25:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1351,6 +1625,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v25 (2026-10-12): split / comparison period headers — years above
+    # bare ordinals over a "Quarter" row (HBAN), a caption cell on a split
+    # month/year row (MSBI), quarter + YTD blocks (CUBB), numeric dates and
+    # "2Q26 vs. 1Q26" change columns (RF); "excluding …" rows are variants;
+    # new header forms under a lone YTD banner are refused. Revenue-basis
+    # confirmation 13 -> 23 of the 76 board rows with a revenue actual.
     # v23 (2026-10-06): `rev_basis` — the release's own current-quarter
     # reported / adjusted revenue figures + an adjusted-revenue-mentioned
     # flag, so the Results board scores a revenue surprise only on a
@@ -1399,7 +1679,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v24:{int(cik)}"
+    key = f"release_metrics:v25:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
