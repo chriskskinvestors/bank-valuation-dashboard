@@ -120,9 +120,12 @@ def _share_rows(rows, qends, hdr_i, n_change, col, table_text) -> list[float]:
     return out
 
 
-def _equity_rows(rows, qends, hdr_i, n_change, col, table_text) -> list[float]:
+def _equity_rows(rows, qends, hdr_i, n_change, col, table_text,
+                 x1_unstated: list | None = None) -> list[float]:
     """Total (common) equity candidates at `col`, in RAW dollars at every
-    scale the table permits (stated unit → one value; none → ×1/×1e3/×1e6)."""
+    scale the table permits (stated unit → one value; none → ×1/×1e3/×1e6).
+    `x1_unstated`, when given, collects the candidates that came from an
+    UNSTATED-unit table at ×1 (see extract_shares_outstanding)."""
     scale = _table_scale(table_text)
     scales = [scale] if scale else [1.0, 1e3, 1e6]
     out = []
@@ -143,6 +146,8 @@ def _equity_rows(rows, qends, hdr_i, n_change, col, table_text) -> list[float]:
             continue
         if vals[col] > 0:
             out.extend(vals[col] * s for s in scales)
+            if x1_unstated is not None and scale is None:
+                x1_unstated.append(vals[col])
     return out
 
 
@@ -215,6 +220,7 @@ def extract_shares_outstanding(html: str, expected_qend: str,
     row_cands: list[float] = []
     caption_cands: list[float] = []
     equity_cands: list[float] = []
+    x1_unstated: list[float] = []
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
         table_text = " ".join(" ".join(c for c in cells if c)
@@ -230,7 +236,8 @@ def extract_shares_outstanding(html: str, expected_qend: str,
             continue
         col = qends.index(expected_qend)
         row_cands += _share_rows(rows, qends, hdr_i, n_change, col, table_text)
-        equity_cands += _equity_rows(rows, qends, hdr_i, n_change, col, table_text)
+        equity_cands += _equity_rows(rows, qends, hdr_i, n_change, col, table_text,
+                                     x1_unstated)
 
     def _agree(vs: list[float]) -> float | None:
         if not vs:
@@ -267,6 +274,19 @@ def extract_shares_outstanding(html: str, expected_qend: str,
             if best is None or diff < best[0]:
                 best = (diff, k, ps, eq)
     diff, k, ps, eq = best
+    # A share ROW and an equity row printed on the same UNSTATED scale tie at
+    # ×1 even when both are in thousands (AROW 16,545 for ~16.5M shares; MRBK
+    # 11,895): the tie can't prove the count's scale. A count under 1M that
+    # ties only that way is refused. A genuinely small count (FMBL ~13k at
+    # ~$100k book/share) ties against equity printed in thousands (×1e3), and
+    # caption counts state raw share numbers — neither is affected.
+    if (rows_v is not None and shares < 1_000_000
+            and any(abs(eq - x) <= 1e-9 * max(eq, 1) for x in x1_unstated)):
+        return {"shares": None,
+                "tie": {"reason": "count and equity share an unstated scale — "
+                                  "the count may be in thousands",
+                        "count": shares, "basis": k, "per_share": ps,
+                        "equity": eq}}
     if diff <= _TIE_TOL:
         return {"shares": shares,
                 "tie": {"basis": k, "per_share": ps, "equity": eq,
