@@ -50,9 +50,9 @@ class TestFirstSeacoastIsTheTarget(unittest.TestCase):
         from data import ma_announcements as ma
         hits = [{"_id": "0001-26-5:d74001d8k.htm",
                  "_source": {"adsh": "0001-26-5", "file_date": "2026-05-05",
-                             "ciks": ["0001772921"], "file_type": "8-K",
+                             "ciks": ["0001943802"], "file_type": "8-K",
                              "items": ["1.01", "8.01"],
-                             "display_names": ["First Seacoast Bancorp, Inc. (FSEA) (CIK 0001772921)"]}}]
+                             "display_names": ["First Seacoast Bancorp, Inc. (FSEA) (CIK 0001943802)"]}}]
         resp = MagicMock(); resp.json.return_value = {"hits": {"hits": hits}}
         resp.raise_for_status = MagicMock()
         with patch("data.ma_announcements.requests.get", return_value=resp), \
@@ -60,7 +60,7 @@ class TestFirstSeacoastIsTheTarget(unittest.TestCase):
              patch("data.ma_announcements.compute_stock_value", return_value=(None, True)), \
              patch("data.ma_announcements._close_before", return_value=(None, None, True)), \
              patch("data.ma_announcements.time.sleep", lambda *_: None):
-            rows, ok = ma.find_open_announcements(1772921, "First Seacoast Bank")
+            rows, ok = ma.find_open_announcements(1943802, "First Seacoast Bank")
         self.assertTrue(ok)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["direction"], "sale")

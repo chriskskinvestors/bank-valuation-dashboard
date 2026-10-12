@@ -50,6 +50,8 @@ import time
 from datetime import date, timedelta
 
 from data.ma_announcements import (
+    _EXPECTED_CLOSE_RE,
+    extract_expected_close,
     _ACQUIRE_OBJ_RE,
     _ANNOUNCE_RE,
     _COMPLETED_RE,
@@ -510,6 +512,18 @@ _RESOLVE_SCAN_CAP = 12          # resolving-candidate documents fetched per
                                 # a couple of 2.01/1.02/8.01s in the window)
 
 
+# A target's own delisting / deregistration after the announcement is the
+# completion record when the buyer files nothing on EDGAR: First Seacoast
+# (sold to Cambridge Financial Group, a mutual holding company) filed a
+# 25-NSE and a 15-12G on 2026-10-01 and still showed as pending.
+_DELISTING_FORMS = {"25", "25-NSE", "15-12G", "15-12B", "15-15D"}
+
+
+def _self_delisted(filings, announce_date: str) -> bool:
+    return any(f.get("form") in _DELISTING_FORMS and (f.get("date") or "") > announce_date
+               for f in filings or [])
+
+
 def _resolved_after(filer_cik, other_name: str, announce_date: str,
                     filings=None, extra_names=()) -> tuple[bool | None, bool]:
     """(resolved, ok): did ``filer_cik`` file an 8-K on/after
@@ -599,6 +613,14 @@ def _release_resolves(title: str, text: str, needles: list[str]) -> bool:
 
 
 _VOTE_RE = re.compile(r"\bapprov", re.IGNORECASE)
+# The COUNTERPARTY's shareholder vote reported in our own 8.01/7.01 (Grand
+# River is not an SEC filer; Isabella's 2026-09-21 8-K: "At a special meeting
+# of the shareholders of Grand River held on September 18, 2026, Grand River
+# shareholders approved the Merger Agreement"). Past tense only.
+_SH_VOTE_PAST_RE = re.compile(
+    r"([A-Z][\w&.'\u2019\- ]{1,50}?)(?:['\u2019]s?)?\s+(?:shareholders|stockholders)\s+"
+    r"(?:have\s+)?(?:voted\s+to\s+approve|approved)\b")
+_MEETING_DATE_RE = re.compile(r"\bon\s+([A-Z][a-z]+\s+\d{1,2},\s+\d{4})")
 _REG_APPROVAL_RE = re.compile(
     r"(?:received|obtained|receipt\s+of|granted|approved\s+by)\s+(?:all\s+)?"
     r"(?:(?:of\s+)?the\s+)?(?:required|necessary|requisite|remaining|final|"
@@ -656,7 +678,47 @@ def _milestones(filer_cik, other_name: str, announce_date: str,
             out["votes"].append({"side": side, "date": f["date"], "url": url})
         if not out["regulatory_approval"] and _approval_about(low, needle):
             out["regulatory_approval"] = {"date": f["date"], "url": url}
+        other_side = "target" if side == "acquirer" else "acquirer"
+        if not any(v["side"] == other_side for v in out["votes"]):
+            for m in _SH_VOTE_PAST_RE.finditer(text):
+                who = m.group(1).lower()
+                if not ((needle in who) if " " in needle else token_in(needle, who)):
+                    continue
+                start = text.rfind(".", 0, m.start()) + 1
+                end = text.find(".", m.end())
+                sent = text[start:end if end > 0 else len(text)]
+                dm = _MEETING_DATE_RE.search(sent)
+                when = _iso_date(dm.group(1)) if dm else None
+                out["votes"].append({"side": other_side, "date": when or f["date"],
+                                     "url": url})
+                break
+        # A later filing's stated close supersedes the announcement estimate
+        # (Isabella 2026-10-06: "expected to close on November 2, 2026"; the
+        # board kept the release's "fourth quarter of 2026" = 12-31).
+        # Only a close sentence that itself (or the one before it) names the
+        # counterparty: an earnings release can carry two pending deals.
+        for cm in _EXPECTED_CLOSE_RE.finditer(text):
+            s0 = text.rfind(".", 0, max(0, text.rfind(".", 0, cm.start()))) + 1
+            e0 = text.find(".", cm.end())
+            ctx = text[s0:e0 if e0 > 0 else len(text)]
+            lctx = ctx.lower()
+            if not ((needle in " ".join(lctx.replace(",", " ").split()))
+                    if " " in needle else token_in(needle, lctx)):
+                continue
+            phrase, cdate = extract_expected_close(ctx)
+            if cdate:
+                out["expected_close"] = {"phrase": phrase, "date": cdate,
+                                         "filed": f["date"], "url": url}
+                break
     return out, not fetch_failed
+
+
+def _iso_date(s: str) -> str | None:
+    from datetime import datetime as _dt
+    try:
+        return _dt.strptime(" ".join(s.split()), "%B %d, %Y").date().isoformat()
+    except ValueError:
+        return None
 
 
 _CONDITION_CTX_RE = re.compile(
@@ -688,9 +750,16 @@ def _approval_about(low: str, needle: str) -> bool:
 
 
 def _merge_milestones(a: dict, b: dict) -> dict:
-    votes = list(a.get("votes") or []) + list(b.get("votes") or [])
+    votes = list(a.get("votes") or [])
+    for v in b.get("votes") or []:
+        if not any(x["side"] == v["side"] for x in votes):
+            votes.append(v)
     reg = a.get("regulatory_approval") or b.get("regulatory_approval")
-    return {"votes": votes, "regulatory_approval": reg}
+    out = {"votes": votes, "regulatory_approval": reg}
+    closes = [c for c in (a.get("expected_close"), b.get("expected_close")) if c]
+    if closes:
+        out["expected_close"] = max(closes, key=lambda c: c["filed"])
+    return out
 
 
 # ── Wire pending leg (acquirers EDGAR cannot reach) ───────────────────────
@@ -1029,6 +1098,8 @@ def find_pending_deals(cik, subject_name: str,
         if _wire_resolved(ticker, _resolving_needles(r["counterparty_name"], extra),
                           r["announce_date"]):
             continue
+        if r["direction"] == "sale" and _self_delisted(subj_filings, r["announce_date"]):
+            continue          # we were the target and our stock is gone
         if r["direction"] == "sale" and r.get("counterparty_cik"):
             resolved2, vok2 = _resolved_after(
                 r["counterparty_cik"], subject_name, r["announce_date"])
@@ -1050,6 +1121,12 @@ def find_pending_deals(cik, subject_name: str,
             ok = ok and m_ok2
             ms = _merge_milestones(ms, ms2)
         r["milestones"] = ms
+        upd = ms.get("expected_close")
+        if upd and isinstance(r.get("terms"), dict):
+            r["terms"] = dict(r["terms"],
+                              expected_close_phrase=upd["phrase"],
+                              expected_close_date=upd["date"],
+                              expected_close_note=f"as stated {upd['filed']}")
         out.append(r)
     return out, ok
 

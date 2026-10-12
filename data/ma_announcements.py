@@ -555,24 +555,32 @@ _VALUE_RAW_RE = re.compile(
 
 def extract_stated_value(text: str) -> int | None:
     """Deal value in RAW DOLLARS from strict stated-value phrasings, or None.
-    Distinct candidate amounts -> None (ambiguous, never a guess)."""
-    vals = set()
+    Amounts that agree at the coarser one's stated precision are the same
+    figure ("$239.6 million" in the release, "$240 million" on the deck —
+    Third Coast/Great Plains 2026-10-07, blanked as ambiguous) and the most
+    precise wins; genuinely different amounts -> None (never a guess)."""
+    cands: list[tuple[int, float]] = []          # (raw dollars, precision)
     for raw in _VALUE_RAW_RE.findall(text):
-        vals.add(int(raw.replace(",", "")))
+        cands.append((int(raw.replace(",", "")), 1.0))
     for num, unit in (_VALUE_RE.findall(text) + _VALUE_TRAIL_RE.findall(text)
                       + _VALUE_CONSID_RE.findall(text) + _VALUE_ACQUIRE_FOR_RE.findall(text)):
         try:
             v = float(num.replace(",", ""))
         except ValueError:
             continue
+        mult = 1_000_000_000 if unit.lower() == "billion" else 1_000_000
+        decimals = len(num.split(".", 1)[1]) if "." in num else 0
         # round, not truncate: int(2.002 × 1e9) is 2,001,999,999 — off by a
-        # dollar AND distinct from the deck's "$2,002 million" (ambiguity ->
-        # n/a for a value both documents state).
-        vals.add(int(round(v * (1_000_000_000 if unit.lower() == "billion"
-                                else 1_000_000))))
-    if len(vals) != 1:
+        # dollar AND distinct from the deck's "$2,002 million".
+        cands.append((int(round(v * mult)), mult / 10 ** decimals))
+    if not cands:
         return None
-    return vals.pop()
+    cands.sort(key=lambda c: c[1])
+    best = cands[0][0]
+    for v, prec in cands[1:]:
+        if int(round(best / prec) * prec) != v:
+            return None
+    return best
 
 
 # ── Deal terms (Recent Deals tab — owner directive 2026-10-05) ────────────
@@ -698,7 +706,7 @@ _EXPECTED_CLOSE_RE = re.compile(
     r"|(?:closing|merger|transaction|completion)[^.]{0,40}?(?:expected|anticipated)\s+"
     r"to\s+occur)\s+"
     r"((?:in|during|by|on\s+or\s+before|before|prior\s+to|late\s+in|early"
-    r"\s+in|around)\s+[^.;]{3,90})", re.IGNORECASE)
+    r"\s+in|around|on(?=\s+[A-Z][a-z]+\s+\d{1,2},\s+\d{4}))\s+[^.;]{3,90})", re.IGNORECASE)
 _CLOSE_CUT_RE = re.compile(
     r",?\s+(?:subject\s+to|pending|assuming|contingent|following|and\s+(?:is|be)|"
     r"which|with\s+the)\b", re.IGNORECASE)
@@ -1721,7 +1729,9 @@ _TERM_TEXT_RE = re.compile(r"\bterminat(?:e|ed|ion|ing)\b", re.IGNORECASE)
 # Peoples 2026-09-30, carried the deck metrics and was skipped).
 # "presentati": EDGAR truncates long names ("q12026earningspresentati.htm",
 # Peoples 2026-04-21, the deck stating Citizens National at 118% of TBV).
-_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentati|deck", re.IGNORECASE)
+# "...approvalxex.htm": EDGAR truncated "xex991" (Isabella 2026-10-06, the
+# release with the November 2 closing date).
+_EX99_NAME_RE = re.compile(r"ex[-_.]?99|press|investor|presentati|deck|xex\.htm$", re.IGNORECASE)
 _EXHIBIT_NAME_RE = re.compile(r"ex(?:hibit)?[-_.]?\d", re.IGNORECASE)
 # An 8-K body's file name: inline-XBRL "pebo-20260930.htm", "d947601d8k.htm",
 # "tm2618469d1_8k.htm", "hbt-20260810x8k.htm".
