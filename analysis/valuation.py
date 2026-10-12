@@ -951,6 +951,23 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         for k in ("tbvps", "bvps", "ptbv_ratio", "pb_ratio", "fair_price",
                   "ptbv_discount"):
             notes.setdefault(k, reason)
+    # Goodwill the holdco stopped tagging (data/sec_client._goodwill_tag_lapsed:
+    # CFR tagged $655.0M through 2023-06, then nothing) leaves the intangible
+    # adjustment unknown, so tangible book is n/a — say why instead of letting
+    # the row vanish. intangibles_untagged + a None adjustment is that case only.
+    if (tbvps is None and sec_data.get("intangibles_untagged")
+            and sec_data.get("intangible_adjustment") is None):
+        try:
+            gw_k = float(fdic_data.get("INTANGW") or 0)   # FDIC $K
+        except (TypeError, ValueError):
+            gw_k = 0.0
+        reason = ("tangible book n/a — the holding company stopped tagging goodwill "
+                  "in its XBRL filings"
+                  + (f" (its bank subsidiary still reports ${gw_k / 1000:,.1f}M of "
+                     "goodwill)" if gw_k else "")
+                  + ", so equity minus intangibles can't be reconstructed")
+        for k in ("tbvps", "ptbv_ratio", "fair_price", "ptbv_discount"):
+            notes.setdefault(k, reason)
     fair_price = compute_fair_value_price(fair_ptbv, tbvps)
     # Key kept as ptbv_discount (saved screens / peer highlights); the VALUE
     # is now upside to fair PRICE — bounded, conventionally read. Same sign

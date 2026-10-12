@@ -532,3 +532,23 @@ class TestGroupRecordListMarkersSurviveLatestRow(unittest.TestCase):
         latest = out[0]["JPM"] if isinstance(out, tuple) else out.get("JPM", {})
         self.assertEqual(latest.get("_lead_ratio_fields"), ["NIMY", "ROA"])
         self.assertIsNone(latest.get("ROA"))
+
+
+class TestLapsedGoodwillTbvNote(unittest.TestCase):
+    """CFR: holdco goodwill tagged through 2023-06 then untagged (#316) makes
+    reconstructed TBV/share n/a; the row must say why, not vanish."""
+
+    def test_cfr_shape_notes_tbv_chain(self):
+        sec = {"intangibles_untagged": True, "intangible_adjustment": None,
+               "shares_outstanding": 64_000_000}
+        row = _row("CFR", sec, 120.0, None, fdic={"INTANGW": 652_667})
+        for k in ("tbvps", "ptbv_ratio", "fair_price", "ptbv_discount"):
+            self.assertIn("stopped tagging goodwill", row["_notes"].get(k, ""), k)
+        self.assertIn("$652.7M", row["_notes"]["tbvps"])
+        self.assertIsNone(row.get("tbvps"))
+
+    def test_genuinely_zero_intangibles_gets_no_note(self):
+        sec = {"intangibles_untagged": True, "intangible_adjustment": 0.0,
+               "shares_outstanding": 10_982_764}
+        row = _row("AVBH", sec, 30.0, 26.97, fdic={"INTANGW": 0})
+        self.assertNotIn("tbvps", row["_notes"])
