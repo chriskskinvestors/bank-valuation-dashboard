@@ -206,8 +206,13 @@ def _render_recent_deals():
 
     # Live prices for each deal's two sides (warm cache, bulk read; frozen
     # quotes were dropped at ingest; stale rows are n/a here).
+    # The target ticker falls back to the FDIC cert (as the Target cell
+    # does): CZNL showed as the target with no price because its row carries
+    # no ticker and only target_ticker was requested (2026-10-12).
+    cert_map = _cert_ticker_map()
     syms = sorted({t for d in rows
-                   for t in (d.get("buyer_ticker"), d.get("target_ticker"))
+                   for t in (d.get("buyer_ticker"),
+                             d.get("target_ticker") or cert_map.get(d.get("target_cert") or 0))
                    if t})
     try:
         warm = get_prices(syms, max_age_s=_ARB_PRICE_MAX_AGE_S) if syms else {}
@@ -215,7 +220,6 @@ def _render_recent_deals():
         print(f"[transactions] warm prices: {type(e).__name__}: {e}")
         warm = {}
 
-    cert_map = _cert_ticker_map()
     body = ""
     export_rows = []
     for d in rows:
@@ -293,11 +297,19 @@ def _render_recent_deals():
             # 1,345.7x on a $0.01 TTM EPS (William Penn) is not a multiple.
             pe_note = f"P/E {pe:.0f}x above the {_PE_MAX:.0f}x plausibility cap — n/a"
             pe, pe_cell = None, "n/a†"
+        elif pe and d.get("p_e_basis") == "bank-sub":
+            pe_cell = f"{pe:.1f}x*"
+            pe_note = (f"computed: deal value {_fmt_bn(d.get('value_usd'))} ÷ the bank's "
+                       f"TTM net income {_fmt_bn(d.get('ttm_net_income'))} (FDIC call "
+                       f"reports through {d.get('net_income_asof')}) — bank-level "
+                       "earnings, the same basis as this P/TBV")
         elif pe and d.get("p_e_basis") == "stated":
             pe_cell = f"{pe:.1f}xᵈ"
             pe_note = _DECK_NOTE + " (LTM)" + _ours(d.get("p_e_computed"), "{:.1f}x")
         else:
-            pe_cell = f"{pe:.1f}x" if pe else ("n/m" if eps is not None and eps <= 0 else "—")
+            loss = ((eps is not None and eps <= 0)
+                    or (d.get("ttm_net_income") is not None and d["ttm_net_income"] <= 0))
+            pe_cell = f"{pe:.1f}x" if pe else ("n/m" if loss else "—")
         if pe_cell == "—" and terms.get("deck_p_e_ltm"):
             pe_cell, pe_note = f"{terms['deck_p_e_ltm']:.1f}xᵈ", _DECK_NOTE + " (LTM)"
         cdp = d.get("core_dep_premium")
@@ -467,7 +479,8 @@ def _render_recent_deals():
                "investor presentation; company-stated wins over our computation "
                "(hover for ours) · P/E = "
                "implied \$/sh ÷ target TTM diluted EPS at the last period ≤ "
-               "announce (n/m = loss) · arb: implied offer at the acquirer's "
+               "announce (n/m = loss); P/E* = deal value ÷ the bank's TTM net income from FDIC "
+               "call reports where the target files no EPS · arb: implied offer at the acquirer's "
                "current price, gross spread = offer ÷ target price − 1, "
                "annualized = gross × 365 ÷ days to the STATED expected-close "
                "period end (hover Exp. close for the wording) · term. fee % = "
