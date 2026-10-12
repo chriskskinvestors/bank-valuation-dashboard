@@ -331,6 +331,49 @@ class TestUndimensionedClassArbitratedByCover(unittest.TestCase):
             self.assertIs(ov.overlay_class_shares(1288855, blob), blob)
 
 
+class TestCoverSettlesAnIssuedOnlyClass(unittest.TestCase):
+    """CFBK 10-Q 0001193125-26-339475 (2026-10-12): voting 6,888,845 and
+    nonvoting 76,700 are both ISSUED only; treasury 473,333 is undimensioned
+    (the caption says voting). The Aug-5 cover counts nonvoting 76,700 =
+    issued → no nonvoting treasury → voting 6,415,512 (= the cover's voting
+    count). Total 6,492,212 = the release's "period-end common shares
+    outstanding". Two issued-only classes were unresolved before."""
+    _V = "us-gaap:CommonStockMember"
+    _NV = "us-gaap:NonvotingCommonStockMember"
+
+    def _cfbk(self, cover_nv=76_700):
+        return [
+            _e("CommonStockSharesIssued", self._V, 6_888_845),
+            _e("CommonStockSharesIssued", self._NV, 76_700),
+            _e("TreasuryStockCommonShares", None, 473_333),
+            _e("EntityCommonStockSharesOutstanding", self._V, 6_415_512, COVER),
+            _e("EntityCommonStockSharesOutstanding", self._NV, cover_nv, COVER),
+        ]
+
+    def test_hand_verified(self):
+        self.assertEqual(6_888_845 + 76_700 - 473_333, 6_492_212)
+        self.assertEqual(6_888_845 - 473_333, 6_415_512)
+
+    def test_cover_equal_to_issued_settles_the_class(self):
+        rec = ov.resolve_class_shares(self._cfbk(), EQ_END)
+        self.assertEqual(rec["status"], "resolved")
+        self.assertEqual(rec["value"], 6_492_212)
+        self.assertEqual(rec["classes"], {self._V: 6_415_512, self._NV: 76_700})
+
+    def test_cover_below_issued_keeps_both_pending_unresolved(self):
+        # Nonvoting cover 76,000 < issued 76,700: it may hold treasury too,
+        # and two pending classes with a nonzero residual stay unresolved.
+        rec = ov.resolve_class_shares(self._cfbk(cover_nv=76_000), EQ_END)
+        self.assertEqual(rec["status"], "unresolved")
+        self.assertIsNone(rec["value"])
+
+    def test_no_cover_stays_unresolved(self):
+        ents = [e for e in self._cfbk()
+                if e["concept"] != "EntityCommonStockSharesOutstanding"]
+        self.assertEqual(ov.resolve_class_shares(ents, EQ_END)["status"],
+                         "unresolved")
+
+
 class TestShareChainUsesClassTotal(unittest.TestCase):
     def test_without_the_record_the_voting_only_cover_serves(self):
         """The failure being fixed: 2,411,079,000 / 96,645,219 = 24.948."""
