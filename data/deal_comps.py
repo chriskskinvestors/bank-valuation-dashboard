@@ -163,6 +163,59 @@ def _fdic_at(cert, asof_iso: str):
             f"{repdte[:4]}-{repdte[4:6]}-{repdte[6:]}", True)
 
 
+def _fdic_ttm_net_income(cert, asof_iso: str):
+    """(ttm_net_income_raw_dollars, through_repdte_iso, ok): the bank's
+    trailing-twelve-month net income at the last REPDTE <= asof, from FDIC
+    call-report NETINC, which is YEAR-TO-DATE: TTM = YTD(R) + FY(R-1)
+    - YTD(same quarter, R-1); a December R is the year itself. Any missing
+    leg -> (None, None, True) — never a partial year. Cached for good per
+    (cert, asof): past call reports do not move."""
+    if not cert or not asof_iso:
+        return None, None, True
+    from data import cache
+    key = f"fdic_ttm_netinc:v1:{int(cert)}:{asof_iso[:10]}"
+    try:
+        hit = cache.get(key, max_age_s=None)
+    except Exception:
+        hit = None
+    if isinstance(hit, dict) and "ttm" in hit:
+        return hit["ttm"], hit["through"], True
+    from data.fdic_client import FDIC_FINANCIALS_URL
+    from data.http import get_with_retry
+    try:
+        resp = get_with_retry(FDIC_FINANCIALS_URL, {
+            "filters": (f"CERT:{int(cert)} AND "
+                        f"REPDTE:[19000101 TO {asof_iso.replace('-', '')[:8]}]"),
+            "fields": "CERT,REPDTE,NETINC",
+            "sort_by": "REPDTE", "sort_order": "DESC", "limit": 6,
+        }, timeout=30)
+        if resp is None:
+            return None, None, False
+        rows = [r.get("data", {}) for r in resp.json().get("data", [])]
+    except Exception as e:
+        print(f"[deal_comps] fdic netinc cert {cert}: {type(e).__name__}: {e}")
+        return None, None, False
+    ni = {str(r.get("REPDTE") or ""): r.get("NETINC") for r in rows}
+    ttm, through = None, None
+    if rows:
+        rd = str(rows[0].get("REPDTE") or "")
+        if len(rd) == 8 and ni.get(rd) is not None:
+            through = f"{rd[:4]}-{rd[4:6]}-{rd[6:]}"
+            if rd[4:] == "1231":
+                ttm = ni[rd] * 1000
+            else:
+                prev_fy, prev_q = f"{int(rd[:4]) - 1}1231", f"{int(rd[:4]) - 1}{rd[4:]}"
+                if ni.get(prev_fy) is not None and ni.get(prev_q) is not None:
+                    ttm = (ni[rd] + ni[prev_fy] - ni[prev_q]) * 1000
+    if ttm is None:
+        through = None
+    try:
+        cache.put(key, {"ttm": ttm, "through": through})
+    except Exception:
+        pass
+    return ttm, through, True
+
+
 def _sec_assets_at(cik: int, asof_iso: str):
     """Holdco total assets at the last reported end ≤ asof (raw dollars)."""
     import pandas as pd
@@ -234,6 +287,17 @@ def compute_multiples(deal: dict) -> tuple[dict, bool]:
                        comp_assets=assets)
             if core and assets and core > 0.10 * assets:
                 out["core_dep_premium"] = (value - tbv) / core
+            # P/E on the same bank-level basis as this P/TBV when the target
+            # has no SEC EPS (owner 2026-10-12: private / OTC targets —
+            # Century, First Carolina, PBCO, First Reliance, Grand River):
+            # deal value / the bank's TTM net income. A loss year is n/m.
+            if out["p_e"] is None and out["ttm_eps"] is None:
+                ni, ni_through, n_ok = _fdic_ttm_net_income(cert, anchor)
+                ok = ok and n_ok
+                if ni is not None:
+                    out.update(ttm_net_income=ni, net_income_asof=ni_through)
+                    if ni > 0:
+                        out.update(p_e=value / ni, p_e_basis="bank-sub")
 
     if out["tbv_usd"]:
         p = value / out["tbv_usd"]
@@ -244,6 +308,8 @@ def compute_multiples(deal: dict) -> tuple[dict, bool]:
             # stated-value stock deal) or bad denominator. n/a + flag.
             out.update(p_tbv=None, core_dep_premium=None,
                        flagged=f"P/TBV {p:.2f}x outside sanity band")
+            if out.get("p_e_basis") == "bank-sub":
+                out.update(p_e=None, p_e_basis=None)   # same suspect value
     if out["comp_assets"]:
         out["price_assets"] = value / out["comp_assets"]
     return out, ok
