@@ -482,8 +482,23 @@ def get_fdic_cert(ticker: str) -> int | None:
     return resolved.get("fdic_cert")
 
 
+def get_data_cik(ticker: str) -> int | None:
+    """The bank's CIK when it is a source of CURRENT XBRL / 8-K data, else
+    None — data/sec_filer_status: a deregistered or Regulation A issuer
+    (FOTB, OSBK, UBOH, DWNX) keeps its CIK for identity but is routed like
+    a no-CIK bank for per-share figures and validation (2026-10-12). Use
+    this at every XBRL/8-K data seam; get_cik for identity (filings links,
+    profile chips, insider/ownership feeds)."""
+    cik = get_cik(ticker)
+    if cik is None:
+        return None
+    from data.sec_filer_status import is_data_filer
+    return cik if is_data_filer(ticker) else None
+
+
 def get_cik(ticker: str) -> int | None:
-    """Return SEC CIK, in the same priority order as get_fdic_cert()."""
+    """Return SEC CIK, in the same priority order as get_fdic_cert().
+    IDENTITY only — for data routing use get_data_cik."""
     ticker = ticker.upper()
     if ticker in BANK_MAP:
         return BANK_MAP[ticker].get("cik")

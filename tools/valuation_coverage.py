@@ -105,7 +105,7 @@ def main() -> int:
     import warnings
     warnings.filterwarnings("ignore")
     from data import cache
-    from data.bank_mapping import get_cik
+    from data.bank_mapping import get_data_cik
     snap = cache.get("watchlist_metrics_snap", max_age_s=None)
     rows = (snap or {}).get("metrics") or []
     if not rows:
@@ -114,8 +114,10 @@ def main() -> int:
     print(f"snapshot built {snap.get('cached_at')}")
 
     def _cik(t):
+        # The DATA cik: a deregistered / Regulation A issuer counts as a
+        # non-SEC filer here, as the valuation layer routes it.
         try:
-            return get_cik(t)
+            return get_data_cik(t)
         except Exception:
             return None
 

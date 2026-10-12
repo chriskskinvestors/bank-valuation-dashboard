@@ -65,6 +65,7 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
     checks (no false flags from a synthetic price).
     """
     from data.bank_mapping import get_cik, get_fdic_cert
+    from data.sec_filer_status import sec_filer_status
     from data import sec_client, fdic_client, cache, validation
     from analysis.metrics import build_bank_metrics
 
@@ -72,6 +73,15 @@ def refresh_one(ticker: str, price_data: dict | None = None) -> dict:
 
     cik = get_cik(ticker)
     cert = get_fdic_cert(ticker)
+    # A CIK that is not a source of current XBRL (deregistered / Regulation
+    # A — data/sec_filer_status) routes like no CIK: FDIC + wire release,
+    # no companyfacts fetch, no XBRL staleness finding. The status is
+    # persisted for the read paths at the end of the run.
+    if cik:
+        row["sec_status"] = sec_filer_status(cik)
+        if row["sec_status"] != "periodic":
+            row["warnings"].append(f"sec_status:{row['sec_status']}")
+            cik = None
     if not cik and not cert:
         row["ok"] = False
         row["errors"].append("no_mapping")
@@ -204,6 +214,23 @@ def main():
             done += 1
             if done % 50 == 0:
                 print(f"  {done}/{len(universe)} ({time.time()-t0:.0f}s)", flush=True)
+
+    # Persist the per-bank SEC filer status map (data/sec_filer_status):
+    # the read paths route deregistered / Regulation A CIKs as no-CIK banks
+    # from it, never from a live submissions lookup.
+    try:
+        from data.sec_filer_status import write_statuses
+        statuses = {r["ticker"]: r["sec_status"] for r in results
+                    if r.get("sec_status")}
+        write_statuses(statuses)
+        demoted = sorted(t for t, s in statuses.items() if s != "periodic")
+        print(f"[{time.strftime('%H:%M:%S')}] SEC filer status: "
+              f"{len(statuses)} with a CIK, {len(demoted)} not periodic "
+              f"filers → routed as non-SEC: {', '.join(demoted[:20])}",
+              flush=True)
+    except Exception as e:
+        print(f"[warn] could not persist SEC filer statuses: "
+              f"{type(e).__name__}: {e}", flush=True)
 
     ok = sum(1 for r in results if r["ok"])
     failed = [r for r in results if not r["ok"]]

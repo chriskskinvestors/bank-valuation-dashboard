@@ -438,8 +438,8 @@ def holdco_tce_window(ticker: str | None, sec_data: dict,
     try:
         import pandas as pd
         from data import sec_client as sc
-        from data.bank_mapping import get_cik
-        cik = get_cik(ticker) if ticker else None
+        from data.bank_mapping import get_data_cik
+        cik = get_data_cik(ticker) if ticker else None
         facts = sc.fetch_company_facts(cik) if cik else None
         # Anchor on the snapshot's own as-of (the date its tce_holdco and
         # TTM NI describe) — a fresher companyfacts blob must not relabel an
@@ -1180,8 +1180,8 @@ def _resolve_tbvps(
     conflict = False
     if ticker:
         try:
-            from data.bank_mapping import get_cik
-            cik = get_cik(ticker)
+            from data.bank_mapping import get_data_cik
+            cik = get_data_cik(ticker)
         except Exception:
             cik = None
     # The newest company-reported figure wins: an earnings 8-K yields to a
@@ -1269,8 +1269,8 @@ def _resolve_bvps(
     conflict = False
     if ticker:
         try:
-            from data.bank_mapping import get_cik
-            cik = get_cik(ticker)
+            from data.bank_mapping import get_data_cik
+            cik = get_data_cik(ticker)
         except Exception:
             cik = None
     if cik and not _earnings_8k_predates(
@@ -1373,8 +1373,8 @@ def _resolve_eps(
     cik = None
     if ticker:
         try:
-            from data.bank_mapping import get_cik
-            cik = get_cik(ticker)
+            from data.bank_mapping import get_data_cik
+            cik = get_data_cik(ticker)
         except Exception:
             cik = None
     composite = None
@@ -1529,9 +1529,9 @@ def _sec_facts_lag(ticker: str | None, sec_as_of) -> dict:
     if not ticker or not sec_as_of:
         return out
     try:
-        from data.bank_mapping import get_cik
+        from data.bank_mapping import get_data_cik
         from data.sec_earnings_8k import latest_periodic_filing
-        cik = get_cik(ticker)
+        cik = get_data_cik(ticker)
         filed = latest_periodic_filing(cik) if cik else None
     except Exception as e:
         print(f"[valuation] filing index lookup failed for {ticker}: "
@@ -1602,8 +1602,8 @@ def _resolve_release_efficiency(
 
     cik = None
     try:
-        from data.bank_mapping import get_cik
-        cik = get_cik(ticker)
+        from data.bank_mapping import get_data_cik
+        cik = get_data_cik(ticker)
     except Exception:
         cik = None
     if cik:
@@ -1724,8 +1724,8 @@ def _otc_release_shares(ticker: str) -> float | None:
     every other release figure. None for any bank with a CIK — its
     cover-page count is the market-cap basis, never a release row."""
     try:
-        from data.bank_mapping import get_cik
-        if get_cik(ticker):
+        from data.bank_mapping import get_data_cik
+        if get_data_cik(ticker):
             return None
     except Exception:
         return None
@@ -1738,8 +1738,8 @@ def _compute_capital_return_for_ticker(ticker: str | None, price_data: dict, sec
     if not ticker:
         return dict(_CAPITAL_RETURN_DEFAULTS)
     try:
-        from data.bank_mapping import get_cik
-        cik = get_cik(ticker)
+        from data.bank_mapping import get_data_cik
+        cik = get_data_cik(ticker)
         if not cik:
             return dict(_CAPITAL_RETURN_DEFAULTS)
         price = price_data.get("price") if price_data else None
