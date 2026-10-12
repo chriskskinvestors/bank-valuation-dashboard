@@ -8,21 +8,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from data.bank_mapping import get_fdic_cert, get_name
-from data import fdic_client
 from utils.chart_style import (
     COLOR_PRIMARY, COLOR_SUCCESS, COLOR_DANGER, COLOR_WARNING,
     COLOR_FILL_DANGER, apply_standard_layout,
 )
 from ui.chrome import table_export, lazy_tabs
 
-
-# Metrics to pull from FDIC for historical view
-HIST_FIELDS = (
-    "CERT,REPDTE,ASSET,DEP,LNLSNET,EQTOT,NETINC,NIM,NIMY,ROA,ROE,"
-    "EEFFR,NCLNLSR,IDT1CER,INTINCY,INTEXPY,NONIIAY,NONIXAY,"
-    "LNRE,LNCI,SC,COREDEP,BRO,INTINC,EINTEXP,NONII,NONIX,"
-    "ELNATR,NTLNLS,LNLSGR,DEPDOM,EQCDIV,INTANGW"
-)
 
 # Display configuration: (fdic_field, display_name, format, category)
 HIST_METRICS = [
@@ -54,37 +45,25 @@ HIST_METRICS = [
 ]
 
 
-@st.cache_data(ttl=3600, show_spinner="Loading historical data...")
-def fetch_historical(cert: int, quarters: int = 12) -> pd.DataFrame:
-    """Fetch quarterly historical financials from FDIC."""
-    import requests
+def fetch_historical(ticker: str, quarters: int = 12) -> pd.DataFrame:
+    """Quarterly FDIC history for the ticker's WHOLE banking operation, newest
+    first — through data.loaders.load_fdic_hist_df (cert_group consolidation +
+    the shared retry). The old per-cert raw request charted ONE charter of a
+    multi-charter holdco: WTFC (16 charters) showed assets $9.57B vs $74.8B
+    and its lead charter's ROAA/CET1 as the company's (found 2026-10-12).
 
-    params = {
-        "filters": f"CERT:{cert}",
-        "fields": HIST_FIELDS,
-        "sort_by": "REPDTE",
-        "sort_order": "DESC",
-        "limit": quarters,
-    }
-    # No try/except here ON PURPOSE (audit #27): st.cache_data does NOT cache
-    # exceptions, so letting a transient FDIC failure propagate means the next
-    # rerun retries. The old catch-and-return-empty memoized a BLANK frame
-    # process-global for the full 1h TTL. The caller shows the error.
-    resp = requests.get(
-        "https://banks.data.fdic.gov/api/financials",
-        params=params, timeout=20,
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    rows = [r["data"] for r in data.get("data", [])]
-    if not rows:
-        # Legitimate "no rows for this cert" — cacheable, distinct from failure.
+    Not st.cache_data-memoized: the loader is cache-backed, and a failure
+    propagates to the caller (audit #27 — never a memoized blank frame)."""
+    from data.loaders import load_fdic_hist_df
+    df = load_fdic_hist_df(ticker, quarters)
+    if df.empty:
         return pd.DataFrame()
-
-    df = pd.DataFrame(rows)
-    # Convert REPDTE to readable period labels
-    df["Period"] = df["REPDTE"].apply(lambda d: f"{str(d)[:4]}Q{(int(str(d)[4:6])-1)//3+1}")
-    # Convert numeric columns
+    df = df.copy()
+    # The loader's REPDTE may be a Timestamp; this page keys on 'YYYYMMDD'.
+    df["REPDTE"] = pd.to_datetime(df["REPDTE"].astype(str), errors="coerce"
+                                  ).dt.strftime("%Y%m%d")
+    df = df.dropna(subset=["REPDTE"]).reset_index(drop=True)
+    df["Period"] = df["REPDTE"].apply(lambda d: f"{d[:4]}Q{(int(d[4:6]) - 1) // 3 + 1}")
     for col in df.columns:
         if col not in ("CERT", "REPDTE", "Period", "ID"):
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -171,13 +150,17 @@ def render_historicals(ticker: str):
     # Fetch data. Failures raise (not cached — audit #27): show the error and
     # bail; the next rerun retries instead of serving a 1h-cached blank tab.
     try:
-        df = fetch_historical(cert, quarters=20)
+        df = fetch_historical(ticker, quarters=20)
     except Exception as e:
         st.error(f"Error loading historical data: {e}")
         return
     if df.empty:
         st.warning("No historical data found.")
         return
+    from ui.states import group_ratio_note
+    _note = group_ratio_note(ticker, df.iloc[0])
+    if _note:
+        st.caption(_note)
 
     annual_df = _annualize(df)
 
