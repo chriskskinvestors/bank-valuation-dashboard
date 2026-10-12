@@ -560,12 +560,8 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
             _stamp_ir, prev, ticker, html=text, url=ir["url"],
             title=ir.get("title"), qend=ir["qend"], filed_date=None,
             transport="ir_site")
-    if prev and prev.get("url") == pr["url"]:
+    if prev and pr["url"] in (prev.get("url"), prev.get("wire_url")):
         return _stamp(prev)                     # same story — nothing new
-
-    html = _fetch_story(pr["url"])
-    if not html:
-        return _stamp(prev) if prev else None
 
     filed_date = (pr["published_at"] or "")[:10]
     qend = _release_qend(pr.get("title") or "", filed_date)
@@ -573,14 +569,104 @@ def otc_release_metrics(ticker: str, *, allow_fetch: bool = True,
         # Title names a period that can't be reconciled with the publish
         # date — extracting would mislabel every value. Serve what we had.
         return _stamp(prev) if prev else None
+
+    html = _fetch_story(pr["url"])
+    if html:
+        return _extract_and_stamp(
+            _stamp, prev, ticker, html=html, url=pr["url"],
+            title=pr.get("title"), qend=qend, filed_date=filed_date,
+            transport=transport)
+    # The wire refused the story (GlobeNewswire blocks server fetches since
+    # 2026-10-08): read the SAME quarter's release from the bank's own
+    # channels. The site crawl keeps the IR path's once-a-day throttle.
+    crawl = not _ir_checked_within(cached, _IR_CRAWL_TTL_S)
+    ir_checked = datetime.now().isoformat() if crawl else None
+    doc = _first_party_release(ticker, qend, crawl=crawl)
+    if doc is None:
+        if prev:
+            return _stamp(prev, ir_checked=ir_checked)
+        if ir_checked:
+            _stamp({"empty": True}, ir_checked=ir_checked)
+        return None
     return _extract_and_stamp(
-        _stamp, prev, ticker, html=html, url=pr["url"],
-        title=pr.get("title"), qend=qend, filed_date=filed_date,
-        transport=transport)
+        lambda v: _stamp(v, ir_checked=ir_checked), prev, ticker,
+        html=doc["html"], url=doc["url"], title=doc["title"], qend=qend,
+        filed_date=filed_date, transport=doc["transport"],
+        wire_url=pr["url"])
+
+
+def _first_party_release(ticker: str, qend: str, *,
+                         crawl: bool) -> dict | None:
+    """The bank's own copy of its `qend` earnings release, for when the wire
+    refuses the story: {url, title, html, transport} or None. First its Q4
+    IR site's press-release API (the full release body, tables included —
+    one cheap call), then, when `crawl`, the IR-site crawl. Identity is
+    structural (the bank's own domain); the period must equal the wire
+    title's — a different quarter's document is never a stand-in."""
+    doc = _q4_release(ticker, qend)
+    if doc or not crawl:
+        return doc
+    for c in _ir_release_candidates(ticker):
+        if c["qend"] != qend:
+            continue
+        text = _fetch_document(c["url"], c["kind"])
+        if text:
+            return {"url": c["url"], "title": c.get("title"), "html": text,
+                    "transport": "ir_site"}
+    return None
+
+
+def _q4_release(ticker: str, qend: str) -> dict | None:
+    """`qend`'s earnings release from the bank's Q4 IR site (nightly-
+    discovered endpoint), or None. The headline must pass the earnings gate
+    and state the same period."""
+    from urllib.parse import urljoin, urlparse
+
+    from data.events.ir_site import _parse_q4_date, _q4_site, get_ir_endpoints
+    from data.http import get_with_retry
+    from data.ir_provider import _is_earnings_headline
+    try:
+        home = get_ir_endpoints().get(ticker.upper())
+        if not home:
+            return None
+        is_q4, key = _q4_site(home)
+        if not is_q4:
+            return None
+        p = urlparse(home)
+        host = f"{p.scheme}://{p.netloc}"
+        resp = get_with_retry(
+            host + "/feed/PressRelease.svc/GetPressReleaseList",
+            params={"apiKey": key or "", "LanguageId": 1, "bodyType": 1,
+                    "pressReleaseDateFilter": 3, "categoryId": "",
+                    "tagList": "", "includeTags": "true", "year": 0,
+                    "excludeSelection": 1, "pageSize": 20, "pageNumber": 0},
+            headers={**_UA, "Accept": "application/json"}, timeout=30)
+        items = (resp.json() or {}).get("GetPressReleaseListResult") or [] \
+            if resp is not None else []
+    except Exception:
+        return None
+    for it in items:
+        hl = (it.get("Headline") or "").strip()
+        pub = _parse_q4_date(it.get("PressReleaseDate"))
+        if not (hl and pub and _is_earnings_headline(hl)):
+            continue
+        if _release_qend(hl, pub.date().isoformat()) != qend:
+            continue
+        link = it.get("LinkToDetailPage") or it.get("LinkToUrl") or ""
+        url = urljoin(host, link) if link else home
+        body = it.get("Body") or ""
+        pdf = it.get("DocumentPath") or ""
+        if not body and pdf.lower().split("?")[0].endswith(".pdf"):
+            # PDF-only release (FGFH): the attached document is the release
+            body, url = _fetch_document(pdf, "pdf") or "", pdf
+        if body:
+            return {"url": url, "title": hl, "html": body,
+                    "transport": "ir_q4"}
+    return None
 
 
 def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
-                       filed_date, transport):
+                       filed_date, transport, wire_url=None):
     """Shared extraction tail for both transports — the SAME guarded
     extractors regardless of where the document came from."""
     from data.ir_provider import extract_capital_ratios
@@ -620,6 +706,9 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
         "source": "company_release",
         "transport": transport,
     }
+    if wire_url:
+        # read from the bank's own copy because the wire refused this story
+        val["wire_url"] = wire_url
     return _stamp(val)
 
 

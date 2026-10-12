@@ -408,6 +408,14 @@ IR_URLS = {
     # Q4 IR site on a holdco domain that differs from the FDIC bank WEBADDR, so
     # auto-discovery (which derives the host from WEBADDR) never reaches it.
     "STBA":  "https://www.stbancorp.com/",
+    # Same domain mismatch; their earnings releases went out only on
+    # GlobeNewswire, which refuses server fetches since 2026-10-08 — the Q4
+    # API is the bank's own copy (verified 2026-10-12: answers
+    # GetPressReleaseList, 2Q26 release present, figures tie to prod's).
+    "FGFH":  "https://www.foresightfg.com/",
+    "PSBQ":  "https://www.psbholdingsinc.com/",
+    "FRBA":  "https://frba.q4ir.com/",
+    "PPBN":  "https://pinnaclebankshares.q4ir.com/",
     # IRapp / BusinessWire platform (RSS at /news-events/press-releases/rss).
     "AUB":   "https://investors.atlanticunionbank.com/",
 }

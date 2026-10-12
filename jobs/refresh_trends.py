@@ -37,7 +37,8 @@ def main() -> int:
     print(f"▶ Warming all-banks FDIC Trends grid — {len(cert_to_id)} banks × 20q",
           flush=True)
     t0 = time.time()
-    data = quarterly_series(cert_to_id, 20, build_if_missing=True, scope_id="ALLBANKS")
+    data = quarterly_series(cert_to_id, 20, build_if_missing=True, scope_id="ALLBANKS",
+                            rebuild=True)
     if data and data.get("rows") and data.get("persisted", True):
         print(f"✓ FDIC grid: {len(data['rows'])} banks "
               f"({data.get('coverage', 1) * 100:.0f}% coverage) in "
@@ -57,7 +58,8 @@ def main() -> int:
     print(f"▶ Warming all-banks SEC per-share grid — {len(cik_to_id)} banks × 20q",
           flush=True)
     t0 = time.time()
-    sec = sec_per_share_grid(cik_to_id, 20, build_if_missing=True, scope_id="ALLBANKS")
+    sec = sec_per_share_grid(cik_to_id, 20, build_if_missing=True, scope_id="ALLBANKS",
+                             rebuild=True)
     if sec and sec.get("rows"):
         print(f"✓ SEC per-share grid: {len(sec['rows'])} banks in "
               f"{time.time() - t0:.0f}s", flush=True)

@@ -158,10 +158,23 @@ def _covered_certs_and_tickers() -> tuple[set, set]:
     return certs, tickers
 
 
-def _sec_tickers() -> set:
+def _sec_tickers() -> dict:
+    """ticker -> CIK from SEC's company_tickers.json."""
     from data.sec_filing_scraper import _get
     data = json.loads(_get("https://www.sec.gov/files/company_tickers.json"))
-    return {v.get("ticker", "").upper() for v in data.values()}
+    return {v.get("ticker", "").upper(): v.get("cik_str") for v in data.values()}
+
+
+def _sec_sic(cik) -> str | None:
+    """The registrant's SIC code from its SEC submissions record ("" = none
+    on file); None when the record can't be read."""
+    from data.sec_filing_scraper import _get
+    try:
+        sub = json.loads(_get(
+            f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json"))
+    except Exception:
+        return None
+    return sub.get("sic") or ""
 
 
 def sweep(apply: bool = False) -> dict:
@@ -213,8 +226,14 @@ def sweep(apply: bool = False) -> dict:
                 review.append(row)
             elif sym in covered_tickers:
                 pass                              # already in the universe
-            elif sym in sec_tickers:
-                row["why"] = "SEC-listed ticker (SEC path territory)"
+            elif sym in sec_tickers and (sic := _sec_sic(sec_tickers[sym])) != "":
+                # SEC also lists banks that report to their bank regulator,
+                # not the SEC (PFBC, EDVR: a CIK from others' 13G / Form D
+                # filings, no SIC). The SEC path's SIC gate drops those, so
+                # only a registrant WITH a SIC is that path's territory.
+                row["why"] = ("SEC-listed ticker; SEC record unreadable"
+                              if sic is None
+                              else "SEC-listed ticker (SEC path territory)")
                 review.append(row)
             else:
                 row["ticker"] = sym

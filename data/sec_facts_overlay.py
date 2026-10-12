@@ -619,7 +619,22 @@ def resolve_preferred_total(entries: list[dict], end: str) -> dict | None:
     when it is plausible as a carrying total over the same-date preferred
     share count (sec_client._not_a_carrying_total: no count, zero shares,
     or a par-only per-share amount all refuse it) and is below total
-    equity. A zero is never a value."""
+    equity.
+
+    A zero IS the answer in exactly one shape (basis "equity statement has
+    no preferred component"): no preferred VALUE concept of any kind is
+    tagged at `end` (dimensioned or not), the equity statement's components
+    at `end` carry no PreferredStockMember, and they sum to total
+    StockholdersEquity within _PREFERRED_AGREE_TOL — the filer's own equity
+    roll-forward accounts for every dollar without preferred. PNBK 10-Q
+    0001628280-26-057183: the 2025 footnote "90,832 preferred stock shares
+    issued and outstanding as of June 30, 2025" is ALSO tagged with a
+    2026-06-30 context, but the 2026 balance sheet has no preferred line,
+    the 2026 equity statement no preferred column (common 1,177 + APIC
+    206,557 − deficit 101,231 − treasury 1,179 − AOCI 16,388 = 88,936 ≈
+    88,935 total), and the preferred converted in H2-2025. BCBP, whose
+    preferred sits inside APIC, tags AdditionalPaidInCapitalPreferredStock
+    and so never meets the first condition."""
     from data.sec_client import _not_a_carrying_total
     cands: list[tuple[str, float, str]] = []
     for e in entries:
@@ -644,7 +659,7 @@ def resolve_preferred_total(entries: list[dict], end: str) -> dict | None:
         par = _undimensioned(entries, "PreferredStockValue", end) or 0.0
         cands.append(("APIC-preferred + par", apic + par, "PreferredStockValue"))
     if not cands:
-        return None
+        return _no_preferred_component(entries, end)
     equity = _undimensioned(entries, "StockholdersEquity", end)
     basis, value, concept = cands[0]
     if value <= 0 or (equity is not None and value >= equity):
@@ -667,6 +682,29 @@ def resolve_preferred_total(entries: list[dict], end: str) -> dict | None:
         liq = None                      # the value IS the liquidation figure
     return {"end": end, "value": value, "basis": basis,
             "liquidation": liq if liq and liq > value else None}
+
+
+def _no_preferred_component(entries: list[dict], end: str) -> dict | None:
+    """The zero record (see resolve_preferred_total), or None."""
+    tagged_value = any(
+        e["end"] == end and e["val"] is not None
+        and e["concept"] in _PREFERRED_VALUE_CONCEPTS + (_PREFERRED_APIC,)
+        for e in entries)
+    if tagged_value:
+        return None
+    equity = _undimensioned(entries, "StockholdersEquity", end)
+    comps = {}
+    for e in entries:
+        m = e["members"]
+        if (e["concept"] == "StockholdersEquity" and e["end"] == end
+                and e["val"] is not None and set(m) == {_EQUITY_AXIS}):
+            comps[m[_EQUITY_AXIS]] = e["val"]
+    if (not equity or len(comps) < 3 or _PREFERRED_MEMBER in comps
+            or abs(sum(comps.values()) - equity) > _PREFERRED_AGREE_TOL * abs(equity)):
+        return None
+    return {"end": end, "value": 0.0,
+            "basis": "equity statement has no preferred component",
+            "liquidation": None}
 
 
 def overlay_preferred_total(cik: int, slim: dict) -> dict:

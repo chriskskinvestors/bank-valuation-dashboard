@@ -320,13 +320,14 @@ class TestHistoricalsFailureNotCached(unittest.TestCase):
     caller shows the error and the next rerun retries."""
 
     def test_fetch_error_raises_instead_of_empty_frame(self):
+        # Now through the group-aware loader seam (2026-10-12); still never
+        # swallowed into a blank frame.
         from unittest import mock
-        import requests
         import ui.historicals as H
-        with mock.patch.object(requests, "get",
-                               side_effect=requests.exceptions.ConnectionError("FDIC down")):
+        with mock.patch("data.loaders.load_fdic_hist_df",
+                        side_effect=ConnectionError("FDIC down")):
             with self.assertRaises(Exception):
-                H.fetch_historical(3510, quarters=4)
+                H.fetch_historical("BANR", quarters=4)
 
 
 class TestConsensusRoatceNotRoe(unittest.TestCase):
@@ -1990,11 +1991,13 @@ class TestAudit0702P0FieldMislabels(unittest.TestCase):
         self.assertIn("ITRADE", _BASE_FINANCIALS_FIELDS)
 
     def test_historicals_nco_row_uses_ntlnls_not_provision(self):
-        from ui.historicals import HIST_METRICS, HIST_FIELDS
+        from ui.historicals import HIST_METRICS
+        from data.fdic_client import _BASE_FINANCIALS_FIELDS
         nco = [m for m in HIST_METRICS if m[1] == "Net Charge-Offs ($K)"]
         self.assertEqual(len(nco), 1)
         self.assertEqual(nco[0][0], "NTLNLS")  # not ELNATR
-        self.assertIn("NTLNLS", HIST_FIELDS)
+        # The group-aware loader requests the shared field list.
+        self.assertIn("NTLNLS", _BASE_FINANCIALS_FIELDS)
 
     def test_annualize_nco_takes_q4_ytd_ntlnls(self):
         # Two quarters of FY2025 (BANR actuals, cert 28489, probed live):

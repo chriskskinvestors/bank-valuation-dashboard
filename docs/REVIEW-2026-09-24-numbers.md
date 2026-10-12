@@ -436,6 +436,10 @@ anything was built.
 Observed during P2-5/P2-8, not in scope: HBAN's FY2024 10-K member-block
 values (wealth / insurance revenue both showing the undimensioned 1,318M
 total for Dec-2022) look like a `_fold_member_blocks` value bug — its own lane.
+**Closed by PR #236 (2026-10-02, narrowed in e5ba070):** SEC re-renders a
+member-split concept's undimensioned total on both face rows; the member's
+own line now supplies the face row (Dec-2022 wealth 300M / insurance 79M,
+verified on prod 2026-10-12).
 
 ## Checked and found correct (a clean page is a result)
 

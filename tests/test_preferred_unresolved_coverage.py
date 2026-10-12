@@ -32,9 +32,13 @@ data/sec_facts_overlay.resolve_preferred_total reads the 10-Q instance):
   BCBP  AdditionalPaidInCapitalPreferredStock $25,243K undimensioned (the
         balance-sheet preferred line itself is "-"), 2,548 shares at
         $10,000 liquidation (= "Less: preferred stock 25,243").
-  PNBK  90,832 PreferredStockSharesOutstanding, NO value anywhere in the
-        Q2-2026 instance (the 2025 equity statement had a $5,099K preferred
-        column; the 2026 one has none) and page-image releases → stays n/a.
+  PNBK  90,832 PreferredStockSharesOutstanding at 2026-06-30 is the 2025
+        footnote "(1) 90,832 preferred stock shares … as of June 30, 2025"
+        tagged into a 2026 context: the 2026 balance sheet has no preferred
+        line, the 2026 equity statement no preferred column, and its
+        components tie to total equity — preferred is ZERO (the 2025
+        preferred converted in H2-2025). Reconstruction (88,935 − 86) ÷
+        117,662,845 = $0.76; its releases are page images.
 
 Hermetic: real fact values in synthetic entries/blobs, no network.
 Run: python -m unittest tests.test_preferred_unresolved_coverage
@@ -228,9 +232,24 @@ def _bcbp():
 
 
 def _pnbk():
+    """PNBK 10-Q 0001628280-26-057183 at 2026-06-30: the stale footnote
+    count, no preferred value of any kind, and the full equity statement."""
     return [
         _e("PreferredStockSharesOutstanding", 90_832),
         _e("PreferredStockSharesIssued", 90_832),
+        _e("StockholdersEquity", 88_935e3),
+        _e("StockholdersEquity", 1_177e3, {EQ: "CommonStockMember"}),
+        _e("StockholdersEquity", 206_557e3, {EQ: "AdditionalPaidInCapitalMember"}),
+        _e("StockholdersEquity", -101_231e3, {EQ: "RetainedEarningsMember"}),
+        _e("StockholdersEquity", -1_179e3, {EQ: "TreasuryStockCommonMember"}),
+        _e("StockholdersEquity", -16_388e3, {EQ: "AccumulatedOtherComprehensiveIncomeMember"}),
+    ]
+
+
+def _count_only():
+    """A share count with no readable equity statement: unresolved."""
+    return [
+        _e("PreferredStockSharesOutstanding", 90_832),
         _e("StockholdersEquity", 88_935e3),
         _e("StockholdersEquity", 206_557e3, {EQ: "AdditionalPaidInCapitalMember"}),
     ]
@@ -277,8 +296,31 @@ class TestResolvePreferredTotal(unittest.TestCase):
         self.assertEqual(rec["value"], 25_243e3)
         self.assertEqual(rec["basis"], "APIC-preferred + par")
 
-    def test_pnbk_count_without_any_value_is_none(self):
-        self.assertIsNone(ov.resolve_preferred_total(_pnbk(), END))
+    def test_pnbk_equity_statement_without_preferred_is_zero(self):
+        self.assertEqual(1_177 + 206_557 - 101_231 - 1_179 - 16_388, 88_936)
+        rec = ov.resolve_preferred_total(_pnbk(), END)
+        self.assertEqual(rec["value"], 0.0)
+        self.assertEqual(rec["basis"], "equity statement has no preferred component")
+
+    def test_count_without_a_full_equity_statement_is_none(self):
+        self.assertIsNone(ov.resolve_preferred_total(_count_only(), END))
+
+    def test_components_that_do_not_tie_are_not_zero(self):
+        ents = [e for e in _pnbk() if e["members"] != {EQ: "TreasuryStockCommonMember"}]
+        self.assertIsNone(ov.resolve_preferred_total(ents, END))
+
+    def test_bcbp_apic_preferred_is_never_zero(self):
+        # BCBP's components also tie with no preferred member — but it tags
+        # AdditionalPaidInCapitalPreferredStock, so the zero shape is barred.
+        ents = _bcbp() + [
+            _e("StockholdersEquity", 103_225e3, {EQ: "RetainedEarningsMember"}),
+            _e("StockholdersEquity", -38_347e3, {EQ: "TreasuryStockCommonMember"}),
+            _e("StockholdersEquity", -2_653e3, {EQ: "AccumulatedOtherComprehensiveIncomeMember"})]
+        self.assertEqual(ov.resolve_preferred_total(ents, END)["value"], 25_243e3)
+
+    def test_preferred_component_present_is_never_zero(self):
+        ents = [e for e in _stt() if e["concept"] == "StockholdersEquity"]
+        self.assertIsNone(ov.resolve_preferred_total(ents, END))
 
     def test_disagreeing_shapes_refuse(self):
         ents = _stt()
@@ -405,7 +447,48 @@ class TestOverlayTrigger(unittest.TestCase):
 
     def test_instance_without_a_total_leaves_blob_unchanged(self):
         blob = _frme_blob(rec=False)
-        self.assertIs(self._run(blob, _pnbk()), blob)
+        self.assertIs(self._run(blob, _count_only()), blob)
+
+
+class TestZeroRecord(unittest.TestCase):
+    def _pnbk_blob(self, rec=True, dividends=False):
+        us_gaap = {
+            "StockholdersEquity": {"units": {"USD": [_pt(END, 88_935_000)]}},
+            "Assets": {"units": {"USD": [_pt(END, 1_317_716_000)]}},
+            "IntangibleAssetsNetExcludingGoodwill": {"units": {"USD": [_pt(END, 86_000)]}},
+            "CommonStockSharesOutstanding": {"units": {"shares": [_pt(END, 117_662_845)]}},
+            "PreferredStockSharesOutstanding": {"units": {"shares": [_pt(END, 90_832)]}},
+        }
+        if dividends:
+            us_gaap["PreferredStockDividendsIncomeStatementImpact"] = {
+                "units": {"USD": [_pt(END, 2_000_000, start=START_6M)]}}
+        extra = {"_preferred_total": {"end": END, "value": 0.0, "liquidation": None,
+                                      "basis": "equity statement has no preferred component",
+                                      "accession": "x", "form": "10-Q"}} if rec else None
+        return _facts(us_gaap, extra)
+
+    def test_count_only_presence_yields_none(self):
+        self.assertEqual(_resolve_preferred_stock(self._pnbk_blob()), (0.0, False))
+
+    def test_without_the_record_stays_unresolved(self):
+        self.assertEqual(_resolve_preferred_stock(self._pnbk_blob(rec=False)),
+                         (None, True))
+
+    def test_material_dividends_override_the_zero(self):
+        # A bank paying preferred dividends HAS preferred, whatever its
+        # equity statement's shape: stays unresolved, never zeroed.
+        self.assertEqual(_resolve_preferred_stock(self._pnbk_blob(dividends=True)),
+                         (None, True))
+
+    def test_pnbk_tangible_book_per_share(self):
+        with patch.object(sec_client, "fetch_company_facts",
+                          return_value=self._pnbk_blob()):
+            r = sec_client.get_latest_fundamentals(1098146)
+        self.assertEqual(r["preferred_stock"], 0.0)
+        self.assertFalse(r["preferred_present"])
+        self.assertAlmostEqual(r["tangible_book_value_per_share"],
+                               (88_935_000 - 86_000) / 117_662_845, places=6)
+        self.assertAlmostEqual(r["tangible_book_value_per_share"], 0.76, places=2)
 
 
 class TestFundamentalsEndToEnd(unittest.TestCase):

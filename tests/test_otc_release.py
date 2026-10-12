@@ -314,13 +314,16 @@ class TestOtcWrapper(unittest.TestCase):
         self.assertEqual(fetches, [])                 # no page load
 
     def test_fetch_failure_serves_previous(self):
+        from unittest.mock import patch
         self.orl._latest_earnings_pr = lambda t: {
             "title": "x", "url": "u2", "published_at": "2026-07-16 08:00:00"}
         self.orl._fetch_story = lambda u: None
         self.store["otc_release:v17:PBAM"] = {
             "cached_at": "2020-01-01T00:00:00",
             "value": {"url": "u1", "metrics": {"nim": 5.0}}}
-        val = self.orl.otc_release_metrics("PBAM")
+        # nor does the bank's own site have that quarter's release
+        with patch.object(self.orl, "_first_party_release", return_value=None):
+            val = self.orl.otc_release_metrics("PBAM")
         self.assertEqual(val["metrics"], {"nim": 5.0})
 
 
