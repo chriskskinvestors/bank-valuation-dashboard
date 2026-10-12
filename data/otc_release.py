@@ -493,7 +493,9 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # release_metrics bump goes in WITHOUT the coupled bump here — list it
     # under "Owed" below so the catch-up bump re-extracts once
     # (tests/test_wire_block_lanes.TestVersionHold enforces the hold).
-    # Owed: (none)
+    # Owed: release_metrics v26 (2026-10-12 — multi-quarter prose guard) and
+    # v27 (2026-10-12 — YTD-banner headers, basic/diluted EPS pairs,
+    # consolidated vs continuing rows, plain vs TE NIM).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)

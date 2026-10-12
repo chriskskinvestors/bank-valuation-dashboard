@@ -204,10 +204,14 @@ _RESP_TAIL = re.compile(
 _RESP_TAIL_USD = re.compile(r"^\s*and\s+\$\s?\d{1,3}\.\d{2}\b", re.I)
 
 
-def _pct_metric(text: str, label_re: str, band) -> float | None:
+def _pct_metric(text: str, label_re: str, band,
+                plain_only: bool = False) -> float | None:
     """Percent metric: '<label> … <verb> X.XX%', the basis-point form
     '<label> … <verb> N bps' (÷100), or either side of an
-    'A and B were X% and Y%, respectively' pair."""
+    'A and B were X% and Y%, respectively' pair. `plain_only` drops a
+    candidate marked tax-equivalent (_NIM_TE) in its label→value span or
+    earlier in its sentence ("Fully taxable equivalent net interest margin
+    was 3.38%", FRME) — the plain-basis NIM release (see _plain_nim_basis)."""
     pat = re.compile(label_re + _conn(60) + _VERB + _NUM + r"\s*%", re.I)
     bps = re.compile(label_re + _conn(60) + _VERB +
                      r"(\d{1,3}(?:\.\d{1,2})?)\s*(?:bps|basis points?)\b", re.I)
@@ -221,17 +225,35 @@ def _pct_metric(text: str, label_re: str, band) -> float | None:
                        r"(?:\d[\d.]*|\.\d+)\s*%\s+and\s+" + _NUM +
                        r"\s*%[^.;]{0,40}respectively", re.I)
 
+    def _te(start, label_end):
+        """Tax-equivalent marker from the clause start to `label_end` (a
+        pair's span holds the OTHER label, so only its own label counts).
+        The clause starts after the last sentence break or value — FHN's
+        "Net interest income (FTE) increased $9 million to $679 million and
+        net interest margin of 3.49%" marks the income, not the margin."""
+        before = re.split(r"\.\s|[■•;$%]", text[max(0, start - 80):start])[-1]
+        return plain_only and bool(_NIM_TE.search(before + " " +
+                                                  text[start:label_end]))
+
+    def _lab_end(m, lead=""):
+        return m.start() + re.match(lead + label_re, text[m.start():],
+                                    re.I).end()
+
     def _gen():
         for m in pat.finditer(text):
             if _RESP_TAIL.match(text[m.end():m.end() + 60]):
                 continue                  # the pair parser owns this value
-            yield m.start(), m.group(1), m.end()
+            if not _te(m.start(), m.end()):
+                yield m.start(), m.group(1), m.end()
         for m in bps.finditer(text):
-            yield m.start(), str(float(m.group(1)) / 100), m.end()
+            if not _te(m.start(), m.end()):
+                yield m.start(), str(float(m.group(1)) / 100), m.end()
         for m in pair1.finditer(text):
-            yield m.start(), m.group(1), m.end()
+            if not _te(m.start(), _lab_end(m)):
+                yield m.start(), m.group(1), m.end()
         for m in pair2.finditer(text):
-            yield m.start(), m.group(1), m.end()
+            if not _te(m.start(), _lab_end(m, r"and\s+")):
+                yield m.start(), m.group(1), m.end()
     return _clean(text, _gen(), band, _AGREE_PCT)
 
 
@@ -429,6 +451,42 @@ _EPS_PATS = [
                re.I),
 ]
 _EPS_BAND = (0.01, 60.0)
+# BASIC vs diluted. "Basic EPS of $1.25" / "Basic earnings per common share
+# was $1.25" is never the diluted figure (the bare-EPS pattern anchors at
+# "EPS" / "earnings per common share"). And the pair "Basic and diluted
+# earnings per common share were $1.25 per share and $1.08 per share,
+# respectively" (TCBX 2Q26 — diluted is $1.08) handed the FIRST value to
+# the diluted reading: a value trailed by "(per share) and $X" is one side
+# of a pair, which only _EPS_PAIR may bind — by the STATED order of "basic
+# and diluted" / "diluted and basic". Anything else is n/a (the table fills).
+_EPS_BASIC_BEFORE = re.compile(r"\bbasic\s+$", re.I)
+_PER_SH = r"(?:\s+per\s+(?:common\s+|diluted\s+|basic\s+)?share)?"
+_EPS_PAIR_TAIL = re.compile(_PER_SH + r"\s*,?\s*and\s+\$\s?\d", re.I)
+_EPS_PAIR = re.compile(
+    r"\b(basic|diluted)\s+(?:and|&)\s+(diluted|basic)\s+"
+    r"(?:earnings per (?:common )?share|eps\b)(?:\s*\(“?\"?eps”?\"?\))?"
+    r"[^$%]{0,60}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})"
+    + _PER_SH + r"\s*,?\s*and\s+\$\s?(\d{1,2}\.\d{2})" + _PER_SH +
+    r"\s*,?\s*respectively", re.I)
+
+
+def _eps_metric(text: str) -> float | None:
+    """Diluted EPS from prose: the label-led _EPS_PATS (never a basic figure,
+    never one side of a pair) plus the order-mapped basic/diluted pair."""
+    def _gen():
+        for pat in _EPS_PATS:
+            for m in pat.finditer(text):
+                if _EPS_BASIC_BEFORE.search(text[max(0, m.start() - 12):m.start()]):
+                    continue
+                if _EPS_PAIR_TAIL.match(text[m.end():m.end() + 60]):
+                    continue
+                yield m.start(), m.group(1), m.end()
+        for m in _EPS_PAIR.finditer(text):
+            first, second = m.group(1).lower(), m.group(2).lower()
+            if first != second:
+                yield (m.start(), m.group(3) if first == "diluted"
+                       else m.group(4), m.end())
+    return _clean(text, _gen(), _EPS_BAND, _AGREE_USD)
 
 # ADJUSTED / ex-items EPS — the basis street consensus is quoted on, so the
 # Results board can only score a surprise once the feed's actual is proven to
@@ -560,14 +618,36 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
     out = {}
     for key, (label, band) in _PCT_SPECS.items():
         out[key] = _pct_metric(text, label, band)
+    # Plain-basis NIM release (_plain_nim_basis): a narrated NIM serves only
+    # when dropping its tax-equivalent candidates leaves the SAME value — a
+    # TE narration (FRME "Net interest margin on a fully taxable equivalent
+    # basis of 3.38%"; its GAAP row is 3.25%) would sit beside plain prior /
+    # year-ago columns, a mixed-basis delta. The full candidate set still
+    # decides first, so dropping a TE candidate can never unmask a lone
+    # disagreeing one (ATLO's "3.10% for the six months").
+    plain_nim = _plain_nim_basis(html)
+    if plain_nim and out["nim"] is not None and out["nim"] != _pct_metric(
+            text, *_PCT_SPECS["nim"], plain_only=True):
+        out["nim"] = None
     for key, (label, denom, band) in _PINNED_SPECS.items():
         out[key] = _pinned_metric(text, label, denom, band)
     out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
     out["bv_ps"] = _dollar_metric(text, _BV_PATS, _BV_BAND)
     out["bv_ps_common"] = _dollar_metric(text, _BV_COMMON_PATS, _BV_BAND)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
-    out["eps_diluted"] = _dollar_metric(text, _EPS_PATS, _EPS_BAND)
+    out["eps_diluted"] = _eps_metric(text)
     out["eps_adj"] = _adj_eps_metric(text)
+    if plain_nim and out["nim"] is not None and expected_qend:
+        # …and a narrated NIM that IS the release's own tax-equivalent row
+        # value is the TE figure under a bare label: WTFC 2Q26 "Net interest
+        # margin … at 3.52%" = its "fully taxable-equivalent (non-GAAP)"
+        # row; its GAAP row (which then serves) is 3.50%.
+        te = extract_table_metrics(html, expected_qend, specs={
+            "nim_te": (r"(?=.*?(?:" + _NIM_TE.pattern + r"))"
+                       + _TABLE_SPECS["nim"][0], "%", _TABLE_SPECS["nim"][2])},
+            adj_specs={}).get("nim_te")
+        if te is not None and abs(out["nim"] - te) < 0.005:
+            out["nim"] = None
     if expected_qend and any(v is None for v in out.values()):
         tab = extract_table_metrics(html, expected_qend)
         for k, v in tab.items():
@@ -840,20 +920,33 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
             # align. Any trailing non-change token → count nothing (rows
             # with extras skip).
             periods = _row_periods(rows[i])
-            if _novel_header(rows[i]) and (
-                    _ytd_only_head(rows, i, i)
-                    or any(_CHANGE_COL.search(c) for c in
-                           rows[i][periods[0][0]:periods[-1][0]] if c)):
-                # A header readable only through the new forms (numeric
-                # dates, Q-first tokens, dropped comparison cells) is
-                # refused under a lone year-to-date banner (KEY "Six months
-                # ended" over "6/30/2026 | 6/30/2025": six-month values) or
+            # The banner band: the rows above + the header row up to its
+            # LAST period cell. Trailing extra columns are not a banner — CTBI
+            # "2Q 2026 | 1Q 2026 | 2Q 2025 | YTD 2026 | YTD 2025" is a quarter
+            # header with YTD columns beside it (the point-in-time BV row
+            # carries the three quarter values only) — and trailing bare-
+            # YEAR columns are where a YTD banner belongs: FNB "For the Six
+            # Months Ended June 30," over "2Q26 | 1Q26 | 2Q25 | 2026 | 2025".
+            trail = [c for c in rows[i][periods[-1][0] + 1:] if c]
+            if (not any(_YEAR_CELL.match(c) for c in trail) and _ytd_only_head(
+                    rows[:i] + [rows[i][:periods[-1][0] + 1]], i, i)) or (
+                    _novel_header(rows[i]) and (
+                        _ytd_only_head(rows, i, i)
+                        or any(_CHANGE_COL.search(c) for c in
+                               rows[i][periods[0][0]:periods[-1][0]] if c))):
+                # Refused under a lone year-to-date banner, in EVERY header
+                # form — KEY "Six months ended" over "6/30/2026 | 6/30/2025",
+                # and the legacy date / 2Q26 forms just the same: NKSH "Six
+                # Months Ended" over "June 30, 2026 | June 30, 2025" read the
+                # six-month diluted EPS $1.57 as the quarter's ($0.79), OPBK
+                # "For the Six Months Ended" over "2Q2026 | 2Q2025" the
+                # six-month efficiency 60.65 as 2Q25's (59.25). A header
+                # readable only through the new forms (numeric dates,
+                # Q-first tokens, dropped comparison cells) is also refused
                 # with change columns BETWEEN its periods (AUB "6/30/2026 |
                 # 3/31/2026 | QoQ | QoQ % change | 6/30/2025 | …": a blank
                 # change cell would shift a period) — never guessed.
                 return None
-            last_p = periods[-1][0]
-            trail = [c for c in rows[i][last_p + 1:] if c]
             if trail and all(_CHANGE_COL.search(c) for c in trail):
                 n_change = len(trail)
             return found, i, i - 1, n_change
@@ -873,6 +966,8 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
                 extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
                 if (len(years) >= len(months)
                         and all(_CHANGE_COL.search(c) for c in extras)):
+                    if _ytd_only_head(rows, i, i + 1):
+                        return None       # FITB "Year to Date" over "June | June"
                     from datetime import date as _date
                     qends = [_date(y, m, _QE_MONTH[m]).isoformat()
                              for m, y in zip(months, years)]
@@ -964,9 +1059,12 @@ def _hdr_qend(cell: str) -> str | None:
 
 def _ytd_only_head(rows: list[list[str]], i: int, last: int) -> bool:
     """A year-to-date banner with no quarter marker in the header band
-    (rows i-2 .. last) — FITB "Year to Date" over "June | June", KEY "Six
-    months ended" over "6/30/2026 | 6/30/2025": the columns are YTD."""
-    head = " ".join(c for r in rows[max(0, i - 2):last + 1] for c in r if c)
+    (the two nearest non-blank rows above row i, then rows i .. last) —
+    FITB "Year to Date" over "June | June", KEY "Six months ended" over
+    "6/30/2026 | 6/30/2025": the columns are YTD. Blank spacer rows don't
+    count toward the two, so a spacer can't hide the banner."""
+    above = [r for r in rows[:i] if any(r)][-2:]
+    head = " ".join(c for r in above + rows[i:last + 1] for c in r if c)
     return bool(_YTD_HDR.search(head)) and not _QTR_HDR.search(head)
 
 
@@ -1160,6 +1258,73 @@ def _cmp_proves(vals: list[float], n: int, cmp: list[tuple[int, int]]) -> bool:
     return True
 
 
+# Same metric, two explicitly-scoped rows. KEY 2Q26 prints ROTCE "from
+# continuing operations" 12.89% (its page-1 highlights) AND "consolidated"
+# 12.91% (the reconciliation row; the highlights table's "From consolidated
+# operations:" section) — disagreeing candidates refused both. The scope is
+# read from the row label, else from the nearest label-only SECTION row above
+# it in the same table; when a metric has BOTH scopes, the consolidated
+# (whole-company) rows serve and the continuing-operations rows step aside.
+# Only explicit markers decide — an unscoped row is never dropped.
+_SCOPE_CONS = re.compile(r"(?i)\bconsolidated\b")
+_SCOPE_CONT = re.compile(r"(?i)\bcontinuing operations\b")
+
+
+def _row_scope(text: str) -> str | None:
+    cons, cont = _SCOPE_CONS.search(text), _SCOPE_CONT.search(text)
+    return "cons" if cons and not cont else "cont" if cont and not cons else None
+
+
+# A tax-equivalent NIM label ("Net interest margin (FTE)", "- TE", "tax-
+# equivalent basis", "fully taxable equivalent"). There is no separate FTE
+# metric: where the release ALSO prints a readable PLAIN NIM row in any
+# period-proven table (SBSI 2Q26: "Net interest margin 2.80 %" over "Net
+# interest margin (FTE) (1) 2.90 %" — one rule matched both and the
+# disagreement refused both), only plain rows serve the NIM — release-wide,
+# so the current / prior / year-ago columns all read one basis (prose too:
+# see extract_release_metrics). A release printing no plain row keeps its
+# TE rows (the conventional reported basis — see _CONNECTOR_EXCLUDE).
+_NIM_TE = re.compile(r"\b(?:fte|te|teq)\b|(?<!non )(?<!non-)\b(?:fully )?"
+                     r"tax(?:able)?[- ]equivalent", re.I)
+# What may follow the NIM label on a PLAIN row: footnote markers ("(2)",
+# "6", "(a)", "*"), a GAAP / annualized / "(NIM)" / "(%)" tag, or an explicit
+# no-TE tag (WNEB "(no tax adjustment)", FCCO "(non taxable equivalent)").
+# Anything else is a variant, never plain evidence — TCBK's "Net interest
+# margin less effect of acquired loan discount accretion" (4.07% beside its
+# FTE 4.11%) must not make the FTE rows step aside.
+_NIM_PLAIN_TAIL = re.compile(
+    r"(?:\s*(?:\(\s*(?:[a-z]|\d{1,2}|gaap|annualized|%|[“\"]?nim[”\"]?|"
+    r"no tax adjustment|non[- ]taxable[- ]equivalent)\s*\)|"
+    r"\d{1,2}(?:\s*,\s*\d{1,2})*|\*|,|gaap|annualized))*\s*", re.I)
+
+
+def _nim_plain_label(label: str) -> bool:
+    """A PLAIN NIM row label: the NIM label plus only _NIM_PLAIN_TAIL."""
+    m = re.match(r"\s*" + _TABLE_SPECS["nim"][0], label, re.I)
+    return bool(m) and bool(_NIM_PLAIN_TAIL.fullmatch(label[m.end():]))
+
+
+def _plain_nim_basis(html: str) -> bool:
+    """True when any period-proven table prints a READABLE plain NIM row (one
+    value per period column, + any counted change columns) — the release's
+    NIM basis is then the plain one: only plain rows serve NIM (TE rows and
+    variants step aside, in every column alike). An unreadable row is no
+    evidence (BUSE "Net interest margin (i)(v)" interleaves $ amounts)."""
+    for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+        rows = _table_rows(thtml)
+        hdr = _period_header(rows)
+        if not hdr:
+            continue
+        qends, hdr_i, _span_i, n_change = hdr
+        for cells in rows[hdr_i + 1:]:
+            j = next((i for i, c in enumerate(cells) if c), None)
+            if j is not None and _nim_plain_label(cells[j]) and len(
+                    _row_values(cells[j:])) in (len(qends),
+                                                len(qends) + n_change):
+                return True
+    return False
+
+
 def extract_table_metrics(html: str, expected_qend: str,
                           specs: dict | None = None,
                           adj_specs: dict | None = None,
@@ -1177,7 +1342,8 @@ def extract_table_metrics(html: str, expected_qend: str,
     specs = _TABLE_SPECS if specs is None else specs
     adj_specs = _ADJ_TABLE_SPECS if adj_specs is None else adj_specs
     all_specs = {**specs, **adj_specs}
-    cands: dict = {k: [] for k in all_specs}
+    cands: dict = {k: [] for k in all_specs}     # [(value, scope, plain)]
+    plain_nim = "nim" in specs and _plain_nim_basis(html)
     for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
         rows = _table_rows(thtml)
         hdr = _period_header(rows)
@@ -1232,7 +1398,7 @@ def extract_table_metrics(html: str, expected_qend: str,
         # its own $ when the table's units statement covers per-share values.
         table_per_share = "per share" in table_text
 
-        def _try(specs, label, row_text, vals):
+        def _try(specs, label, row_text, vals, scope):
             for key, (lab_re, kind, band) in specs.items():
                 if not re.match(r"\s*" + lab_re, label, re.I):
                     continue
@@ -1254,8 +1420,9 @@ def extract_table_metrics(html: str, expected_qend: str,
                 else:
                     v = vals[col]
                 if band[0] <= v <= band[1]:
-                    cands[key].append(v)
+                    cands[key].append((v, scope, _nim_plain_label(label)))
 
+        section = None
         for cells in rows[hdr_i + 1:]:
             # Label = the first NON-EMPTY cell (WFC/JPM indent data rows with
             # a leading empty cell — cells[0] as label skipped every row,
@@ -1266,6 +1433,9 @@ def extract_table_metrics(html: str, expected_qend: str,
             if label_idx is None:
                 continue
             label = cells[label_idx]
+            if sum(1 for c in cells if c) == 1:
+                section = _row_scope(label)       # label-only section row
+            scope = _row_scope(label) or section
             row_text = " ".join(cells)
             # _row_values itself skips its first cell (the label slot), so
             # hand it the row FROM the label cell onward.
@@ -1278,11 +1448,17 @@ def extract_table_metrics(html: str, expected_qend: str,
                 continue                  # colspan drift → alignment unproven
             if _CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label):
                 # adjusted/core variant row — only the opt-in specs may read it
-                _try(adj_specs, label, row_text, vals)
+                _try(adj_specs, label, row_text, vals, scope)
                 continue
-            _try(specs, label, row_text, vals)
+            _try(specs, label, row_text, vals, scope)
     out = {}
-    for key, vs in cands.items():
+    for key, cs in cands.items():
+        if (any(sc == "cons" for _, sc, _ in cs)
+                and any(sc == "cont" for _, sc, _ in cs)):
+            cs = [c for c in cs if c[1] != "cont"]
+        if key == "nim" and plain_nim:
+            cs = [c for c in cs if c[2]]
+        vs = [v for v, _, _ in cs]
         kind = all_specs[key][1]
         if kind in ("$K", "#"):
             # Relative agreement for magnitudes/counts. For "#" this is
@@ -1636,7 +1812,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v26:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v27:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1657,6 +1833,12 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v27 (2026-10-12): legacy date / 2Q26 headers under a lone YTD banner
+    # refused (NKSH six-month EPS, GBCI six-month NIM served as quarters);
+    # prose "basic and diluted … respectively" pairs mapped by order (TCBX
+    # basic EPS served as diluted); consolidated beats continuing-operations
+    # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
+    # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
     # v26 (2026-10-12): prose candidates in a MULTI-QUARTER context (nine/
     # six/twelve months, year-to-date, full year) are refused — WBHC's
     # letter states only nine-month EPS ($5.29), shipped as the quarter's.
@@ -1714,7 +1896,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v26:{int(cik)}"
+    key = f"release_metrics:v27:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
