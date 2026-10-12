@@ -929,6 +929,12 @@
   "fdic_score": 1.0,
   "name": "ECB Bancorp"
  },
+ "EDVR": {
+  "cik": null,
+  "fdic_cert": 59099,
+  "fdic_score": 1.0,
+  "name": "Endeavor Bancorp"
+ },
  "EFSC": {
   "cik": 1025835,
   "fdic_cert": 27237,
@@ -2554,6 +2560,12 @@
   "fdic_cert": 6544,
   "fdic_score": 1.0,
   "name": "Peoples Bancorp"
+ },
+ "PFBC": {
+  "cik": null,
+  "fdic_cert": 33539,
+  "fdic_score": 1.0,
+  "name": "Preferred Bank"
  },
  "PFBN": {
   "cik": null,
