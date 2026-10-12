@@ -81,6 +81,29 @@ def price_reaction(closes: list[tuple[date, float]], session: date,
     return None
 
 
+def _et_date(published_at):
+    """The US/Eastern calendar date of an event timestamp (datetime or ISO
+    string; naive = UTC, the store's convention). The events store keeps UTC,
+    so slicing its first 10 characters dated a Friday-evening filing on
+    SATURDAY (WSBC's 8-K, 20:24 ET Fri 2026-10-02, showed as "Sat, Oct 3").
+    None when unparseable."""
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+    dt = published_at
+    if isinstance(dt, date) and not isinstance(dt, datetime):
+        return dt
+    if not isinstance(dt, datetime):
+        if len(str(published_at or "").strip()) <= 10:
+            return _iso_date(published_at)        # a bare date stays that date
+        try:
+            dt = datetime.fromisoformat(str(published_at or "").strip())
+        except ValueError:
+            return _iso_date(published_at)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("America/New_York")).date()
+
+
 def pick_release_pr(events: list[dict], report_date: date) -> dict | None:
     """The results press release for a report: the newest 'earnings'-typed event
     published in [report date, report date + 3d] — results PRs go out on/after
@@ -88,7 +111,7 @@ def pick_release_pr(events: list[dict], report_date: date) -> dict | None:
     itself separates the two. `events` is newest-first (store order). None when
     nothing falls in the window."""
     for e in events or []:
-        pub = _iso_date(e.get("published_at"))
+        pub = _et_date(e.get("published_at"))
         if pub is None:
             continue
         if 0 <= (pub - report_date).days <= 3:
@@ -136,12 +159,109 @@ _RESULTS_CUE_RE = re.compile(
     r"full[- ]year|year[- ]end)\b", re.I)
 
 
+# Call / webcast / date LOGISTICS words. 2026-10-12: the cue list above is a
+# deny-list of seen phrasings, and the Q3 call-notice wave walked past it —
+# 14 of the board's 27 rows were notices: "Announces Third Quarter 2026
+# Earnings Conference Call" (AMAL/BSVN/FBIZ/FRBA/BOKF), "Hosts … Conference
+# Call" (CFR), "Announces Conference Call to Discuss/Review Third Quarter …
+# Results" (CPF/UMBF/CBC/HBNC), "to Webcast Q3 Earnings" (BMRC/NTRS),
+# "INVITES YOU TO JOIN ITS … CONFERENCE CALL" (PB), "… Earnings and
+# Conference Call Date" (HAFC). A results release says "Reports …"; a notice
+# talks logistics. So logistics words reject UNLESS the headline itself
+# says "reports" ("Reports Q3 Results; Conference Call Thursday" is real).
+# "Year-to-date" is not a date word.
+_LOGISTICS_RE = re.compile(
+    r"\bcall\b|\bwebcasts?\b|\binvit|\bhosts?\b|\bto (?:discuss|review)\b|"
+    r"(?<!to-)(?<!to )\bdates?\b", re.I)
+_REPORTS_VERB_RE = re.compile(r"\breport(?:s|ed)\b", re.I)
+# A revision/restatement of earlier quarters is not this season's report
+# (SLRK 2026-09-25: "Announces Revised First & Second Quarter 2026
+# Financial Results" sat on the board as a fresh Q3 pending row).
+_REVISION_RE = re.compile(r"\brevis|\brestat", re.I)
+
+
 def is_results_headline(headline: str) -> bool:
     """True only for a headline that reads as a RESULTS release: names the
-    results/earnings AND carries no upcoming-announcement cue. Both row
-    builders below gate on this — a pending row claims the release is OUT."""
+    results/earnings, carries no upcoming-announcement cue, no call/webcast/
+    date logistics (unless it says "reports"), and is not a revision. Both
+    row builders below gate on this — a pending row claims the release is
+    OUT."""
     h = headline or ""
-    return bool(_RESULTS_CUE_RE.search(h)) and not _UPCOMING_CUE_RE.search(h)
+    if not _RESULTS_CUE_RE.search(h) or _UPCOMING_CUE_RE.search(h):
+        return False
+    if _REVISION_RE.search(h):
+        return False
+    return not (_LOGISTICS_RE.search(h) and not _REPORTS_VERB_RE.search(h))
+
+
+_QORD = {"first": 1, "1st": 1, "second": 2, "2nd": 2, "third": 3, "3rd": 3,
+         "fourth": 4, "4th": 4}
+_ORD = r"(first|second|third|fourth|1st|2nd|3rd|4th)"
+# The quarter a headline NAMES, with its year: "Third Quarter 2026",
+# "second quarter of 2026", "2026 First Quarter", "Q3 2026", "3Q26",
+# "Fourth Quarter and Full Year 2025".
+_NAMED_Q_RES = (
+    (re.compile(_ORD + r"[- ]quarter(?:\s+of)?\s+(20\d{2})\b", re.I), "oy"),
+    (re.compile(_ORD + r"[- ]quarter\s+and\s+(?:full[- ]year|year[- ]end)"
+                r"\s+(20\d{2})\b", re.I), "oy"),
+    (re.compile(r"\b(20\d{2})\s+" + _ORD + r"[- ]quarter", re.I), "yo"),
+    (re.compile(r"\bq([1-4])\s*['-]?\s*(20\d{2})\b", re.I), "ny"),
+    (re.compile(r"\b([1-4])q\s*'?(\d{2})\b", re.I), "nyy"),
+)
+_QEND = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+
+
+def _named_quarter_end(headline: str) -> date | None:
+    """Calendar quarter-end of the quarter a headline names, or None when it
+    names none (or says "fiscal" — a non-December fiscal year's Q-numbers
+    don't map to calendar quarters, so the headline can't be judged)."""
+    h = headline or ""
+    if re.search(r"\bfiscal\b", h, re.I):
+        return None
+    for rx, shape in _NAMED_Q_RES:
+        m = rx.search(h)
+        if not m:
+            continue
+        a, b = m.group(1), m.group(2)
+        if shape == "oy":
+            q, y = _QORD[a.lower()], int(b)
+        elif shape == "yo":
+            q, y = _QORD[b.lower()], int(a)
+        elif shape == "ny":
+            q, y = int(a), int(b)
+        else:
+            q, y = int(a), 2000 + int(b)
+        mo, dd = _QEND[q]
+        return date(y, mo, dd)
+    return None
+
+
+def _prev_qend(d: date) -> date:
+    """The latest calendar quarter-end strictly before `d`."""
+    for y in (d.year, d.year - 1):
+        for q in (4, 3, 2, 1):
+            mo, dd = _QEND[q]
+            qe = date(y, mo, dd)
+            if qe < d:
+                return qe
+    raise ValueError(d)
+
+
+def names_stale_quarter(headline: str, on: date) -> bool:
+    """True when the headline names a calendar quarter that cannot be the one
+    reported on `on`: neither the latest quarter-end before `on`, nor the one
+    before it within 75 days (late filers). 2026-10-10: an IR-archive scrape
+    put "Finward Bancorp Announces Third Quarter 2025 Results" and "Hanmi
+    Reports 2026 First Quarter Results" on the board as Oct-10 reports.
+    A named quarter ending on/after `on` (fiscal naming) or no named quarter
+    → False: unjudgeable, never a guess."""
+    qn = _named_quarter_end(headline)
+    if qn is None or qn >= on:
+        return False
+    latest = _prev_qend(on)
+    if qn == latest:
+        return False
+    return not (qn == _prev_qend(latest) and (on - qn).days <= 75)
 
 # Only events from FIRST-PARTY sources may mark a bank reported/pending or
 # supply its release link. Aggregator articles typed 'earnings'
@@ -154,9 +274,15 @@ _FIRST_PARTY_SOURCES = {"sec_8k", "businesswire", "prnewswire",
 
 
 def first_party_events(events_by_ticker: dict) -> dict:
-    """events_by_ticker restricted to first-party sources (order kept)."""
+    """events_by_ticker restricted to first-party sources with a KNOWN
+    publication date (order kept). An IR-site HTML scrape that finds no date
+    stamps the item with the scrape time (`date_inferred`): 2026-10-10, the
+    first scrape of three IRapp archives stamped every old results release
+    "now", and the board listed Hanmi/Finward/First Carolina as reporting
+    that Saturday. Such an item's date is not evidence of anything."""
     return {tk: [e for e in evs or []
-                 if (e.get("source") or "") in _FIRST_PARTY_SOURCES]
+                 if (e.get("source") or "") in _FIRST_PARTY_SOURCES
+                 and not e.get("date_inferred")]
             for tk, evs in (events_by_ticker or {}).items()}
 
 
@@ -239,7 +365,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         pr = pick_release_pr(events_by_ticker.get(tk) or [], d)
         pending = awaiting = False
         if eps_act is None and rev_act is None:
-            if pr is not None and is_results_headline(pr.get("headline") or ""):
+            if (pr is not None and is_results_headline(pr.get("headline") or "")
+                    and not names_stale_quarter(pr.get("headline") or "", d)):
                 # Bank's own results PR is out; consensus feed hasn't caught up.
                 pending = True
             elif (today - d).days <= 2:
@@ -288,6 +415,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
             "reaction_session": reaction_session(d, when).isoformat(),
             "pr_headline": (pr or {}).get("headline"),
             "pr_url": (pr or {}).get("url"),
+            "pr_source": (pr or {}).get("source"),
+            "from_fmp": True,
             "pending": pending,
             "awaiting": awaiting,
         }
@@ -302,11 +431,13 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
         if tk in best or tk not in uni:
             continue
         for e in evs or []:                          # newest-first
-            ed = _iso_date(str(e.get("published_at") or "")[:10])
+            ed = _et_date(e.get("published_at"))
             if ed is None or not (floor <= ed <= today):
                 continue
             if not is_results_headline(e.get("headline") or ""):
                 continue        # date announcement / dividend / call notice, not results
+            if names_stale_quarter(e.get("headline") or "", ed):
+                continue        # an old quarter's release, not this report
             best[tk] = {
                 "_d": ed,
                 "ticker": tk,
@@ -320,6 +451,8 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
                 "reaction_session": reaction_session(ed, None).isoformat(),
                 "pr_headline": e.get("headline"),
                 "pr_url": e.get("url"),
+                "pr_source": e.get("source"),
+                "from_fmp": False,
                 "pending": True,
                 "awaiting": False,
             }
@@ -330,6 +463,69 @@ def build_results_rows(fmp_rows, universe, events_by_ticker, today,
     for r in rows:
         r.pop("_d")
     return rows
+
+
+def live_session_is_current(session: date | None, today: date) -> bool:
+    """True when the live quote's 1D change IS the reaction session's move:
+    the first weekday on/after `session` equals the latest weekday on/before
+    `today`. 2026-10-10 (Sat): rows dated that Saturday took the live 1D
+    change — FRIDAY's move, before the "release" — and labeled it "live"
+    (HAFC −1.6%). Weekday arithmetic only (an exchange holiday is not
+    modeled; it can only turn a live figure into n/a, never the reverse)."""
+    if session is None:
+        return False
+    first = session
+    while first.weekday() >= 5:
+        first += timedelta(days=1)
+    last = today
+    while last.weekday() >= 5:
+        last -= timedelta(days=1)
+    return first == last
+
+
+def _rel_has_figures(rel) -> bool:
+    """Whether an attached release carries ANY extracted figure."""
+    rel = rel or {}
+    return any(v is not None for part in ("metrics", "capital")
+               for v in (rel.get(part) or {}).values())
+
+
+def _rel_proves_report(rel) -> bool:
+    """An attached 8-K exhibit proves a report when it carries any figure,
+    or (figure-less) is not a call/webcast notice — WBHC's nine-month
+    shareholder letter has no QUARTERLY figure yet is its Q3 report."""
+    if not rel or rel.get("withheld"):
+        return bool(rel)
+    if _rel_has_figures(rel):
+        return True
+    return rel.get("call_notice") is False
+
+
+def drop_unproven_8k_rows(rows: list[dict], today: date) -> list[dict]:
+    """Pending rows whose only evidence is an SEC 8-K must be proven by the
+    filing itself. The 8-K's headline is generic ("8-K · Earnings / Results"
+    — built from the Item 2.02 label), and Item 2.02 is not proof of results:
+    WSBC 2026-10-02 furnished a CALL NOTICE under 2.02 ("WesBanco, Inc. to
+    Host 2026 Third Quarter Earnings Conference Call"). Rule: no feed actuals
+    AND no attached exhibit that proves a report (_rel_proves_report) → the
+    row is not a report: an FMP-scheduled row inside its 2-day window
+    reverts to awaiting, anything else is dropped. Pure; run after the
+    release fill."""
+    out = []
+    for r in rows:
+        unproven = (r.get("pending") and r.get("pr_source") == "sec_8k"
+                    and r.get("eps_act") is None and r.get("rev_act") is None
+                    and not _rel_proves_report(r.get("rel")))
+        if not unproven:
+            out.append(r)
+            continue
+        d = _iso_date(r.get("date"))
+        if r.get("from_fmp") and d is not None and (today - d).days <= 2:
+            r.update(pending=False, awaiting=True, pr_headline=None,
+                     pr_url=None, pr_source=None, rel=None,
+                     px_react=None, px_react_live=False)
+            out.append(r)
+    return out
 
 
 def _fill_price_reactions(rows, today, max_workers: int = 8) -> None:
@@ -354,7 +550,7 @@ def _fill_price_reactions(rows, today, max_workers: int = 8) -> None:
         except Exception:
             closes = []
         pct = price_reaction(closes, session)
-        if pct is None and session is not None and session <= today and (
+        if pct is None and live_session_is_current(session, today) and (
                 not closes or closes[-1][0] < session):
             # Session underway / close not posted yet → live intraday change.
             try:
@@ -539,6 +735,8 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
                           "eps_adj_stated": rm.get("eps_adj_stated"),
                           # None on a pre-v23 extraction → basis unconfirmed
                           "rev_basis": rm.get("rev_basis"),
+                          # v26: the exhibit is a call/webcast notice
+                          "call_notice": rm.get("call_notice"),
                           "url": rm.get("url")}
             # Actuals fill (owner, 2026-07-13): FMP's consensus feed lags a
             # fresh report ("pending") — the bank's own release already
@@ -784,7 +982,12 @@ def _board_key(days_back: int) -> str:
     #      `rev_basis`; rel gained `rev_basis` facts), and a feed-vs-release
     #      conflict row's rel carries only {qend, url, withheld} — never the
     #      conflicting filing's figures (PNFP Q4-25 / legacy Synovus).
-    return f"earnings_results_board_v14:{days_back}"
+    # v15: evidence rules (2026-10-12: 18 of 27 rows were not reports) —
+    #      call/webcast notices, revisions and stale-quarter releases never
+    #      mint pending rows; inferred-date events ignored; ET dates; an
+    #      8-K-only row needs figures in its exhibit; live px only for the
+    #      current session. Rows gained `pr_source`, `from_fmp`.
+    return f"earnings_results_board_v15:{days_back}"
 
 
 def results_board_available(days_back: int = 30) -> bool:
@@ -869,6 +1072,7 @@ def _build_results_board(days_back: int) -> list[dict]:
                               assets_by_ticker=assets)
     _fill_price_reactions(rows, today)
     _fill_release_metrics(rows)
+    rows = drop_unproven_8k_rows(rows, today)
     _fill_fdic_history(rows)
     _fill_sec_history(rows)
     return rows

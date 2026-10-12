@@ -100,6 +100,15 @@ _EXCLUDE_AFTER = re.compile(
 # $12.20 stated one sentence earlier (FDVA 2Q26). Same sentence only — no
 # period, semicolon or dollar figure between the clause and the label.
 _EXCLUDE_SENTENCE = re.compile(r"\bexcluding\b[^.;$]{0,60}$", re.I)
+# A MULTI-QUARTER period in the candidate's label→value span or earlier in its
+# sentence: the value is year-to-date/annual, never the quarter's. WBHC
+# 2026-10-09's shareholder letter states only "Earnings Per Diluted Share for
+# the nine-month period ended September 30, 2026, were $5.29" — shipped as the
+# quarter's EPS actual ($5.29 vs a ~$1.8 quarter). n/a beats a period mix-up.
+_MULTI_PERIOD = re.compile(
+    r"\b(?:nine|six|twelve|9|6|12)[- ]months?\b|\byear[- ]to[- ]date\b|"
+    r"\bytd\b|\bfirst (?:half|nine months)\b|\bfull[- ]year\b|"
+    r"\bfor the (?:fiscal )?year\b(?![- ]ago)", re.I)
 
 _AGREE_PCT = 0.011      # two-decimal percent agreement
 _AGREE_USD = 0.011      # cent agreement for per-share values
@@ -143,6 +152,9 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
         if _EXCLUDE_BEFORE.search(text[max(0, start - 34):start]):
             continue
         if _EXCLUDE_SENTENCE.search(text[max(0, start - 70):start]):
+            continue
+        if (_MULTI_PERIOD.search(text[start:end]) or _MULTI_PERIOD.search(
+                text[max(0, start - 70):start].rsplit(". ", 1)[-1])):
             continue
         if _CONNECTOR_EXCLUDE.search(text[start:end]):
             continue
@@ -498,6 +510,26 @@ def _adj_eps_metric(text: str) -> float | None:
     if not vals or (max(vals) - min(vals)) > _AGREE_USD:
         return None
     return vals[0]
+
+
+# A conference-call / webcast NOTICE opens with the logistics (WSBC 2026-10-02,
+# furnished under Item 2.02: "WesBanco, Inc. to Host 2026 Third Quarter
+# Earnings Conference Call and Webcast on Thursday, October 22"). A results
+# release opens with the results ("Reports Net Income of …").
+_NOTICE_OPEN = re.compile(
+    r"\b(?:to host|will host|hosts?|conference call|webcast|invites?)\b", re.I)
+_RESULTS_OPEN = re.compile(
+    r"\breport(?:s|ed)\b[^.]{0,120}?\b(?:net income|earnings|results|net loss)\b",
+    re.I)
+
+
+def is_call_notice(html: str) -> bool:
+    """True when the document's opening (~500 chars) is call/webcast
+    logistics and does not report results. Used only to judge an 8-K exhibit
+    that yielded no figures: a notice is not a report; a figure-less letter
+    (WBHC's nine-month shareholder letter) still is."""
+    head = _flat_text(html)[:500]
+    return bool(_NOTICE_OPEN.search(head)) and not _RESULTS_OPEN.search(head)
 
 
 def adjusted_eps_stated(html: str) -> bool:
@@ -1604,7 +1636,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v25:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v26:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1625,6 +1657,9 @@ def release_metrics(cik) -> dict | None:
     from data import cache as _cache
     from data.freshness import is_fresh
 
+    # v26 (2026-10-12): prose candidates in a MULTI-QUARTER context (nine/
+    # six/twelve months, year-to-date, full year) are refused — WBHC's
+    # letter states only nine-month EPS ($5.29), shipped as the quarter's.
     # v25 (2026-10-12): split / comparison period headers — years above
     # bare ordinals over a "Quarter" row (HBAN), a caption cell on a split
     # month/year row (MSBI), quarter + YTD blocks (CUBB), numeric dates and
@@ -1679,7 +1714,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v25:{int(cik)}"
+    key = f"release_metrics:v26:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -1750,6 +1785,7 @@ def release_metrics(cik) -> dict | None:
         # Any adjusted / ex-items EPS mention at all (value extracted or
         # not) — the board's surprise-basis check (data/earnings_results).
         "eps_adj_stated": adjusted_eps_stated(rel["html"]),
+        "call_notice": is_call_notice(rel["html"]),
         # The revenue surprise's basis check (data/earnings_results
         # .revenue_basis) — match targets only, never displayed.
         "rev_basis": revenue_basis_facts(rel["html"], qend),
