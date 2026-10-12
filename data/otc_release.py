@@ -194,14 +194,24 @@ _IR_STALE_DAYS = 200      # newest stated period older than this → nothing
 # bound what a mis-picked document can produce.
 _IR_LINK_POSITIVE = re.compile(
     r"(?i)\b(?:earnings|results|press release|financial highlights|"
-    r"quarterly report)\b")
+    r"quarter(?:ly)? report)\b")
+# "letter": a shareholder letter narrates multi-year figures ("three-year
+# average ROE 16.55%, 2025 ROA 1.71%") that the prose extractors would file
+# under the quarter — TYBT's "Second Quarter Shareholder Letter with Press
+# Release", 2026-10-12 crawl diff.
 _IR_LINK_NEGATIVE = re.compile(
     r"(?i)\b(?:annual meeting|proxy|webcast|conference call|newsletter|"
-    r"promotion|career|holiday)\b|\bannounces?\s+(?:the\s+)?date\b")
+    r"letter|promotion|career|holiday)\b|\bannounces?\s+(?:the\s+)?date\b")
 
 # Homepage nav links worth one hop — where banks hide the news page.
 _IR_NAV_HINT = re.compile(
     r"(?i)investor|shareholder|news|press|about")
+# Links on a page with no candidates that lead to the release LIST one more
+# click down (SSBI Investors → "Press Releases"; CCBC Investor Relations →
+# "Quarterly Earnings").
+_IR_LIST_HINT = re.compile(
+    r"(?i)\b(?:earnings|press releases?|news releases?|quarterly|"
+    r"financial (?:information|reports?|results))\b")
 
 
 def _is_ir_release_link(text: str) -> bool:
@@ -247,6 +257,28 @@ _LINK_QTOK = re.compile(r"\bQ([1-4])\s?['’]?(\d{2}|\d{4})\b", re.I)
 _LINK_QORD = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+"
                         r"(?:quarter|qtr\.?)\b", re.I)
 _LINK_PUB_GAP_DAYS = 100  # publish date at most this far past the quarter-end
+# Year-first forms the shared parser reads only year-last: "2026 Second
+# Quarter Results" (SFDL), "2026 2nd Quarter Report" (JBTC), "2026 June
+# Press Release" (LOGN — a quarter-end month only).
+_LINK_YQORD = re.compile(r"\b(20\d{2})\s*[-–—:]?\s*(first|1st|second|2nd|"
+                         r"third|3rd|fourth|4th)\s+(?:quarter|qtr\.?)\b", re.I)
+_LINK_YMON = re.compile(r"\b(20\d{2})\s+(march|june|september|december)\b",
+                        re.I)
+# A bank's news list can link a release to a wire or a news mirror (SFDL:
+# nasdaq.com, finance.yahoo.com) — not the bank's own copy, never a
+# candidate. CMS/CDN hosts and the bank's other domains stay eligible
+# (q4cdn, firstbranchcms, FFBW/INFT alternate domains).
+_THIRD_PARTY_HOST_RE = re.compile(
+    r"(?i)(?:^|\.)(?:globenewswire|businesswire|prnewswire|accessnewswire|"
+    r"accesswire|newsfilecorp|einpresswire|einnews|prweb|newswire|nasdaq|"
+    r"yahoo|marketwatch|otcmarkets|morningstar|benzinga|stocktitan|"
+    r"seekingalpha|marketscreener|finance\.google)\.(?:com|ca|net)$")
+# A file name's own period, read only when the link text states none
+# (CCBC: "Reports 18% Increase in Second Quarter Earnings" →
+# 2026-Q2-Earnings-Press-Release.pdf): 2026-Q2, Q2-2026, Q2 2026, 2Q26.
+_HREF_QTOK = (re.compile(r"(?<!\d)(20\d{2})[-_ ]?Q([1-4])(?![0-9])", re.I),
+              re.compile(r"(?<![A-Za-z0-9])Q([1-4])[-_ ]?(20\d{2})(?!\d)", re.I),
+              re.compile(r"(?<!\d)([1-4])Q[-_ ]?(20\d{2}|\d{2})(?!\d)", re.I))
 
 
 def _link_qend(text: str) -> str | None:
@@ -270,6 +302,15 @@ def _link_qend(text: str) -> str | None:
         y += 2000 if y < 100 else 0
         mo, dy = _Q_END[q]
         return date(y, mo, dy).isoformat()
+    m = _LINK_YQORD.search(text)
+    if m:
+        mo, dy = _Q_END[_QNUM[m.group(2).lower()]]
+        return date(int(m.group(1)), mo, dy).isoformat()
+    m = _LINK_YMON.search(text)
+    if m:
+        mo = {"march": 3, "june": 6, "september": 9,
+              "december": 12}[m.group(2).lower()]
+        return date(int(m.group(1)), mo, _Q_END[mo // 3][1]).isoformat()
     m = _LINK_QORD.search(text)
     if not (m and found):
         return None
@@ -279,6 +320,28 @@ def _link_qend(text: str) -> str | None:
     if qe > pub:
         qe = date(pub.year - 1, mo, dy)
     return qe.isoformat() if (pub - qe).days <= _LINK_PUB_GAP_DAYS else None
+
+
+def _href_qend(href: str, text: str) -> str | None:
+    """The period a document's FILE NAME states, for a link whose text
+    states none. A yearless ordinal in the text must name the same quarter
+    — a disagreement is no period at all."""
+    from datetime import date
+    from urllib.parse import unquote, urlparse
+    from data.release_metrics import _Q_END, _QNUM
+    name = unquote(urlparse(href).path.rsplit("/", 1)[-1])
+    for i, rx in enumerate(_HREF_QTOK):
+        m = rx.search(name)
+        if not m:
+            continue
+        y, q = (m.group(1), m.group(2)) if i == 0 else (m.group(2), m.group(1))
+        q, y = int(q), int(y) + (2000 if len(y) == 2 else 0)
+        o = _LINK_QORD.search(text)
+        if o and _QNUM[o.group(1).lower()] != q:
+            return None
+        mo, dy = _Q_END[q]
+        return date(y, mo, dy).isoformat()
+    return None
 
 
 def _ir_release_candidates(ticker: str) -> list[dict]:
@@ -306,7 +369,10 @@ def _ir_release_candidates(ticker: str) -> list[dict]:
         for href, text in _extract_links(html, page):
             if not text or not _is_ir_release_link(text):
                 continue
-            qend = _link_qend(text)
+            if _THIRD_PARTY_HOST_RE.search(
+                    urlparse(href).netloc.split(":")[0]):
+                continue
+            qend = _link_qend(text) or _href_qend(href, text)
             if not qend:
                 continue
             kind = "pdf" if href.lower().split("?")[0].endswith(".pdf") \
@@ -316,7 +382,7 @@ def _ir_release_candidates(ticker: str) -> list[dict]:
         return best
 
     hosts = [f"https://{root}", f"https://www.{root}"]
-    best, home_html, home_url = [], None, None
+    best, home_html, home_url, pages = [], None, None, []
     for path in _NEWS_PATHS:
         html, page = None, None
         for host in hosts:
@@ -328,6 +394,7 @@ def _ir_release_candidates(ticker: str) -> list[dict]:
                 break
         if not html:
             continue
+        pages.append((html, page))
         if path == "":
             home_html, home_url = html, page
         best = _scan(html, page, best)
@@ -347,6 +414,23 @@ def _ir_release_candidates(ticker: str) -> list[dict]:
                 continue
             seen.add(href)
             hops += 1
+            sub = _fetch(href)
+            if sub:
+                pages.append((sub, href))
+                best = _scan(sub, href, best)
+                if best:
+                    break
+    # Third hop: the release LIST one click below a page that had none.
+    if not best:
+        seen_l, deeper = {u for _, u in pages}, []
+        for html, page in pages:
+            for href, text in _extract_links(html, page):
+                if (text and _IR_LIST_HINT.search(text) and href not in seen_l
+                        and urlparse(href).netloc.split(":")[0]
+                        .removeprefix("www.") == root):
+                    seen_l.add(href)
+                    deeper.append(href)
+        for href in deeper[:4]:
             sub = _fetch(href)
             if sub:
                 best = _scan(sub, href, best)
