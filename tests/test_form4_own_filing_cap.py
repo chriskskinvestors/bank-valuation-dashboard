@@ -1,7 +1,7 @@
 """
 Form 4 own-filing cap (data/form4_client.fetch_insider_trades).
 
-The nightly sweep keeps a bank's 30 most recent Form 4s. Since PR #257 it
+The nightly sweep kept a bank's 30 most recent Form 4s. Since PR #257 it
 skips filings whose <issuer><issuerCik> is not the bank — but the 30-cap was
 applied BEFORE that check, so a bank that files many Form 4s as a REPORTING
 OWNER of other issuers (fund 10%-owner stakes) lost its own history: on
@@ -308,7 +308,13 @@ class _Resp:
 
 class _BacWalk(unittest.TestCase):
     """fetch_insider_trades(force=True) — the refresh-insider job's path —
-    over BAC_FEED, each row served the XML of its real class."""
+    over BAC_FEED, each row served the XML of its real class.
+
+    The cap/bound MECHANISM is exercised at its original 30 own / 75 fetches
+    (pinned here), where BAC's real 125-row feed reaches both; production now
+    runs runaway-guard values that BAC never reaches (TestProductionSizing)."""
+
+    CAP, BOUND = 30, 75
 
     def setUp(self):
         clear = getattr(f4.fetch_insider_history, "clear", None)
@@ -339,7 +345,9 @@ class _BacWalk(unittest.TestCase):
                 (f4.requests, "get", lambda url, *a, **k: _Resp(submissions)),
                 (f4, "_fetch_form4_xml", _fetch),
                 (f4, "load_json", lambda prefix, name: None),
-                (f4, "save_json", _save)):
+                (f4, "save_json", _save),
+                (f4, "_MAX_OWN_FILINGS", self.CAP),
+                (f4, "_MAX_XML_FETCHES", self.BOUND)):
             p = patch.object(target, name, fn)
             p.start()
             self.addCleanup(p.stop)
@@ -416,6 +424,26 @@ class TestOwnFilingCap(_BacWalk):
                          {a for a, d, c in BAC_FEED
                           if c is OWN and d >= "2026-07-07"})
         self.assertEqual(len(self._kept()), 4)
+        self.assertIsNone(self.saved[f"{BAC_CIK}.json"]["complete_since"])
+
+
+class TestProductionSizing(_BacWalk):
+    """Owner 2026-10-12: the cap is a runaway guard, not a budget — the
+    2026-10-12 universe scan (362 banks) found at most 213 Form 4s in 365
+    days (ASB). BAC's real feed (125 rows, 79 own) is walked end to end."""
+
+    CAP, BOUND = f4._MAX_OWN_FILINGS, f4._MAX_XML_FETCHES
+
+    def test_guards_clear_the_busiest_filer(self):
+        self.assertGreaterEqual(f4._MAX_OWN_FILINGS, 213)
+        self.assertGreater(f4._MAX_XML_FETCHES, f4._MAX_OWN_FILINGS)
+
+    def test_bac_full_year_is_complete(self):
+        hist = f4.fetch_insider_history(BAC_CIK, force=True)
+        self.assertEqual(self.fetched, [a for a, _, _ in BAC_FEED])
+        self.assertEqual(self._kept(), set(_OWN_ACCS))
+        self.assertEqual(len(_OWN_ACCS), 79)
+        self.assertIsNone(hist["complete_since"])
         self.assertIsNone(self.saved[f"{BAC_CIK}.json"]["complete_since"])
 
 

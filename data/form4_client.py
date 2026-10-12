@@ -44,17 +44,16 @@ SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 
 # Per-bank Form 4 walk (fetch_insider_trades). Keep the newest
 # _MAX_OWN_FILINGS filings the bank is the ISSUER of; filings it made as a
-# reporting owner of OTHER issuers don't count toward that. Each XML costs 2
-# SEC requests, so the walk also stops after _MAX_XML_FETCHES per bank — the
-# nightly sweep's budget across ~600 banks. Sized from a 2026-10-06 scan of
-# all 215 banks with >30 Form 4s in 12 months: BAC reached its 30th own
-# filing at fetch 57 (27 foreign: fund-stake 10%-owner filings), GS at 38,
-# WFC at 36, every other bank by 31 — ~90 added requests on a ~17.6k sweep.
-# Even if every such bank hit the bound, the sweep would grow ~61%.
-# The 365-day window (was 360) adds ~1.4% more in-window filings for banks
-# under both bounds; banks that reach a bound walk exactly as before.
-_MAX_OWN_FILINGS = 30
-_MAX_XML_FETCHES = 75
+# reporting owner of OTHER issuers don't count toward that. The walk also
+# stops after _MAX_XML_FETCHES per bank (one SEC request each since the
+# primaryDocument fetch). Both are runaway guards, not a budget (owner
+# 2026-10-12): a 30-own cap truncated 211 of 362 banks — every one lost its
+# 1Y window, 54 their 6M, 4 their 3M. The 2026-10-12 scan of all 362 banks'
+# 365-day Form 4 counts (median 36, p90 83, max 213 ASB, then HBAN 211, WAL
+# 155; BAC 125 incl. fund-stake 10%-owner filings) leaves 0 truncated at
+# 250/300, for ~15.1k XML requests a night (was ~8.5k; ≈ +12 min of sweep).
+_MAX_OWN_FILINGS = 250
+_MAX_XML_FETCHES = 300
 
 # SEC fair access is 10 req/s; the XML fetches go through data/http.py's
 # retry policy behind this min-interval lock (~9 req/s) — the same pattern as

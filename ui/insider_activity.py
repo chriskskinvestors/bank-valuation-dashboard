@@ -150,9 +150,9 @@ def render_insider_activity(ticker: str, show_title: bool = True):
     st.caption(
         (f"**{trunc_flag[0].upper()}{trunc_flag[1:]}** — windows starting "
          "earlier show n/a. " if complete_since else "")
-        + "Open-market P/S trades only. The 12-month fetch reads the 30 most "
-        "recent Form 4s on the company's own stock; the 5Y aggregate needs "
-        "the deeper EDGAR backfill (phase 2)."
+        + "Open-market P/S trades only. The 12-month fetch reads every Form 4 "
+        "filed on the company's own stock; the 5Y aggregate needs the deeper "
+        "EDGAR backfill (phase 2)."
     )
 
     # ── Price graph with buy/sell markers (SNL spec) ────────────────────
@@ -300,8 +300,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                               "Value ($)": "usd", "Shares After": "int"},
                      provenance={"Page": "Company Analysis › Insiders › Insider Activity",
                                  "Ticker": ticker, "CIK": cik,
-                                 "Source": "SEC EDGAR Form 4 filings (trailing 12 "
-                                           "months; each CIK's 30 most recent Form 4s)",
+                                 "Source": "SEC EDGAR Form 4 filings on the "
+                                           "company's own stock (trailing 12 months)",
                                  **_coverage,
                                  "Filter": f"{txn_filter} · {role_filter} · "
                                            f"limit {show_limit}",
@@ -343,8 +343,8 @@ def render_insider_activity(ticker: str, show_title: bool = True):
                          provenance={"Page": "Company Analysis › Insiders › Insider "
                                              "Activity › Activity by insider",
                                      "Ticker": ticker, "CIK": cik,
-                                     "Source": "SEC EDGAR Form 4 filings (trailing 12 "
-                                               "months; each CIK's 30 most recent Form 4s)",
+                                     "Source": "SEC EDGAR Form 4 filings on the "
+                                               "company's own stock (trailing 12 months)",
                                      **_coverage,
                                      "Scope": "open-market P/S non-derivative trades "
                                               "only — grants, withholdings and "
