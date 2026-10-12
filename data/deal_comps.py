@@ -284,7 +284,7 @@ def build_comps_snapshot(banks: list[dict],
     imposes the universe-scale floor.
     """
     from data import cache
-    from data.ma_history import get_ma_history
+    from data.ma_history import get_ma_history, history_is_cached
 
     import time as _time
     started = datetime.now().isoformat()
@@ -301,13 +301,15 @@ def build_comps_snapshot(banks: list[dict],
         try:
             deals = get_ma_history(cert, cik=cik, name=b.get("name"),
                                    ticker=b.get("ticker"))
-            if not deals:
+            if not deals and not history_is_cached(cert, cik):
                 # get_ma_history returns [] BOTH for "no deals" and for a
                 # failed FDIC history fetch (never cached), so a 429 during
                 # the walk silently erased a bank's deals from the board
                 # (Busey/CrossFirst, Old National/Bremer, UMB/HTLF ... all
-                # absent on the first universe run). A genuine [] is cached
-                # and the retry is instant; a failure refetches.
+                # absent on the first universe run). Only an UNCACHED [] is
+                # retried: the 15s + 45s waits used to run for every bank
+                # with genuinely no deals (~190 of 593), taking the nightly
+                # from minutes to ~3h10m (Oct 10/11/12).
                 for wait in _EMPTY_HISTORY_RETRY_WAITS:
                     _time.sleep(wait)
                     deals = get_ma_history(cert, cik=cik, name=b.get("name"),

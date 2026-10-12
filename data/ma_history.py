@@ -75,6 +75,19 @@ _BRANCH_FIELDS = ",".join([
 _LOG = "ma_history"
 
 
+def history_is_cached(cert, cik=None) -> bool:
+    """True when the bank's history is a fresh CACHED result — an empty list
+    from get_ma_history is then a genuine "no deals", not a failed fetch."""
+    from data import cache
+    # Same key as get_ma_history (pinned by tests/test_deal_comps_runtime).
+    key = f"ma_history:v15:{int(cert)}:{int(cik) if cik else 0}"
+    try:
+        cached = cache.get(key, max_age_s=None)
+    except Exception:
+        return False
+    return _is_fresh(cached) and isinstance((cached or {}).get("deals"), list)
+
+
 def _is_fresh(cached: dict | None) -> bool:
     from data.freshness import is_fresh
     return is_fresh(cached, CACHE_TTL_SECONDS)
