@@ -228,6 +228,37 @@ class TestSharesOutstanding(unittest.TestCase):
         got = extract_shares_outstanding(h, "2026-06-30", {"bv_ps": 11.43})
         self.assertIsNone(got["shares"])
 
+    def test_unstated_scale_thousands_count_refused(self):
+        # AROW-shaped (#parser follow-up): no units statement; the count
+        # (16,545 = thousands) and equity (413,625 = thousands) tie at x1 —
+        # 25 x 16,545 = 413,625 — which proves nothing about the scale.
+        h = _tbl(["", "Three Months Ended"], ["", *Q5],
+                 ["Shares outstanding", "16,545", "16,560", "16,580", "16,600", "16,610"],
+                 ["Total stockholders' equity", "413,625", "410,000", "405,000",
+                  "400,000", "395,000"])
+        got = extract_shares_outstanding(h, "2026-06-30", {"bv_ps": 25.00})
+        self.assertIsNone(got["shares"])
+        self.assertIn("unstated scale", got["tie"]["reason"])
+
+    def test_small_true_count_ties_on_thousands_equity(self):
+        # FMBL-shaped: ~13,000 real shares at ~$100k book/share; equity
+        # printed in thousands with no unit statement ties at x1e3 — served.
+        h = _tbl(["", "Three Months Ended"], ["", *Q5],
+                 ["Shares outstanding", "13,000", "13,000", "13,000", "13,000", "13,000"],
+                 ["Total stockholders' equity", "1,300,000", "1,290,000",
+                  "1,280,000", "1,270,000", "1,260,000"])
+        got = extract_shares_outstanding(h, "2026-06-30", {"bv_ps": 100_000.0})
+        self.assertEqual(got["shares"], 13_000)
+
+    def test_raw_dollar_table_full_count_still_served(self):
+        h = _tbl(["", "Three Months Ended"], ["", *Q5],
+                 ["Shares outstanding", "5,000,000", "5,000,000", "5,000,000",
+                  "5,000,000", "5,000,000"],
+                 ["Total stockholders' equity", "60,000,000", "59,000,000",
+                  "58,000,000", "57,000,000", "56,000,000"])
+        got = extract_shares_outstanding(h, "2026-06-30", {"bv_ps": 12.00})
+        self.assertEqual(got["shares"], 5_000_000)
+
     def test_row_vs_caption_disagreement_refuses(self):
         h = _tbl(["", "Three Months Ended"], ["", *Q5],
                  ["Shares outstanding at period end", "5,000,000", "5,000,000",
