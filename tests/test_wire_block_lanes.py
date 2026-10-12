@@ -321,6 +321,20 @@ class TestQ4Release(unittest.TestCase):
             ("T Bancorp Reports Second Quarter 2026 Results", "<p>Q2</p>",
              "07/21/2026 08:00:00"))))
 
+    def test_pdf_only_release_reads_its_document(self):
+        # FGFH: the Q4 item has no Body; the release is the attached PDF
+        from data import otc_release as orl
+        payload = {"GetPressReleaseListResult": [{
+            "Headline": "Foresight Reports 2026 Third Quarter Results",
+            "Body": "", "PressReleaseDate": "10/14/2026 08:00:00",
+            "DocumentPath": "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf"}]}
+        with patch.object(orl, "_fetch_document", return_value="Q3 text") as fd:
+            doc = self._run(payload)
+        fd.assert_called_once_with(
+            "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf", "pdf")
+        self.assertEqual((doc["html"], doc["url"]),
+                         ("Q3 text", "https://s206.q4cdn.com/x/Q3-2026-Earnings-Release.pdf"))
+
     def test_bank_without_q4_endpoint_is_none(self):
         from data import otc_release as orl
         with patch("data.events.ir_site.get_ir_endpoints", return_value={}):

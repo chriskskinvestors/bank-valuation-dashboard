@@ -647,15 +647,21 @@ def _q4_release(ticker: str, qend: str) -> dict | None:
         return None
     for it in items:
         hl = (it.get("Headline") or "").strip()
-        body = it.get("Body") or ""
         pub = _parse_q4_date(it.get("PressReleaseDate"))
-        if not (hl and body and pub and _is_earnings_headline(hl)):
+        if not (hl and pub and _is_earnings_headline(hl)):
             continue
         if _release_qend(hl, pub.date().isoformat()) != qend:
             continue
         link = it.get("LinkToDetailPage") or it.get("LinkToUrl") or ""
-        return {"url": urljoin(host, link) if link else home, "title": hl,
-                "html": body, "transport": "ir_q4"}
+        url = urljoin(host, link) if link else home
+        body = it.get("Body") or ""
+        pdf = it.get("DocumentPath") or ""
+        if not body and pdf.lower().split("?")[0].endswith(".pdf"):
+            # PDF-only release (FGFH): the attached document is the release
+            body, url = _fetch_document(pdf, "pdf") or "", pdf
+        if body:
+            return {"url": url, "title": hl, "html": body,
+                    "transport": "ir_q4"}
     return None
 
 
