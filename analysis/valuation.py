@@ -1716,6 +1716,7 @@ def _derived_tbvps_no_holdco(ticker: str, fdic: dict) -> float | None:
            else str(rep or ""))
     if len(rep) == 8 and rep.isdigit():
         rep = f"{rep[:4]}-{rep[4:6]}-{rep[6:]}"
+    rep = rep[:10]            # the warm cache stores "2026-06-30 00:00:00"
     if not bv or bv <= 0 or rep != val.get("qend"):
         return None
     eq_usd = eq * 1000                       # FDIC reports $K

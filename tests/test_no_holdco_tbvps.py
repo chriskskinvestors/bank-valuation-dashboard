@@ -64,7 +64,8 @@ class TestDerivedNoHoldco(_Base):
                                EXPECTED, places=9)
 
     def test_repdte_forms(self):
-        for rep in (pd.Timestamp(QEND), QEND):
+        # "… 00:00:00" is the warm cache's stored form (prod, 2026-10-12)
+        for rep in (pd.Timestamp(QEND), QEND, f"{QEND} 00:00:00"):
             self.assertAlmostEqual(
                 va._derived_tbvps_no_holdco("PFBC", _fdic(REPDTE=rep)),
                 EXPECTED, places=9)
