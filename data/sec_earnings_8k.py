@@ -111,7 +111,8 @@ def latest_periodic_filing(cik) -> dict | None:
 def _submissions_ckey(cik) -> str:
     # v2: f8k may be a mis-itemized release newer than the latest 2.02 (FBP/NPB).
     # v3: notice 8-Ks skipped (WSBC/NEWT) + the same-quarter window "f8ks".
-    return f"earnings_8k_latest:v3:{int(cik)}"
+    # v4: mis-itemized releases past a dateline / behind routine 8-Ks found.
+    return f"earnings_8k_latest:v4:{int(cik)}"
 
 
 def _submissions_record(cik) -> dict:
@@ -179,12 +180,27 @@ def _submissions_record(cik) -> dict:
             furnished.append(row)
     # A mis-itemized release can only supersede the 2.02 8-K when it reports a
     # NEWER quarter; candidates are newest-first, so the first one at or
-    # before the 2.02's quarter ends the scan. Each check is accession-cached.
+    # before the 2.02's quarter ends the scan, as does one filed more than
+    # _MISITEMIZED_MAX_AGE_DAYS before the bank's newest filing (a release
+    # that old is stale anyway). Each verdict is accession-cached; only
+    # UNCACHED checks count against the per-call fetch budget, so routine
+    # 8-Ks filed after a release never hide it (HBAN-class, see
+    # ir_provider._earnings_8k_candidates) — the scan resumes next call.
     floor = _release_quarter_end(f8k["date"]) if f8k else None
-    for row in furnished[:_MISITEMIZED_MAX_CHECKS]:
+    oldest = _days_before(dates[0] if dates else "", _MISITEMIZED_MAX_AGE_DAYS)
+    fetches = 0
+    for row in furnished:
         qe = _release_quarter_end(row["date"])
-        if qe is None or (floor is not None and qe <= floor):
+        if (qe is None or (floor is not None and qe <= floor)
+                or (oldest and row["date"] < oldest)):
             break
+        if cache.get(_misitemized_ckey(row["accession"]),
+                     max_age_s=None) is None:
+            if fetches >= _MISITEMIZED_MAX_FETCHES:
+                # Budget spent with newer candidates unverified: the older
+                # 2.02 8-K must not stand in for them. Nothing cached.
+                return {"f8k": None, "periodic": periodic}
+            fetches += 1
         try:
             if _is_misitemized_release(row):
                 f8k = row
@@ -204,8 +220,27 @@ def _submissions_record(cik) -> dict:
     return record
 
 
-# Non-2.02 8-Ks checked per scan — bounds a bank with no 2.02 8-K at all.
-_MISITEMIZED_MAX_CHECKS = 4
+# Uncached non-2.02 exhibit checks per call, and how far back a candidate
+# may be filed (days before the bank's newest filing — the repo's 200-day
+# release-staleness convention).
+_MISITEMIZED_MAX_FETCHES = 4
+_MISITEMIZED_MAX_AGE_DAYS = 200
+
+
+def _days_before(day: str, n: int) -> str:
+    """YYYY-MM-DD `n` days before `day`, or "" for an unparseable date."""
+    from datetime import date, timedelta
+    try:
+        return (date.fromisoformat(day) - timedelta(days=n)).isoformat()
+    except (TypeError, ValueError):
+        return ""
+
+
+def _misitemized_ckey(accession: str) -> str:
+    # v2: future-dated notices rejected (SSB/BMRC Q3-2026 scheduling 8-Ks).
+    # v3: a dateline (after the quarter-end) no longer counts as the first
+    #     period — 114 of 288 real 2Q26 releases open on one (MTB, WFC, HBAN).
+    return f"earnings_8k_misitemized:v3:{accession}"
 # Item-2.02 8-Ks tested as notices before the newest is taken regardless.
 _NOTICE_MAX_CHECKS = 4
 # 2.02 8-Ks kept in a release's same-quarter window (newest first).
@@ -249,8 +284,8 @@ def _is_misitemized_release(f8k: dict) -> bool:
     for the quarter its filing date implies: the exhibit's opening text passes
     the earnings-headline gate (data.ir_provider._is_earnings_headline — ASB's
     "Announces Results of Annual Meeting" and Bank OZK's "Announces Date for
-    … Earnings Release" fail it) AND the FIRST period that text names is that
-    quarter-end ("FIRST BANCORP. ANNOUNCES EARNINGS FOR THE QUARTER ENDED JUNE
+    … Earnings Release" fail it) AND the first period that text names, past
+    any dateline after the quarter-end, is that quarter-end ("FIRST BANCORP. ANNOUNCES EARNINGS FOR THE QUARTER ENDED JUNE
     30, 2026", filed 2026-07-22). A text that names no period, or opens on a
     different one, is not proven — False. So is one that names a date AFTER
     its own filing: that announces a future event, never results already
@@ -261,8 +296,7 @@ def _is_misitemized_release(f8k: dict) -> bool:
     immutable); a fetch EXCEPTION propagates uncached."""
     from data import cache
     from data.ir_provider import _headline_text, _is_earnings_headline
-    # v2: future-dated notices rejected (SSB/BMRC Q3-2026 scheduling 8-Ks).
-    ckey = f"earnings_8k_misitemized:v2:{f8k['accession']}"
+    ckey = _misitemized_ckey(f8k["accession"])
     hit = cache.get(ckey, max_age_s=None)
     if hit is not None:
         return bool(hit.get("ok"))
@@ -272,9 +306,14 @@ def _is_misitemized_release(f8k: dict) -> bool:
         html = _get(f"https://www.sec.gov/Archives/edgar/data/{int(f8k['cik'])}/"
                     f"{f8k['accession']}/{doc}")
         text = _headline_text(html.decode("utf-8", "replace"))
-        periods = _periods(text)
+        qe = _release_quarter_end(f8k["date"])
+        # A period after the quarter-end is the release's own dateline
+        # ("News Release | July 14, 2026 Wells Fargo Reports Second Quarter
+        # 2026 …") — it names no reported quarter, so it is skipped. A
+        # prior quarter's release still opens on ITS (earlier) quarter.
+        periods = [p for p in _periods(text) if qe is not None and p <= qe]
         ok = (_is_earnings_headline(text) and bool(periods)
-              and periods[0] == _release_quarter_end(f8k["date"])
+              and periods[0] == qe
               and not _names_later_date(text, f8k["date"]))
     try:
         cache.put(ckey, {"ok": ok})
@@ -986,6 +1025,7 @@ _ENDING_SHARES_LABELS: frozenset = frozenset({
     "period end common shares outstanding",
     "common shares outstanding at period end",
     "outstanding common shares",                       # PCB
+    "common shares at end of period",                  # NPB
 })
 
 # TOTAL shareholders' equity (preferred included) — the numerator a release
@@ -2065,8 +2105,9 @@ def reported_bvps_status(
     # v10: a per-common label that ties TOTAL equity ÷ shares beside preferred
     #      is per-total-equity → not_disclosed (PCB), never a conflict.
     # v11: offset sections of a multi-grid table re-based (SYBT/RBKB/UBSI).
+    # v12: "common shares at end of period" ending-shares label (NPB).
     return _window_status(
-        cik, "reported_bvps:v11", f"{rk}:{tk}",
+        cik, "reported_bvps:v12", f"{rk}:{tk}",
         lambda html, pe: extract_reported_bvps_status(
             html, reconstructed=reconstructed, tbvps=tbvps, period_end=pe))
 
@@ -2131,7 +2172,8 @@ def reported_share_basis(cik, common_equity: float | None) -> float | None:
     f8k = _latest_earnings_8k(cik)
     if not f8k:
         return None
-    ckey = f"reported_share_basis:v1:{f8k['accession']}:{common_equity:.0f}"
+    # v2: "common shares at end of period" share-basis label (NPB).
+    ckey = f"reported_share_basis:v2:{f8k['accession']}:{common_equity:.0f}"
     cached = cache.get(ckey, max_age_s=None)
     if cached is not None:
         return cached.get("value")
@@ -2176,7 +2218,8 @@ def reported_share_basis(cik, common_equity: float | None) -> float | None:
 #      (STT oldest-first addendum) + self-tying bare rows (BYFC).
 # v15: offset sections of a multi-grid table re-based (SYBT/RBKB/UBSI —
 #      _rebase_offset_blocks).
-_REPORTED_TBVPS_CKEY_V = "v15"
+# v16: "common shares at end of period" ending-shares label (NPB tie-outs).
+_REPORTED_TBVPS_CKEY_V = "v16"
 
 
 def reported_tbvps_status(

@@ -249,7 +249,7 @@ class TestNoticeSkipped(_Site):
         se8k._latest_earnings_8k(WSBC)
         n = len(self.calls)
         import data.cache as cache
-        cache.invalidate(f"earnings_8k_latest:v3:{WSBC}")
+        cache.invalidate(se8k._submissions_ckey(WSBC))
         se8k._latest_earnings_8k(WSBC)
         self.assertEqual(len(self.calls), n + 1)          # submissions only
 
