@@ -238,6 +238,95 @@ class TestIrCandidateSelection(unittest.TestCase):
                              "Quarter Results"))
 
 
+class TestIrCrawlReach(unittest.TestCase):
+    """Live link forms the crawler missed (2026-10-12 survey of the banks
+    whose wire is GlobeNewswire): year-first periods, "Quarter Report",
+    a period stated only in the file name, and a release list one click
+    below the investor page."""
+
+    def setUp(self):
+        import data.events.ir_site as irs
+        import data.otc_release as orl
+        self.irs, self.orl = irs, orl
+        self._orig = (irs._fetch, orl._bank_webaddr)
+        orl._bank_webaddr = lambda t: "https://www.examplebank.com"
+
+    def tearDown(self):
+        self.irs._fetch, self.orl._bank_webaddr = self._orig
+
+    def _site(self, pages):
+        self.irs._fetch = lambda url, timeout=12: pages.get(url.rstrip("/"))
+
+    @staticmethod
+    def _links(*links):
+        return "".join(f'<a href="{u}">{t}</a>' for u, t in links)
+
+    def test_year_first_and_month_periods(self):
+        lq = self.orl._link_qend
+        self.assertEqual(lq("2026 Second Quarter Results"), "2026-06-30")   # SFDL
+        self.assertEqual(lq("2026 2nd Quarter Report"), "2026-06-30")       # JBTC
+        self.assertEqual(lq("2026 June Press Release"), "2026-06-30")       # LOGN
+        self.assertIsNone(lq("2026 May Press Release"))     # not a quarter-end
+        self.assertTrue(self.orl._is_ir_release_link("2026 2nd Quarter Report"))
+        # a bare period is still no release link (ALPIB: statement of condition)
+        self.assertFalse(self.orl._is_ir_release_link("2nd Quarter 2026"))
+        # a shareholder letter narrates multi-year figures (TYBT)
+        self.assertFalse(self.orl._is_ir_release_link(
+            "2026 Second Quarter Shareholder Letter with Press Release"))
+
+    def test_file_name_period_only_when_text_states_none(self):
+        hq = self.orl._href_qend
+        self.assertEqual(hq("https://b.com/u/2026/07/2026-Q2-Earnings-Press-"
+                            "Reelease-Final.pdf",
+                            "Bank Reports 18% Increase in Second Quarter Earnings"),
+                         "2026-06-30")                                      # CCBC
+        self.assertEqual(hq("https://b.com/pdf/News%20Release%202Q%202026.pdf",
+                            "x"), "2026-06-30")
+        # the text names another quarter: no period at all
+        self.assertIsNone(hq("https://b.com/u/2026-Q2-Earnings.pdf",
+                             "Bank Reports First Quarter Earnings"))
+        # the upload folder's date is not the period
+        self.assertIsNone(hq("https://b.com/uploads/2026/07/earnings.pdf", "x"))
+
+    def test_release_list_one_click_below_the_investor_page(self):
+        # SSBI: home → "Investors" → "Press Releases" → the release
+        self._site({
+            "https://examplebank.com": self._links(("/investors.php", "Investors")),
+            "https://examplebank.com/investors.php": self._links(
+                ("/investors-press-releases.php", "Press Releases")),
+            "https://examplebank.com/investors-press-releases.php": self._links(
+                ("/pdf/q2.pdf", "Example Bank Reports Second Quarter 2026 "
+                                "Financial Results")),
+        })
+        got = self.orl._ir_release_candidates("EXBK")
+        self.assertEqual([(c["qend"], c["url"]) for c in got],
+                         [("2026-06-30", "https://examplebank.com/pdf/q2.pdf")])
+
+    def test_wire_and_news_mirror_links_are_not_the_banks_copy(self):
+        # SFDL links older quarters to nasdaq.com / finance.yahoo.com
+        self._site({"https://examplebank.com/news": self._links(
+            ("https://www.nasdaq.com/press-release/x", "2026 First Quarter Results"),
+            ("https://finance.yahoo.com/news/x.html", "2025 Third Quarter Results"),
+            ("https://s25.q4cdn.com/1/files/q2.pdf", "2026 Second Quarter Results"))})
+        got = self.orl._ir_release_candidates("EXBK")
+        self.assertEqual([c["url"] for c in got],
+                         ["https://s25.q4cdn.com/1/files/q2.pdf"])
+
+    def test_third_hop_stays_on_site_and_is_bounded(self):
+        fetched = []
+        pages = {"https://examplebank.com": self._links(
+            ("https://other.com/earnings", "Earnings"),
+            *[(f"/earnings{i}", "Earnings") for i in range(8)])}
+
+        def fetch(url, timeout=12):
+            fetched.append(url)
+            return pages.get(url.rstrip("/"))
+        self.irs._fetch = fetch
+        self.assertEqual(self.orl._ir_release_candidates("EXBK"), [])
+        self.assertFalse(any("other.com" in u for u in fetched))
+        self.assertEqual(sum("/earnings" in u for u in fetched), 4)
+
+
 class TestOtcWrapper(unittest.TestCase):
     def setUp(self):
         import data.cache as dc
