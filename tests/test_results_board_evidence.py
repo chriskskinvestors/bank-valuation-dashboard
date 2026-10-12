@@ -183,9 +183,10 @@ class TestUnproven8kRows(unittest.TestCase):
                       "results_stated": False}),
             # NEWT 2026-09-14: a dividend announcement furnished under 2.02 —
             # not a call notice, but it states no results either.
+            # Its only extracted figure is the dividend (prod 2026-10-12).
             _row(ticker="NEWT", date="2026-09-14",
-                 rel={"metrics": {}, "capital": {}, "call_notice": False,
-                      "results_stated": False}),
+                 rel={"metrics": {"div_ps": 0.19}, "capital": {},
+                      "call_notice": False, "results_stated": False}),
             _row(ticker="WBHC",
                  rel={"metrics": {"eps_diluted": None}, "capital": {},
                       "call_notice": False, "results_stated": True}),
