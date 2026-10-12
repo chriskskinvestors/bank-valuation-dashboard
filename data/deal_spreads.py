@@ -128,6 +128,29 @@ def _skip_reason(d: dict) -> str | None:
     return None
 
 
+def _int(v) -> int:
+    try:
+        return int(v or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _cert_tickers() -> dict:
+    try:
+        from data.bank_universe import cert_ticker_map
+        return cert_ticker_map() or {}
+    except Exception:
+        return {}
+
+
+def _same_party(d: dict) -> bool:
+    if d.get("buyer_ticker") and d.get("buyer_ticker") == d.get("target_ticker"):
+        return True
+    from data.ma_announcements import brand_token
+    a, b = brand_token(d.get("buyer_name") or ""), brand_token(d.get("target_name") or "")
+    return bool(a and a == b)
+
+
 def build_spread_histories(deals: list[dict], history=None) -> dict:
     """{"built_at", "deals": {key: {...meta, series, dropped}}, "skipped":
     [{key, label, reason}]} for the snapshot's pending deals. ``history`` is
@@ -147,8 +170,20 @@ def build_spread_histories(deals: list[dict], history=None) -> dict:
                 cache[t] = None
         return cache[t]
 
+    cmap = _cert_tickers()
     for d in deals:
         if d.get("status") != "pending":
+            continue
+        # The target's ticker by FDIC cert when the row carries none: Citizens
+        # National (CZNL) has a generic name, so no ticker reached its row and
+        # the deal was skipped as "target not listed" (2026-10-12).
+        if not d.get("target_ticker") and d.get("target_cert"):
+            tk = cmap.get(_int(d.get("target_cert")))
+            if tk:
+                d = {**d, "target_ticker": tk}
+        # A row whose two sides are one party is never charted (the board
+        # drops it too): "PBCO <- PBCO" was charted at a 16% spread.
+        if _same_party(d):
             continue
         key = deal_key(d)
         # An unlisted buyer (First Seacoast's mutual holding company) has no
