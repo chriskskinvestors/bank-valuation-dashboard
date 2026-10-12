@@ -137,8 +137,13 @@ _HEADLINE_NEGATIVE = re.compile(r"(?i)\bannounces?\s+(?:the\s+)?date\b")
 # (FRBA, caught in the 2026-07-16 class sweep) must not satisfy signal 3 via
 # that "Earnings". Stripped before the signal test; a genuine "Reports Q2
 # Earnings and Conference Call Details" keeps its bare "Earnings".
+# "Preferred Bank Announces 2026 Third Quarter Earnings Release and Conference
+# Call" (PFBC, 2026-10-07) is the same notice: as the newest wire story it
+# displaced the real Q2 release, and the empty extraction left PFBC's TBVPS
+# and P/TBV n/a.
 _NOTICE_PHRASE = re.compile(
-    r"(?i)\bearnings\s+(?:conference\s+call|call|webcast|release\s+date)\b")
+    r"(?i)\bearnings\s+(?:conference\s+call|call|webcast|release\s+date"
+    r"|release\s+(?:(?:and|&)\s+)?(?:conference\s+call|call|webcast))\b")
 
 
 def _is_earnings_headline(text: str) -> bool:

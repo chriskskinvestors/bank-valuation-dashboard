@@ -758,7 +758,8 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
                                       extract_release_metrics,
                                       extract_table_metrics,
                                       extract_table_series)
-    from data.release_shares import extract_shares_outstanding
+    from data.release_shares import (extract_shares_outstanding,
+                                     extract_total_equity)
     prior_qend = _prior_quarter_end(qend)
     metrics = extract_release_metrics(html, expected_qend=qend)
     # OTC P/E + market cap inputs (owner spec 2026-10-06). eps_series: the
@@ -777,6 +778,10 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
         "eps_series": series,
         "shares_outstanding": shares["shares"],
         "shares_tie_out": shares["tie"],
+        # The release's own total equity at qend (raw $, every permitted
+        # scale; average-balance rows included) — an entity check only, for
+        # analysis.valuation's no-holdco TBVPS; never a served figure.
+        "equity_cands": extract_total_equity(html, qend),
         "prior_metrics": (extract_table_metrics(html, prior_qend)
                           if prior_qend else {}),
         "prior_qend": prior_qend,

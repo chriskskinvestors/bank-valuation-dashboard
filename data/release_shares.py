@@ -183,6 +183,27 @@ def _caption_shares(rows, expected_qend: str) -> float | None:
     return total if found and total > 0 else None
 
 
+def extract_total_equity(html: str, expected_qend: str) -> list[float]:
+    """Total (common) equity at `expected_qend` from the release's own
+    period-proven tables, in raw dollars at every scale each table permits
+    (see _equity_rows). Candidates for a caller's tie-out — never a served
+    figure on their own."""
+    out: list[float] = []
+    for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+        rows = _table_rows(thtml)
+        hdr = _period_header(rows)
+        if not hdr:
+            continue
+        qends, hdr_i, _span_i, n_change = hdr
+        if qends.count(expected_qend) != 1:
+            continue
+        table_text = " ".join(" ".join(c for c in cells if c)
+                              for cells in rows).lower()
+        out += _equity_rows(rows, qends, hdr_i, n_change,
+                            qends.index(expected_qend), table_text)
+    return out
+
+
 def extract_shares_outstanding(html: str, expected_qend: str,
                                per_share: dict | None = None) -> dict:
     """{"shares": float | None, "tie": {...}} — the release's common shares

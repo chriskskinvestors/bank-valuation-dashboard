@@ -196,7 +196,7 @@ def _derive_defaults(ticker: str, hist: list[dict], sec: dict) -> dict:
     tbvps, tbvps_source, _ = _resolve_tbvps(
         ticker, sec.get("tangible_book_value_per_share"),
         sec.get("book_value_per_share"), sec_as_of=sec.get("sec_as_of"),
-        shares=sec.get("shares_outstanding"))
+        shares=sec.get("shares_outstanding"), fdic=latest)
     if tbvps is not None and tbvps <= 0:
         tbvps, tbvps_source = None, None
 
@@ -267,7 +267,9 @@ def _render_valuation_headline(ticker, name, hist, sec, price, dcf_fv, w_ptbv,
             "release_ttm": "company-reported quarters (earnings releases), TTM",
             "release_ttm_otc": "company-reported quarters (earnings releases), TTM",
             "reconstructed_company_shares": "SEC tangible common equity ÷ the "
-                                            "company's share basis (earnings release)"}
+                                            "company's share basis (earnings release)",
+            "derived_no_holdco": "company BVPS (earnings release) × FDIC "
+                                 "tangible ÷ total equity (no holding company)"}
     EPS = {"label": "Base EPS (TTM, $)", "val": dol(seed["base_eps"]), "doc": eps_doc,
            "sub": ("entered input" if "base_eps" in edited else
                    _src.get(seed.get("eps_source"), "SEC diluted EPS, trailing 12 months"))}
