@@ -285,6 +285,11 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
     a common-share concept, a negative count, or two different values for
     one slot → unresolved.
 
+    An issued-only class whose cover-page count equals its issued count has
+    no treasury, so the residual belongs to the others (CFBK: voting and
+    nonvoting both issued-only, cover nonvoting = issued → all 473,333
+    treasury shares are voting, total 6,492,212 as the release prints).
+
     A filer can also tag ONE class undimensioned and the other per class —
     OPHC 10-Q 0001493152-26-036825: CommonStockSharesOutstanding 12,340,785
     with no member (its voting class) and 11,458,351 on
@@ -378,6 +383,18 @@ def resolve_class_shares(entries: list[dict], end: str) -> dict | None:
         for cls in [c for c in pending
                     if _slot(("CommonStockSharesIssued",), c) == 0]:
             counts[cls] = 0.0
+            pending.remove(cls)
+        # A pending class whose COVER-PAGE count equals its issued count holds
+        # no treasury (outstanding = issued): CFBK 10-Q 0001193125-26-339475
+        # tags voting 6,888,845 and nonvoting 76,700 issued only, 473,333
+        # treasury undimensioned ("473,333 shares of voting common stock" in
+        # the balance-sheet caption), and the cover counts nonvoting 76,700 —
+        # so all of the treasury is voting: 6,415,512 + 76,700 = 6,492,212,
+        # the release's "period-end common shares outstanding" (2026-10-12).
+        for cls in [c for c in pending
+                    if cover.get(c) is not None
+                    and abs(cover[c] - _slot(("CommonStockSharesIssued",), c)) < 0.5]:
+            counts[cls] = _slot(("CommonStockSharesIssued",), cls)
             pending.remove(cls)
         if pending:
             # Treasury not explained by the other classes' issued − outstanding
