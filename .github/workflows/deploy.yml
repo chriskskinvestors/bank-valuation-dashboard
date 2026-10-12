@@ -283,12 +283,13 @@ jobs:
               # max-length run could still be live when the next one fires.
               elif [ "$job" = "poll-events" ]; then
                 EXTRA="--task-timeout=1500"
-              # refresh-deal-comps: ran ~3-7 min until the Recent Deals terms
-              # extraction; the 2026-10-10/11 runs took ~3h10m (11,476s max)
-              # against 14400s = 1.25x headroom (2026-10-12 audit). 21600s
-              # while the slowdown itself is fixed in the deals lane.
+              # refresh-deal-comps: the 2026-10-10/11 runs took ~3h10m — a
+              # 60s missing-deal retry fired for every bank with a genuinely
+              # empty (cached) history; fixed in #371. Measured full run on
+              # the fixed image (2026-10-12): 32m42s (~5 min compile + ~26 min
+              # pending-row recompute). 7200s = ~3.6x headroom.
               elif [ "$job" = "refresh-deal-comps" ]; then
-                EXTRA="--task-timeout=21600"
+                EXTRA="--task-timeout=7200"
               fi
               # Jobs that talk to Cloud SQL (carry DATABASE_URL, or already
               # migrated to DB_PASSWORD) get the password as a secret mount +
