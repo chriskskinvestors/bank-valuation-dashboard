@@ -39,6 +39,30 @@ class TestClassify(unittest.TestCase):
         self.assertEqual(vc.classify(r, 1, {"shares_outstanding": 5.0, "book_value_total": None})["ptbv"],
                          "equity total not tagged (or NCI unseparated)")
 
+    def test_deliberate_na_read_from_the_rows_note(self):
+        """BAFN (2026-10-12): TBV blanked by the share-basis mismatch rule;
+        CFR: by the lapsed goodwill tag. The row's _notes says which — the
+        audit must report that, never guess 'intangibles untagged'."""
+        sec = {"preferred_present": True, "preferred_stock": 9e7,
+               "shares_outstanding": 4_106_905, "book_value_total": 115_901_000}
+        bafn = _row(tbvps=None, ptbv_ratio=None, _notes={"tbvps": (
+            "share-basis mismatch — the latest cover-page share count differs "
+            "85% from the quarter-end count behind book value per share "
+            "(post-quarter issuance/conversion), so per-share book and today's "
+            "price are on different bases")})
+        self.assertEqual(vc.classify(bafn, 1, sec)["ptbv"],
+                         "share-basis mismatch — post-quarter issuance/conversion (n/a by rule)")
+        cfr = _row(tbvps=None, ptbv_ratio=None, _notes={"tbvps": (
+            "tangible book n/a — the holding company stopped tagging goodwill in "
+            "its XBRL filings (its bank subsidiary still reports $652.7M of "
+            "goodwill), so equity minus intangibles can't be reconstructed")})
+        self.assertEqual(vc.classify(cfr, 1, sec)["ptbv"],
+                         "holdco goodwill tag lapsed — intangibles unknown (n/a by rule)")
+        self.assertEqual(vc.classify(_row(tbvps=None, ptbv_ratio=None), 1, sec)["ptbv"],
+                         "TBV n/a — other (no note on the row)")
+        self.assertEqual(vc.classify(_row(tbvps=None, ptbv_ratio=None, _notes={}), 1, sec)["ptbv"],
+                         "TBV n/a — other (no note on the row)")
+
     def test_loss_and_negative_tbv(self):
         self.assertEqual(vc.classify(_row(eps=-0.5, pe_ratio=None), 1, {})["pe"], "trailing loss (EPS <= 0)")
         self.assertEqual(vc.classify(_row(tbvps=-1.0, ptbv_ratio=None), 1, {})["ptbv"], "negative tangible book")
