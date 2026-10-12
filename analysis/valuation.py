@@ -770,7 +770,8 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
         ticker, reconstructed_tbvps, reconstructed_bvps,
         sec_as_of=sec_data.get("sec_as_of"),
-        shares=sec_data.get("shares_outstanding"), liq_gap_ps=liq_gap)
+        shares=sec_data.get("shares_outstanding"), liq_gap_ps=liq_gap,
+        fdic=fdic_data)
     bvps, bvps_source, bvps_conflict = _resolve_bvps(
         ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"),
         liq_gap_ps=liq_gap)
@@ -1150,6 +1151,7 @@ def _resolve_tbvps(
     sec_as_of: str | None = None,
     shares: float | None = None,
     liq_gap_ps: float | None = None,
+    fdic: dict | None = None,
 ) -> tuple[float | None, str | None]:
     """(Tangible book value per common share, source), preferring the bank's
     OWN reported figure (earnings-release non-GAAP line) over our
@@ -1237,6 +1239,12 @@ def _resolve_tbvps(
         except Exception as e:
             print(f"[valuation] otc tbvps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")
+    # A non-SEC bank with no holding company whose release states BVPS but
+    # not TBVPS (PFBC): `fdic` is its latest call-report record ($K).
+    if ticker and not cik and reconstructed is None and not conflict and fdic:
+        derived = _derived_tbvps_no_holdco(ticker, fdic)
+        if derived is not None:
+            return derived, "derived_no_holdco", False
     # Company share basis: same equity, the company's own denominator.
     if cik and reconstructed and bvps and shares and not conflict:
         try:
@@ -1674,6 +1682,47 @@ def _otc_tbvps(ticker: str, not_before: str | None = None) -> float | None:
     """A bank's tangible book value per share from its latest wire
     earnings release — see _otc_release_ps."""
     return _otc_release_ps(ticker, "tbv_ps", not_before=not_before)
+
+
+def _derived_tbvps_no_holdco(ticker: str, fdic: dict) -> float | None:
+    """TBVPS for a non-SEC bank with NO holding company whose earnings
+    release states book value per share but not tangible (owner decision
+    2026-10-12, PFBC). With no holdco the FDIC call report is the company's
+    own balance sheet, so the release's BVPS scales to tangible by FDIC's
+    tangible/total equity — no share count needed:
+
+        TBVPS = release BVPS × (EQTOT − INTAN) / EQTOT
+
+    Served only when every link is proven, else None (n/a): FDIC shows no
+    high holder (RSSDHCR null) and no preferred (EQPP == 0 — with preferred
+    the total-equity ratio would overstate common TBVPS); FDIC's quarter is
+    the release's quarter; the release's own total equity ties to EQTOT
+    within ±1% (the proof that the two statements are one entity)."""
+    import math
+    rssd = fdic.get("RSSDHCR")
+    if not (rssd is None or (isinstance(rssd, float) and math.isnan(rssd))):
+        return None
+    eq, intan, pref = fdic.get("EQTOT"), fdic.get("INTAN"), fdic.get("EQPP")
+    if (eq is None or intan is None or pref is None or pref != 0
+            or any(isinstance(v, float) and math.isnan(v) for v in (eq, intan))
+            or eq <= 0 or intan < 0 or intan >= eq):
+        return None
+    val = _otc_release_fresh(ticker)
+    if not val:
+        return None
+    bv = (val.get("metrics") or {}).get("bv_ps")
+    rep = fdic.get("REPDTE")
+    rep = (rep.strftime("%Y-%m-%d") if hasattr(rep, "strftime")
+           else str(rep or ""))
+    if len(rep) == 8 and rep.isdigit():
+        rep = f"{rep[:4]}-{rep[4:6]}-{rep[6:]}"
+    if not bv or bv <= 0 or rep != val.get("qend"):
+        return None
+    eq_usd = eq * 1000                       # FDIC reports $K
+    if not any(abs(c - eq_usd) <= 0.01 * eq_usd
+               for c in (val.get("equity_cands") or [])):
+        return None
+    return bv * (eq - intan) / eq
 
 
 def _otc_release_fresh(ticker: str,

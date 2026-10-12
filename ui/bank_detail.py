@@ -171,6 +171,8 @@ def _ps_label(row, base, src_key):
         return f"{base} (co. release)"
     if row.get(src_key) == "reconstructed_company_shares":
         return f"{base} (co. share basis)"
+    if row.get(src_key) == "derived_no_holdco":
+        return f"{base} (co. BVPS × FDIC tangible)"
     form = _overlay_form(row)
     if form:
         return f"{base} (co. {form})"

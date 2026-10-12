@@ -124,6 +124,25 @@ class TestEarningsHeadlineGate(unittest.TestCase):
             "Associated Banc-Corp 2026 Fixed Income Investor Presentation "
             "May 5, 2026 Important Disclosures Forward-looking statements"))
 
+    def test_release_and_call_notice_refused(self):
+        # PFBC 2026-10-07: the notice displaced the real Q2 release as the
+        # newest wire story -> empty extraction -> TBVPS / P/TBV n/a.
+        from data.ir_provider import _is_earnings_headline
+        for title in (
+                "Preferred Bank Announces 2026 Third Quarter Earnings Release "
+                "and Conference Call",
+                "XYZ Bancorp Announces Third Quarter Earnings Release & Webcast",
+                "XYZ Bancorp Announces Q3 2026 Earnings Release Conference Call"):
+            self.assertFalse(_is_earnings_headline(title), title)
+        # ...while real releases still pass, call boilerplate included.
+        for title in (
+                "Preferred Bank Reports Second Quarter Results",
+                "XYZ Bancorp Reports Third Quarter Earnings and Conference "
+                "Call Details",
+                "XYZ Bancorp Reports Third Quarter 2026 Earnings; Earnings "
+                "Release and Conference Call Replay Available"):
+            self.assertTrue(_is_earnings_headline(title), title)
+
     def test_dividend_declaration_refused(self):
         from data.ir_provider import _is_earnings_headline
         self.assertFalse(_is_earnings_headline(
