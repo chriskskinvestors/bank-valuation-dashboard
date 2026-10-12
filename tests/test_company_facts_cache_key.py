@@ -73,6 +73,8 @@ class TestNightlyForceRefetch(_IsolatedCache):
         cache.put(key, BLOB)
         with patch.object(bank_mapping, "get_cik", return_value=CIK), \
                 patch.object(bank_mapping, "get_fdic_cert", return_value=None), \
+                patch("data.sec_filer_status.sec_filer_status",
+                      return_value="periodic"), \
                 patch.object(sec_client, "get_latest_fundamentals",
                              return_value={}) as glf:
             ru.refresh_one("PCB")

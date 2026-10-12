@@ -986,7 +986,7 @@ def get_universe_tickers() -> list[str]:
     FDIC cert (acquired bank like MCBI), are dropped here so they never
     appear empty or stale in the UI.
     """
-    from data.bank_mapping import get_cik, get_fdic_cert
+    from data.bank_mapping import get_cik, get_data_cik, get_fdic_cert
     from data.fdic_client import cert_is_active
 
     universe = get_universe()
@@ -1000,7 +1000,7 @@ def get_universe_tickers() -> list[str]:
     excluded = coverage_excluded()
 
     def _resolves(t: str) -> bool:
-        cik = get_cik(t)
+        cik = get_data_cik(t)
         if cik is not None:
             return True  # SEC path; resolver already validated XBRL recency
         cert = get_fdic_cert(t)

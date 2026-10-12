@@ -77,7 +77,7 @@ def _load_sec(tickers: list[str]) -> dict:
     """SEC companyfacts per bank — batched cache read, parallel fetch for misses.
     Mirrors app.load_sec_data."""
     from data import cache, sec_client
-    from data.bank_mapping import get_cik
+    from data.bank_mapping import get_cik, get_data_cik
 
     out: dict = {}
     batch = cache.get_multi([f"sec:{t}" for t in tickers])
@@ -87,7 +87,7 @@ def _load_sec(tickers: list[str]) -> dict:
         if c:
             out[t] = c
             continue
-        cik = get_cik(t)
+        cik = get_data_cik(t)
         if cik:
             uncached[t] = cik
     if uncached:
@@ -270,10 +270,10 @@ def _no_recent_earnings_8k(ticker: str, max_age_days: int = 200) -> bool:
     max_age_days (cached submissions read, ~2h). A lookup failure is False —
     never widen the warm on an error."""
     from datetime import date
-    from data.bank_mapping import get_cik
+    from data.bank_mapping import get_data_cik
     from data.sec_earnings_8k import _latest_earnings_8k
     try:
-        cik = get_cik(ticker)
+        cik = get_data_cik(ticker)
         if not cik:
             return False
         f = _latest_earnings_8k(cik)
@@ -372,7 +372,7 @@ def _warm_feed_insider_aggregate(tickers: list[str]) -> None:
     rebuild into a single cache hit. Dedupe by CIK (multi-class names like
     BPOP/BPOPM share one CIK) so a bank's trades don't render twice."""
     try:
-        from data.bank_mapping import get_cik
+        from data.bank_mapping import get_cik, get_data_cik
         from data.form4_client import build_open_market_universe_cache
         ciks, seen = {}, set()
         for t in tickers:
