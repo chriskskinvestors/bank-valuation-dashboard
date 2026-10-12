@@ -125,7 +125,7 @@ def _cohort_key(certs) -> str:
 
 def quarterly_series(cert_to_id: dict, n_quarters: int = _WINDOW, *,
                      build_if_missing: bool = True, trail_buffer: int = 4,
-                     scope_id: str | None = None):
+                     scope_id: str | None = None, rebuild: bool = False):
     """Full per-bank quarterly series for all TREND_METRICS over the last
     ``n_quarters`` quarter-ends. ONE engine pass per bank-quarter computes every
     metric, so the cached payload serves the whole Trends view.
@@ -147,7 +147,10 @@ def quarterly_series(cert_to_id: dict, n_quarters: int = _WINDOW, *,
     # job and the live view agree on; otherwise hash the exact cohort (scoped sets).
     key = f"trend_series:{scope_id or _cohort_key(certs)}:{n}"
     cached = cache.get(key, max_age_s=None)     # freshness is _GRID_TTL_S (36h), not the 24h default
-    if is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
+    # rebuild=True (the nightly pre-warm): the 36h TTL outlives the 24h cadence,
+    # so without it every other run served yesterday's grid "in 0s" and the
+    # view went uncached ~12h of every 48 (2026-10-12).
+    if not rebuild and is_fresh(cached, _GRID_TTL_S) and isinstance(cached.get("rows"), list):
         return cached
     if not build_if_missing:
         return None
