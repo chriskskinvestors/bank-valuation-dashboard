@@ -10,6 +10,9 @@ Results" shown as Oct-10 news). Prod held 335 such date_inferred rows (CUBB:
   • IRapp sites are read from their press-release RSS with real <pubDate>s
     (both the 4-digit and the 2-digit-year shapes the live feeds use), under
     the 30-day lookback, and are never HTML-scraped.
+  • The feed path is probed per host: the standard IRapp path, then the
+    same platform's alternate sections (HBAN /news-presentations/…, PNC
+    /news-events/financial-press-releases/…).
   • An undated HTML-scraped link (any platform, first scrape or not) is
     dropped; a dated one keeps its own date.
   • An undated Q4 API item is dropped instead of stamped now.
@@ -85,6 +88,24 @@ _HAFC_RSS = f"""<?xml version="1.0" encoding="UTF-8"?>
 </item>
 </channel></rss>"""
 
+# HBAN shape (live 2026-10-13): same platform, /news-presentations/ section,
+# CDATA titles, 2-digit years.
+_HBAN_RSS = f"""<?xml version="1.0" encoding="UTF-8" ?><rss version="2.0"><channel>
+<title>Huntington Bancshares Incorporated (HBAN) Press Releases</title>
+<item>
+  <title><![CDATA[Huntington Bancshares Incorporated Reports Third-Quarter 2026 Earnings]]></title>
+  <description><![CDATA[]]></description>
+  <link>https://ir.huntington.com/news-presentations/press-releases/detail/1030/huntington-q3-2026-earnings</link>
+  <pubDate>{_rfc(_RECENT, two_digit_year=True)}</pubDate>
+</item>
+<item>
+  <title><![CDATA[Huntington Bancshares Incorporated Reports First-Quarter 2026 Earnings]]></title>
+  <description><![CDATA[]]></description>
+  <link>https://ir.huntington.com/news-presentations/press-releases/detail/990/huntington-q1-2026-earnings</link>
+  <pubDate>{_rfc(_OLD, two_digit_year=True)}</pubDate>
+</item>
+</channel></rss>"""
+
 
 class _Resp:
     def __init__(self, text, status=200):
@@ -106,7 +127,7 @@ class TestRssPubDate(unittest.TestCase):
 
 class TestIrappPressReleases(unittest.TestCase):
     def _run(self, rss, home):
-        with patch.object(ir, "_irapp_site", return_value=True), \
+        with patch.object(ir, "_irapp_rss_path", return_value=ir._IRAPP_RSS_PATH), \
              patch.object(ir.requests, "get", return_value=_Resp(rss)):
             return ir._irapp_press_releases(home, CUTOFF)
 
@@ -124,14 +145,14 @@ class TestIrappPressReleases(unittest.TestCase):
         self.assertEqual(out[0][2], _RECENT)
 
     def test_not_irapp_is_none(self):
-        with patch.object(ir, "_irapp_site", return_value=False):
+        with patch.object(ir, "_irapp_rss_path", return_value=None):
             self.assertIsNone(ir._irapp_press_releases("https://x.example/", CUTOFF))
 
     def test_irapp_feed_unreadable_is_empty_not_fallback(self):
-        with patch.object(ir, "_irapp_site", return_value=True), \
+        with patch.object(ir, "_irapp_rss_path", return_value=ir._IRAPP_RSS_PATH), \
              patch.object(ir.requests, "get", return_value=_Resp("", status=503)):
             self.assertEqual(ir._irapp_press_releases("https://investors.hanmi.com/", CUTOFF), [])
-        with patch.object(ir, "_irapp_site", return_value=True), \
+        with patch.object(ir, "_irapp_rss_path", return_value=ir._IRAPP_RSS_PATH), \
              patch.object(ir.requests, "get", side_effect=TimeoutError("slow")):
             self.assertEqual(ir._irapp_press_releases("https://investors.hanmi.com/", CUTOFF), [])
 
@@ -146,12 +167,14 @@ _UNDATED_ARCHIVE = [
 
 
 class TestAdapterNeverStampsPollTime(unittest.TestCase):
-    def _poll(self, endpoints, links, irapp_rss=None):
+    def _poll(self, endpoints, links, irapp_rss=None, rss_path=ir._IRAPP_RSS_PATH):
         def fake_get(url, *a, **k):
-            return _Resp(irapp_rss or "", status=200 if irapp_rss else 404)
+            # Only the host's own feed path serves the feed.
+            ok = bool(irapp_rss) and url.endswith(rss_path)
+            return _Resp(irapp_rss if ok else "", status=200 if ok else 404)
         with patch.object(ir, "get_ir_endpoints", return_value=endpoints), \
              patch.object(ir, "_q4_press_releases", return_value=None), \
-             patch.object(ir, "_irapp_site", return_value=irapp_rss is not None), \
+             patch.object(ir, "_irapp_rss_path", return_value=rss_path if irapp_rss else None), \
              patch.object(ir.requests, "get", side_effect=fake_get), \
              patch.object(ir.IRSiteAdapter, "_find_press_links",
                           return_value=links) as scrape:
@@ -171,18 +194,83 @@ class TestAdapterNeverStampsPollTime(unittest.TestCase):
 
     def test_undated_html_links_dropped_dated_kept(self):
         dated_day = (NOW - timedelta(days=5)).strftime("%B %d, %Y")
-        links = [("https://ir.huntington.com/news/detail/1026/huntington-invests",
-                  "Huntington Bank Announces More Than $40 Million Investment in Tupelo"),
-                 ("https://ir.example.com/news/2020-01-01/old-release",
-                  "Example Bancorp Announces Something Long Ago Indeed"),
-                 ("https://ir.example.com/press-release/new",
-                  f"Example Bancorp Declares Quarterly Dividend {dated_day}")]
-        evs, scrape = self._poll({"HBAN": "https://ir.huntington.com/"}, links)
+        links = [("https://investor.bankofamerica.com/content/newsroom/press-releases/"
+                  "2026/09/bank-of-america-declares-preferred-stock-dividends.html",
+                  "Bank of America Declares Preferred Stock Dividends Payable in October"),
+                 ("https://investor.bankofamerica.com/news/2020-01-01/old-release",
+                  "Bank of America Announces Something Long Ago Indeed"),
+                 ("https://investor.bankofamerica.com/press-release/new",
+                  f"Bank of America Declares Quarterly Dividend {dated_day}")]
+        evs, scrape = self._poll({"BAC": "https://investor.bankofamerica.com/"}, links)
         scrape.assert_called_once()
         self.assertEqual(len(evs), 1)
         self.assertIn("Declares Quarterly Dividend", evs[0].headline)
         self.assertEqual(evs[0].published_at.date(), (NOW - timedelta(days=5)).date())
         self.assertNotIn("date_inferred", evs[0].raw)
+
+    def test_hban_alternate_feed_path_uses_rss_dates(self):
+        # HBAN's feed lives at /news-presentations/…; before the alternate paths
+        # it HTML-scraped (undated → dropped), so its IR releases never surfaced.
+        evs, scrape = self._poll({"HBAN": "https://ir.huntington.com/"},
+                                 _UNDATED_ARCHIVE, irapp_rss=_HBAN_RSS,
+                                 rss_path="/news-presentations/press-releases/rss")
+        scrape.assert_not_called()
+        self.assertEqual([(e.ticker, e.headline, e.published_at) for e in evs],
+                         [("HBAN", "Huntington Bancshares Incorporated Reports "
+                           "Third-Quarter 2026 Earnings", _RECENT)])
+        self.assertEqual(evs[0].url, "https://ir.huntington.com/news-presentations/"
+                         "press-releases/detail/1030/huntington-q3-2026-earnings")
+
+
+class TestIrappFeedPathProbe(unittest.TestCase):
+    """_irapp_rss_path finds the host's feed among _IRAPP_RSS_PATHS (live
+    2026-10-13: HBAN → /news-presentations/…, PNC → /news-events/financial-
+    press-releases/…; both 404 the standard path)."""
+
+    def _probe(self, home, feed_path=None, raises=False):
+        calls = []
+
+        def fake_get(url, *a, **k):
+            calls.append(url)
+            if raises:
+                raise ConnectionError("dns")
+            ok = feed_path is not None and url.endswith(feed_path)
+            return _Resp(_HBAN_RSS if ok else "Not Found", status=200 if ok else 404)
+        import data.cache as dc
+        with patch.object(dc, "get", return_value=None), \
+             patch.object(dc, "put") as put, \
+             patch.object(ir.requests, "get", side_effect=fake_get):
+            got = ir._irapp_rss_path(home)
+        return got, calls, put
+
+    def test_hban_and_pnc_alternate_paths(self):
+        for home, path in (("https://ir.huntington.com/", "/news-presentations/press-releases/rss"),
+                           ("https://investor.pnc.com/", "/news-events/financial-press-releases/rss")):
+            got, _calls, put = self._probe(home, path)
+            self.assertEqual(got, path)
+            self.assertEqual(put.call_args[0][1]["rss_path"], path)
+
+    def test_standard_path_probed_first(self):
+        got, calls, _ = self._probe("https://investors.hanmi.com/", ir._IRAPP_RSS_PATH)
+        self.assertEqual(got, ir._IRAPP_RSS_PATH)
+        self.assertEqual(calls, ["https://investors.hanmi.com" + ir._IRAPP_RSS_PATH])
+
+    def test_no_feed_is_none_and_cached_negative(self):
+        got, calls, put = self._probe("https://ir.example.com/")
+        self.assertIsNone(got)
+        self.assertEqual(len(calls), len(ir._IRAPP_RSS_PATHS))
+        self.assertEqual(put.call_args[0][1]["rss_path"], "")
+
+    def test_unreachable_host_stops_after_first_attempt(self):
+        got, calls, _ = self._probe("https://investors.nowhere.example/", raises=True)
+        self.assertIsNone(got)
+        self.assertEqual(len(calls), 1)
+
+    def test_irapp_site_wrapper(self):
+        with patch.object(ir, "_irapp_rss_path", return_value="/news-presentations/press-releases/rss"):
+            self.assertTrue(ir._irapp_site("https://ir.huntington.com/"))
+        with patch.object(ir, "_irapp_rss_path", return_value=None):
+            self.assertFalse(ir._irapp_site("https://ir.example.com/"))
 
 
 class TestQ4UndatedItemDropped(unittest.TestCase):
