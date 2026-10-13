@@ -10,9 +10,16 @@ This powers the Geographic view's full-landscape "By State" and "By MSA"
 tabs — so a user can see which banks (public or private) hold the most
 deposits in, e.g., the Atlanta MSA.
 
+Modes: (none) monthly full sweep; `ownership` nightly post-survey
+ownership pass; `proximity` only (re)build the Branch Proximity snapshots.
+Every mode that writes branches then rebuilds the Branch Proximity
+snapshots (analysis/branch_proximity) so the page serves them instead of
+recomputing JPM's ~334k pairs per request.
+
 Exit code:
   0  — at least 95% of attempted banks ingested successfully
-  1  — heavier failure (suggests FDIC outage worth alerting on)
+  1  — heavier failure (suggests FDIC outage worth alerting on), or a
+       proximity snapshot build failure
 """
 
 from __future__ import annotations
@@ -176,12 +183,33 @@ def apply_post_survey_ownership(year: int, cert_to_ticker: dict[int, str],
     return True
 
 
+def build_proximity_snapshots() -> bool:
+    """Rebuild every universe bank's Branch Proximity views against the
+    store as it now stands. True when nothing failed. A failure leaves the
+    affected banks' pages computing live (their stored view no longer
+    matches the store version) — slower, never wrong."""
+    from analysis.branch_proximity import build_snapshots
+    from data.bank_universe import get_universe_tickers
+    try:
+        tickers = get_universe_tickers()
+    except Exception as e:                                   # noqa: BLE001
+        print(f"[proximity] universe unavailable: {type(e).__name__}: {e}",
+              flush=True)
+        return False
+    stats = build_snapshots(tickers,
+                            log=lambda m: print(m, flush=True))
+    return stats["failed"] == 0
+
+
 def main() -> int:
     import warnings; warnings.filterwarnings("ignore")
     from data.branches_store import init_branches_schema
     from data.fdic_client import list_all_active_institutions
 
     init_branches_schema()
+
+    if "proximity" in sys.argv[1:]:
+        return 0 if build_proximity_snapshots() else 1
 
     # `python -m jobs.refresh_sod ownership` — only the post-survey ownership
     # pass (cheap: one history query + fetches for newly merged charters).
@@ -201,7 +229,8 @@ def main() -> int:
         names = {int(i["cert"]): i.get("name") or ""
                  for i in list_all_active_institutions() if i.get("cert")}
         ok = apply_post_survey_ownership(year, cert_to_ticker, names)
-        return 0 if ok else 1
+        prox_ok = build_proximity_snapshots()
+        return 0 if ok and prox_ok else 1
 
     cert_to_ticker = _build_cert_to_ticker()
 
@@ -274,9 +303,11 @@ def main() -> int:
         {int(i["cert"]): i.get("name") or "" for i in institutions
          if i.get("cert")})
 
+    prox_ok = build_proximity_snapshots()
+
     # Tolerate <5% failure rate (FDIC's free API will hiccup at this volume)
     success_rate = success / max(1, len(institutions))
-    return 0 if success_rate >= 0.95 else 1
+    return 0 if success_rate >= 0.95 and prox_ok else 1
 
 
 if __name__ == "__main__":

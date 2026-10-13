@@ -90,6 +90,20 @@ class _StubUI:
         st.download_button = lambda *a, **k: None
         st.selectbox = self._selectbox
         st.radio = self._radio
+        # Stub-swap hazard (memory: streamlit-stub-replace-hazard): a ui
+        # module imported while an EARLIER stub object was installed stays
+        # bound to it, and these extensions never reach it — only under
+        # discovery, depending on which test module imported it first.
+        # Point every loaded ui.* module at the current stub for this test.
+        import sys
+        self._rebound = []
+        for name, mod in list(sys.modules.items()):
+            if (name.startswith("ui.") and mod is not None
+                    and getattr(mod, "st", None) is not None
+                    and getattr(mod.st, "__name__", "") == "streamlit"
+                    and mod.st is not st):
+                self._rebound.append((mod, mod.st))
+                mod.st = st
 
     def _scripted(self, key, options):
         if key in self.select_values:
@@ -119,6 +133,8 @@ class _StubUI:
         return opts[index or 0] if opts else None
 
     def restore(self):
+        for mod, old in self._rebound:
+            mod.st = old
         for n, v in self._saved.items():
             if v is _MISSING:
                 if hasattr(self.st, n):
