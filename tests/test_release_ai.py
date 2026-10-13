@@ -239,6 +239,9 @@ class TestAiRetryNotLocked(unittest.TestCase):
         dc.get = lambda k, max_age_s=None: self.store.get(k)
         dc.put = lambda k, v: self.store.__setitem__(k, v)
         rm._current_accession = lambda cik: "ACC1"
+        # release_metrics reads the 8-K's supplement exhibit too (v31).
+        self._orig_sup = ip.earnings_supplement
+        ip.earnings_supplement = lambda cik, acc: None
         ip.latest_earnings_release = lambda cik: {
             "html": "<p>x</p>", "filed_date": "2026-07-14", "accession": "ACC1",
             "url": "u"}
@@ -249,6 +252,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
         import data.ir_provider as ip
         (dc.get, dc.put, self.rm._current_accession,
          ip.latest_earnings_release) = self._orig
+        ip.earnings_supplement = self._orig_sup
 
     def _seed(self, ai_state=None, attempts=0):
         value = {"accession": "ACC1", "qend": "2026-06-30",
@@ -260,7 +264,7 @@ class TestAiRetryNotLocked(unittest.TestCase):
             value["ai_attempts"] = attempts
         # Key version must track data/release_metrics.py's current spec
         # version or the seed is invisible and every test re-extracts.
-        self.store[f"release_metrics:v30:{1}"] = {
+        self.store[f"release_metrics:v31:{1}"] = {
             "cached_at": "2020-01-01T00:00:00", "value": value}  # stale ⇒ re-check
 
     def _patch_fill(self, state):

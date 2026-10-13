@@ -809,6 +809,12 @@ def _fill_release_metrics(rows, max_workers: int = 6) -> None:
                     metrics.get("total_revenue") is not None:
                 row["rev_act"] = metrics["total_revenue"]
                 row["rev_act_src"] = "release"     # never scored (score_rev)
+            elif row.get("rev_act") is None and \
+                    metrics.get("rev_sum") is not None:
+                # No total line printed: the release's NII + noninterest
+                # income (owner 2026-10-13), labeled as the sum it is.
+                row["rev_act"] = metrics["rev_sum"]
+                row["rev_act_src"] = "release, NII + nonint. inc."
 
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         list(ex.map(_one, rows))

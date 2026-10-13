@@ -607,7 +607,10 @@ class TestResultsBoard(_ExportSite):
                                       "Release Revenue ($)"])
         self.assertIn("Release NIM (%)", hdr)
         self.assertIn("Release TBV/sh ($)", hdr)
-        self.assertEqual(len(hdr), 22 + len(self.E._REL_METRICS))
+        # + the release's NII + noninterest income (owner 2026-10-13: shown
+        # when no total revenue line is printed) as its own column.
+        self.assertEqual(len(hdr), 22 + len(self.E._REL_METRICS) + 1)
+        self.assertEqual(hdr[-1], "Release NII + Nonint. Inc. ($)")
         a = dict(zip(hdr, g[1]))
         self.assertEqual(a["Ticker"], "AAA")
         self.assertEqual(a["Reported"], dt.datetime(2026, 7, 15))
