@@ -588,6 +588,38 @@ class TestDataQualitySources(_DataQualitySite):
         self.assertIn("percent units", src["Units"])
 
 
+class TestDataQualityFdicFieldsOnScreen(_DataQualitySite):
+    """The on-screen FDIC Call Report table used its own formatter: a
+    mega-bank Total Assets printed "$4091.39B" (no thousands separator), a
+    loss "$-1.2M", a rounds-to-zero ratio "-0.00%" and an absent field
+    "n/a". It now uses the shared formatters (owner rules 2026-09-30 /
+    2026-10-05); the export keeps the raw $K values."""
+
+    def test_mega_bank_loss_zero_and_absent(self):
+        import sys
+        frame = pd.DataFrame([{
+            "REPDTE": pd.Timestamp("2025-12-31"), "REPNM": "JPMorgan Chase Bank",
+            "ASSET": 4_091_390_000.0, "DEP": 2_820_280_000.0,
+            "LNLSNET": 1_535_630_000.0, "EQTOT": 341_680_000.0,
+            "NETINC": -1_234.0, "NIMY": 2.61, "ROA": -0.001,
+            "IDT1CER": None, "NCLNLSR": 0.78,
+        }])
+        shown = []
+        self.stub.dataframe = lambda df, **k: shown.append(df)
+        with mock.patch.object(sys.modules[__name__], "_fdic_frame",
+                               lambda: frame):
+            self._render(tab=1, sec_prov={}, bank_metrics=[])
+        fdic = next(df for df in shown if "FDIC Field" in df.columns)
+        v = dict(zip(fdic["FDIC Field"], fdic["Value"]))
+        self.assertEqual(v["ASSET"], "$4,091.39B")
+        self.assertEqual(v["DEP"], "$2,820.28B")
+        self.assertEqual(v["EQTOT"], "$341.68B")
+        self.assertEqual(v["NETINC"], "-$1.2M")
+        self.assertEqual(v["ROA"], "0.00%")                 # no "-0.00%"
+        self.assertEqual(v["NCLNLSR"], "0.78%")
+        self.assertEqual(v["IDT1CER"], "—")                 # absent, on screen
+
+
 class TestDataQualityFfiecLadder(_DataQualitySite):
 
     def _render_ladder(self, ladder):

@@ -12,7 +12,8 @@ non-disclosure → stays None, pinned too):
   WFC   ROA / NIM / efficiency / NCOs / ACL / CET1 under "% Change from".
   GS    nine-month efficiency refused; BV + EPS history; Standardized CET1.
   JPM   adj. EPS / dividend / overhead ratio prose; supplement history.
-  C     revenue / efficiency / RoTCE beside caption-named segment tables.
+  C     revenue / efficiency / RoTCE beside caption-named segment tables;
+        EX-99.2 oldest-first split header, measure-major NIM, NCL/ACLL.
 Regression guards from the 217-bank old/new diff: FUNC, EWBC, TRMK, PDLB,
 KEY, FHN, BMRC, BANR.
 """
@@ -237,6 +238,70 @@ class TestCiti(unittest.TestCase):
         self.assertEqual(_cols(self.html, "efficiency"), (58.5, 57.4, 64.7))
 
 
+class TestCitiSupplement(unittest.TestCase):
+    """Citi 3Q26 EX-99.2: OLDEST-first split header ("3Q | 4Q | 1Q | 2Q |
+    3Q" over "2025 | 2025 | 2026 | 2026 | 2026 | 2Q26 | 3Q25 | 2025 | 2026
+    | (Decrease)") — the "2Q26 | 3Q25" change labels used to be read as the
+    header, putting 2Q26 on the 3Q25 column."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = _doc("C_2026-10-13_ex99_2.htm")
+
+    def test_split_header_with_change_labels_and_ytd(self):
+        import re
+        rows = rm._table_rows(re.findall(r"(?is)<table[^>]*>(.*?)</table>",
+                                         self.html)[0])
+        self.assertEqual(rm._period_header(rows, detail=True)[0], [
+            "2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30",
+            "2026-09-30"])
+
+    def test_financial_summary_columns(self):
+        self.assertEqual(_cols(self.html, "roa"), (0.69, 0.80, 0.55))
+        self.assertEqual(_cols(self.html, "t1_ratio"), (14.6, 14.68, 14.97))
+        self.assertEqual(_cols(self.html, "efficiency"), (58.5, 57.4, 64.7))
+        # "Diluted earnings per share:" (section) → "Net income (loss)" row
+        self.assertEqual(_cols(self.html, "eps_diluted"), (2.85, 3.15, 1.86))
+
+    def test_measure_major_average_rates(self):
+        # "Average Volumes | Interest | % Average Rate" × "3Q25 | 2Q26 | 3Q26"
+        self.assertEqual(_cols(self.html, "nim"), (2.43, 2.54, 2.40))
+        self.assertEqual(_cols(self.html, "loan_yield"), (8.12, 8.00, 8.43))
+
+    def test_ncl_and_acll_labels(self):
+        self.assertEqual(_cols(self.html, "nco_ratio"), (1.09, 1.23, 1.21))
+        self.assertEqual(_cols(self.html, "acl_loans"), (2.48, 2.54, 2.65))
+
+    def test_firmwide_page_after_segments_keeps_its_own_heading(self):
+        # Prod v35: the supplement's consolidated cut ended right after the
+        # "Page 4 SERVICES (In millions …)" heading and appended the
+        # AVERAGE BALANCES table bare — it inherited the Services heading,
+        # was skipped as a segment table, and Citi's NIM went missing.
+        # Citi's own tables and headings; the one-cell "Segment results"
+        # table is scaffolding standing in for the full supplement's
+        # boundary (which falls inside the segment page, after its heading).
+        import re
+        tables = re.findall(r"(?is)<table[^>]*>.*?</table>", self.html)
+        doc = ("<p>" + "Financial summary. " * 600 + "</p>" + tables[0]
+               + "<p>Page 4 SERVICES (In millions of dollars, except as "
+               "otherwise noted)</p><table><tr><td>Segment results</td></tr>"
+               "</table>" + tables[1]
+               + "<p>AVERAGE BALANCES AND INTEREST RATES (1)(2)(3)(4) Taxable "
+               "Equivalent Basis (In millions of dollars, except as "
+               "otherwise noted)</p>" + tables[2])
+        cut = rm._consolidated_html(doc)
+        self.assertNotIn(tables[1], cut)                  # segment page out
+        self.assertEqual(_cols(cut, "nim"), (2.43, 2.54, 2.40))
+
+    def test_segment_page_heading_skipped(self):
+        import re
+        pre = "Page 4 SERVICES (In millions of dollars, except as otherwise noted)"
+        self.assertTrue(rm._segment_table(pre, ""))
+        self.assertFalse(rm._segment_table(
+            "ALLOWANCE FOR CREDIT LOSSES ON LOANS (ACLL) Page 1 (In millions "
+            "of dollars)", ""))
+
+
 class TestCorpusRegressions(unittest.TestCase):
     """Cases the 217-bank old/new diff surfaced (2Q26 releases)."""
 
@@ -303,6 +368,13 @@ class TestLabelSemantics(unittest.TestCase):
         ("lev_ratio", "Tier 1 capital to total assets (Ponce Financial Group)", True),
         ("lev_ratio", "Tier 1 capital to average assets (3)", True),
         ("t1_ratio", "Tier 1 risk-based capital to total risk-weighted assets", True),
+        # AVBC: "as a percentage of average assets" is leverage too
+        ("t1_ratio", "Tier 1 capital as a percentage of average assets (5)", False),
+        ("lev_ratio", "Tier 1 capital as a percentage of average assets (5)", True),
+        # Citi credit terms
+        ("nco_ratio", "Total NCLs (annualized) as a % of total average loans", True),
+        ("acl_loans", "Total ACLL as a % of total loans (9)", True),
+        ("acl_loans", "Consumer ACLL as a % of total consumer loans", False),
         ("lev_ratio", "Supplementary leverage ratio (“SLR”)", False),
         # tangible EQUITY includes preferred — not TCE (TRMK, GBCI)
         ("tce_ratio", "Tangible equity / tangible assets", False),
@@ -365,7 +437,7 @@ class TestReleaseMetricsEndToEnd(unittest.TestCase):
 
     def test_unty_record(self):
         out = rm.release_metrics(920427)
-        self.assertIn("release_metrics:v34:920427", self.store)
+        self.assertIn("release_metrics:v38:920427", self.store)
         self.assertEqual(out["capital"]["cet1_ratio"], 14.46)
         self.assertEqual(out["capital"]["lev_ratio"], 13.22)
         self.assertEqual(out["prior_metrics"]["cet1_ratio"], 14.19)
