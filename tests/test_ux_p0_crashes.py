@@ -233,15 +233,41 @@ class TestBranchProximityRenderCaps(unittest.TestCase):
     branches × 60 unique competitors across 120 banks = 6,000 pairs."""
 
     def setUp(self):
+        import numpy as np
         import data.branches_store as bs
         import ui.branch_proximity as bp
         import ui.geo_view as gv
+        from analysis.branch_proximity import view_from_inputs
         self.pairs = _pairs(100, 60, 120)
         self.pairs_before = self.pairs.copy()
-        subj = pd.DataFrame({
-            "bank_name": "Alpha", "branch_name": [f"S{i}" for i in range(100)],
-            "city": "City", "state": "PA", "deposits": 1,
-            "lat": 40.0, "lng": -75.0})
+        # The page renders the analysis.branch_proximity view (2026-10-13);
+        # build it from these synthetic pairs through the real view code —
+        # only the geometry (_in_range) is replaced by the pairs' own index.
+        subj = (self.pairs.drop_duplicates("subj_brnum")
+                [[c for c in self.pairs.columns if c.startswith("subj_")]]
+                .rename(columns={"subj_brnum": "brnum",
+                                 "subj_branch_name": "branch_name",
+                                 "subj_address": "address", "subj_city": "city",
+                                 "subj_state": "state", "subj_lat": "lat",
+                                 "subj_lng": "lng", "subj_deposits": "deposits"})
+                [["brnum", "branch_name", "address", "city", "state", "lat",
+                  "lng", "deposits"]]
+                .assign(bank_name="Alpha", cert=1).reset_index(drop=True))
+        cand = (self.pairs.drop_duplicates(["cert", "brnum"])
+                [bs._CAND_COLS].reset_index(drop=True))
+        si = self.pairs["subj_brnum"].map(
+            dict(zip(subj["brnum"], range(len(subj))))).to_numpy()
+        ci = self.pairs.set_index(["cert", "brnum"]).index.map(
+            {k: i for i, k in enumerate(zip(cand["cert"], cand["brnum"]))}
+        ).to_numpy()
+        d = self.pairs["distance_miles"].to_numpy(dtype=float)
+        inp = {"year": 2025, "subj": subj, "with_coords": subj, "cand": cand,
+               "n_subject_missing_coords": 0,
+               "n_competitor_missing_coords": 0, "reason": None}
+        with mock.patch.object(bs, "_in_range",
+                               lambda *a: (np.asarray(si, dtype=int),
+                                          np.asarray(ci, dtype=int), d)):
+            view = view_from_inputs(inp, 5)
         res = {"pairs": self.pairs, "n_subject_branches": 100,
                "n_subject_missing_coords": 0,
                "n_competitor_missing_coords": 0, "year": 2025,
@@ -256,10 +282,10 @@ class TestBranchProximityRenderCaps(unittest.TestCase):
             mock.patch.object(bp, "pill_row",
                               lambda pills, **k: self.ui.markdowns.append(
                                   " | ".join(pills))),
+            mock.patch.object(bp, "load_view",
+                              lambda cert, radius: (view, "snapshot")),
             mock.patch.object(bs, "get_branch_competitors",
                               lambda cert, radius_miles=5.0, year=None: res),
-            mock.patch.object(bs, "get_owner_branches",
-                              lambda cert, year=None: subj),
             mock.patch.object(bp, "get_fdic_cert", lambda t: 1),
             mock.patch.object(bp, "get_name", lambda t: "Alpha Bancorp"),
             mock.patch.object(bp, "table_export",
@@ -277,10 +303,11 @@ class TestBranchProximityRenderCaps(unittest.TestCase):
     def test_caps_render_not_export(self):
         from ui.branch_proximity import render_branch_proximity, _EXPORT_COLS
         render_branch_proximity("AAA")
-        # export: every pair, unmodified
+        # export: every pair, unmodified — built when clicked (a callable)
         self.assertEqual(len(self.exported), 1)
+        self.assertTrue(callable(self.exported[0]))
         pd.testing.assert_frame_equal(
-            self.exported[0],
+            self.exported[0](),
             self.pairs_before.rename(columns=_EXPORT_COLS))
         # map: all 100 subject branches + only the top-50 banks' 2,500
         m = self.mapped[0]

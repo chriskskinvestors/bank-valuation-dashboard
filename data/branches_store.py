@@ -59,6 +59,7 @@ Provides:
 
 from __future__ import annotations
 import math
+import time
 
 import numpy as np
 import pandas as pd
@@ -273,6 +274,7 @@ def upsert_branches(ticker: str, cert: int, df: pd.DataFrame) -> int:
             """)
         for r in rows:
             conn.execute(sql, r)
+    _bump_store_version()
     return len(rows)
 
 
@@ -364,6 +366,7 @@ def reattribute_absorbed_branches(absorbed_cert: int, owner_cert: int,
             "AND bank_name <> :name"),
             {"name": owner_name[:500], "owner": int(owner_cert),
              "y": int(year)}).rowcount
+    _bump_store_version()
     return {"written": len(rows), "skipped_no_uninumbr": skipped,
             "renamed": int(renamed or 0)}
 
@@ -389,6 +392,8 @@ def retag_tickers(year: int, cert_to_ticker: dict[int, str]) -> int:
                 "UPDATE branches SET ticker = :t WHERE cert = :c AND year = :y "
                 "AND (ticker IS NULL OR ticker <> :t)"),
                 {"t": tk.upper(), "c": int(cert), "y": int(year)}).rowcount or 0
+    if changed:
+        _bump_store_version()
     return changed
 
 
@@ -939,21 +944,22 @@ def _haversine_miles_vec(lat1: float, lng1: float, lat2: np.ndarray,
     return 2.0 * _EARTH_RADIUS_MILES * np.arcsin(np.sqrt(np.minimum(1.0, a)))
 
 
-def _pairs_within(subj: pd.DataFrame, cand: pd.DataFrame,
-                  radius_miles: float) -> pd.DataFrame:
-    """Every (subject branch, candidate branch) pair within radius_miles —
-    per subject branch: its _bbox, then the exact haversine cut.
+def _in_range(subj: pd.DataFrame, cand: pd.DataFrame, radius_miles: float
+              ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(subject positions, candidate positions, distances) of every pair
+    within radius_miles — per subject branch: its _bbox, then the exact
+    haversine cut. Subject order, then candidate order (positions are iloc
+    positions into `subj` / `cand`).
 
     Vectorised (UX review P1-05 follow-up, 2026-10-12): candidates are
     sorted by latitude once; each subject branch takes its latitude band by
     binary search and filters longitude + distance in numpy. The old loop
     re-filtered the WHOLE candidate frame in pandas per subject branch and
     built one dict per pair — for JPM 5,142 branches x a ~national candidate
-    set, ~20 s before anything rendered. Same pairs, columns and order
-    (subject order, then candidate order, then sorted by (subj_brnum,
-    distance_miles))."""
+    set, ~20 s before anything rendered."""
+    empty = (np.empty(0, dtype=int), np.empty(0, dtype=int), np.empty(0))
     if subj.empty or cand.empty:
-        return pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
+        return empty
     c_lat = cand["lat"].to_numpy(dtype=float)
     c_lng = cand["lng"].to_numpy(dtype=float)
     order = np.argsort(c_lat, kind="stable")
@@ -980,9 +986,19 @@ def _pairs_within(subj: pd.DataFrame, cand: pd.DataFrame,
         c_parts.append(idx[keep])
         d_parts.append(d[keep])
     if not s_parts:
+        return empty
+    return (np.concatenate(s_parts), np.concatenate(c_parts),
+            np.concatenate(d_parts))
+
+
+def _pairs_frame(subj: pd.DataFrame, cand: pd.DataFrame, si: np.ndarray,
+                 ci: np.ndarray, d: np.ndarray) -> pd.DataFrame:
+    """_COMPETITOR_PAIR_COLS rows for the given (subject, candidate,
+    distance) positions, in the given order (no sort)."""
+    if not len(si):
         return pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
-    sd = subj.iloc[np.concatenate(s_parts)].reset_index(drop=True)
-    cd = cand.iloc[np.concatenate(c_parts)].reset_index(drop=True)
+    sd = subj.iloc[si].reset_index(drop=True)
+    cd = cand.iloc[ci].reset_index(drop=True)
     out = pd.DataFrame({k: sd[v] for k, v in _SUBJ_PAIR_COLS.items()})
     for col in _CAND_COLS:
         out[col] = cd[col] if col in cd.columns else None
@@ -990,10 +1006,80 @@ def _pairs_within(subj: pd.DataFrame, cand: pd.DataFrame,
         out[col] = out[col].astype(int)
     for col in ("subj_lat", "subj_lng", "lat", "lng"):
         out[col] = out[col].astype(float)
-    out["distance_miles"] = np.concatenate(d_parts)
-    return (out[_COMPETITOR_PAIR_COLS]
+    out["distance_miles"] = np.asarray(d, dtype=float)
+    return out[_COMPETITOR_PAIR_COLS]
+
+
+def _pairs_within(subj: pd.DataFrame, cand: pd.DataFrame,
+                  radius_miles: float) -> pd.DataFrame:
+    """Every (subject branch, candidate branch) pair within radius_miles,
+    sorted by (subj_brnum, distance_miles) — the export / UI pair frame."""
+    si, ci, d = _in_range(subj, cand, radius_miles)
+    return (_pairs_frame(subj, cand, si, ci, d)
             .sort_values(["subj_brnum", "distance_miles"])
             .reset_index(drop=True))
+
+
+def proximity_inputs(cert: int, radius_miles: float,
+                     year: int | None = None) -> dict:
+    """The data a proximity search needs, fetched once:
+      year, subj (every subject-owner row), with_coords (subject rows with
+      lat/lng — the search centers), cand (other banks' rows with lat/lng
+      inside the union bounding box of the subject's radius_miles circles —
+      a box for the LARGEST radius also serves every smaller one),
+      n_subject_missing_coords, n_competitor_missing_coords, and reason
+      (why there is nothing to search, else None)."""
+    out = {"year": None, "subj": pd.DataFrame(), "with_coords": pd.DataFrame(),
+           "cand": pd.DataFrame(columns=_CAND_COLS),
+           "n_subject_missing_coords": 0, "n_competitor_missing_coords": 0,
+           "reason": None}
+    if year is None:
+        year = get_latest_year()
+    if year is None:
+        out["reason"] = "branches store is empty"
+        return out
+    out["year"] = int(year)
+    okey = _owner_key_of(int(cert), int(year))
+    subj = _q_to_df(
+        f"SELECT * FROM branches WHERE {_owner_key()} = :okey AND year = :year",
+        {"okey": okey, "year": int(year)},
+    )
+    # (cert, brnum) order: SQL returns rows in no defined order, and pair
+    # order among equal distances (co-located branches) follows input order.
+    if not subj.empty:
+        subj = subj.sort_values(["cert", "brnum"]).reset_index(drop=True)
+    out["subj"] = subj
+    out["n_competitor_missing_coords"] = _count_missing_coords(cert, year)
+    if subj.empty:
+        out["reason"] = (f"no SOD branches for cert {int(cert)} "
+                         f"in {int(year)}")
+        return out
+    with_coords = subj[subj["lat"].notna() & subj["lng"].notna()]
+    out["with_coords"] = with_coords
+    out["n_subject_missing_coords"] = len(subj) - len(with_coords)
+    if with_coords.empty:
+        out["reason"] = "no subject branches with coordinates"
+        return out
+    boxes = [_bbox(float(r.lat), float(r.lng), radius_miles)
+             for r in with_coords.itertuples(index=False)]
+    out["cand"] = _q_to_df(
+        f"""
+        SELECT {", ".join(_CAND_COLS)} FROM branches
+        WHERE year = :year AND {_owner_key()} <> :okey
+          AND lat IS NOT NULL AND lng IS NOT NULL
+          AND lat BETWEEN :lat_min AND :lat_max
+          AND lng BETWEEN :lng_min AND :lng_max
+        """,
+        {"year": int(year), "okey": okey,
+         "lat_min": min(b[0] for b in boxes),
+         "lat_max": max(b[1] for b in boxes),
+         "lng_min": min(b[2] for b in boxes),
+         "lng_max": max(b[3] for b in boxes)},
+    )
+    if not out["cand"].empty:
+        out["cand"] = (out["cand"].sort_values(["cert", "brnum"])
+                       .reset_index(drop=True))
+    return out
 
 
 def get_branch_competitors(cert: int, radius_miles: float = 5.0,
@@ -1018,61 +1104,51 @@ def get_branch_competitors(cert: int, radius_miles: float = 5.0,
     One SQL fetch prefiltered to the union bounding box of the subject's
     branch circles (small for a regional bank; approaches the footprint for
     a national one — never an unconditional national scan), then per-branch
-    bounding-box + exact haversine refinement in Python.
+    bounding-box + exact haversine refinement (_in_range).
     """
-    empty = pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
-    if year is None:
-        year = get_latest_year()
-    if year is None:
-        return {"pairs": empty, "n_subject_branches": 0,
-                "n_subject_missing_coords": 0,
-                "n_competitor_missing_coords": 0,
-                "year": None, "reason": "branches store is empty"}
-    okey = _owner_key_of(int(cert), int(year))
-    subj = _q_to_df(
-        f"SELECT * FROM branches WHERE {_owner_key()} = :okey AND year = :year",
-        {"okey": okey, "year": int(year)},
-    )
-    n_missing_comp = _count_missing_coords(cert, year)
-    if subj.empty:
-        return {"pairs": empty, "n_subject_branches": 0,
-                "n_subject_missing_coords": 0,
-                "n_competitor_missing_coords": n_missing_comp,
-                "year": int(year),
-                "reason": f"no SOD branches for cert {int(cert)} "
-                          f"in {int(year)}"}
-    with_coords = subj[subj["lat"].notna() & subj["lng"].notna()]
-    n_subj_missing = len(subj) - len(with_coords)
-    if with_coords.empty:
-        return {"pairs": empty, "n_subject_branches": len(subj),
-                "n_subject_missing_coords": n_subj_missing,
-                "n_competitor_missing_coords": n_missing_comp,
-                "year": int(year),
-                "reason": "no subject branches with coordinates"}
-    boxes = [
-        (float(r.brnum), _bbox(float(r.lat), float(r.lng), radius_miles))
-        for r in with_coords.itertuples(index=False)
-    ]
-    lat_min = min(b[1][0] for b in boxes)
-    lat_max = max(b[1][1] for b in boxes)
-    lng_min = min(b[1][2] for b in boxes)
-    lng_max = max(b[1][3] for b in boxes)
-    cand = _q_to_df(
-        f"""
-        SELECT {", ".join(_CAND_COLS)} FROM branches
-        WHERE year = :year AND {_owner_key()} <> :okey
-          AND lat IS NOT NULL AND lng IS NOT NULL
-          AND lat BETWEEN :lat_min AND :lat_max
-          AND lng BETWEEN :lng_min AND :lng_max
-        """,
-        {"year": int(year), "okey": okey,
-         "lat_min": lat_min, "lat_max": lat_max,
-         "lng_min": lng_min, "lng_max": lng_max},
-    )
-    pairs = _pairs_within(with_coords, cand, radius_miles)
-    return {"pairs": pairs, "n_subject_branches": len(subj),
-            "n_subject_missing_coords": n_subj_missing,
-            "n_competitor_missing_coords": n_missing_comp,
-            "year": int(year),
-            "reason": None if len(pairs) else
-            f"no competitor branches within {radius_miles} miles"}
+    inp = proximity_inputs(cert, radius_miles, year)
+    res = {"n_subject_branches": len(inp["subj"]),
+           "n_subject_missing_coords": inp["n_subject_missing_coords"],
+           "n_competitor_missing_coords": inp["n_competitor_missing_coords"],
+           "year": inp["year"], "reason": inp["reason"]}
+    if inp["reason"]:
+        res["pairs"] = pd.DataFrame(columns=_COMPETITOR_PAIR_COLS)
+        return res
+    res["pairs"] = _pairs_within(inp["with_coords"], inp["cand"], radius_miles)
+    if not len(res["pairs"]):
+        res["reason"] = f"no competitor branches within {radius_miles} miles"
+    return res
+
+
+# ── Store version (what a derived snapshot was built against) ──────────────
+# Every writer of the branches table bumps this stamp after it commits;
+# derived snapshots (analysis/branch_proximity) record the stamp they were
+# built from and are served only while it still matches — any later write
+# (monthly sweep, nightly ownership re-attribution, ticker re-tag) makes them
+# stale, and the page recomputes live instead of serving the old answer.
+_STORE_VERSION_KEY = "branches_store_version"
+
+
+def store_version() -> str | None:
+    """The current branches-store stamp, or None when unknown (no stamp
+    yet, or the cache is unreachable — callers treat None as 'stale')."""
+    try:
+        from data import cache
+        v = cache.get(_STORE_VERSION_KEY, max_age_s=None)
+    except Exception:
+        return None
+    return (v or {}).get("v")
+
+
+def _bump_store_version() -> None:
+    """New stamp after a branches write. A failure is logged, never raised:
+    the write already committed, and the job that wrote rebuilds its
+    snapshots against whatever stamp it reads afterwards."""
+    import uuid
+    try:
+        from data import cache
+        cache.put(_STORE_VERSION_KEY,
+                  {"v": f"{time.time():.6f}-{uuid.uuid4().hex[:8]}"})
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[branches] store version bump failed: {type(e).__name__}: {e}",
+              flush=True)
