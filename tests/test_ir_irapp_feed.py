@@ -349,5 +349,99 @@ class TestPurgeDateInferredRows(unittest.TestCase):
         self.assertEqual(pe._purge_junk_events(), 0, "idempotent")
 
 
+class TestIrappAnnouncementFeedPath(unittest.TestCase):
+    """Call details read the host's DISCOVERED feed (HBAN/PNC serve alternate
+    sections), and a multi-quarter release calendar never supplies a date."""
+
+    HBAN_FEED = ("<rss><channel><item><title><![CDATA[Huntington Bancshares Incorporated "
+                 "Announces Third Quarter 2026 Earnings Call Details]]></title>"
+                 "<link>https://ir.huntington.com/news-presentations/press-releases/detail/1024/x</link>"
+                 "</item></channel></rss>")
+    # HBAN's release text (2026-09-30), verbatim excerpt.
+    HBAN_BODY = (
+        "Huntington Bancshares Incorporated Announces Third Quarter 2026 Earnings Call "
+        "Details September 30, 2026 4:23pm EDT COLUMBUS, Ohio , Sept. 30, 2026 /PRNewswire/ "
+        "-- Huntington Bancshares Incorporated (Nasdaq: HBAN) will release third quarter "
+        "2026 financial results prior to the market opening on Thursday, October 22, 2026. "
+        "The Company will host a conference call to review quarterly financial results at "
+        "9 a.m. ET. Webcast Information The third quarter 2026 earnings conference call, "
+        "along with slides, may be accessed via a live Internet webcast in the Investor "
+        "Relations section of Huntington's website or through a dial-in telephone number "
+        "at (877) 407-8029 or (201) 689-8029; conference ID #&nbsp;13762987. A replay of "
+        "the webcast will be archived in the Investor Relations section of Huntington's "
+        "website. A telephone replay will be available approximately three hours after "
+        "the completion of the call through Friday, October 30, 2026, at (877) 660-6853 "
+        "or (201) 612-7415; conference ID # 13762987.")
+    PNC_FEED = ("<rss><channel><item><title>The PNC Financial Services Group Provides "
+                "Quarterly 2027 Earnings Release Dates</title>"
+                "<link>https://investor.pnc.com/news-events/financial-press-releases/detail/691/x</link>"
+                "</item></channel></rss>")
+    PNC_BODY = (
+        "PNC announced today it expects to issue 2027 quarterly earnings releases "
+        "pre-market open and hold conference calls at 10 a.m. (ET) on the following "
+        "dates: First Quarter – Thursday, April 15, 2027 Second Quarter – Thursday, "
+        "July 15, 2027 Third Quarter – Friday, Oct. 15, 2027")
+
+    def _ann(self, home, feed_path, feed, body):
+        import data.earnings_call as ec
+        fetched = []
+
+        def fake_get(url, *a, **k):
+            fetched.append(url)
+            ok = url.endswith(feed_path)
+            return _Resp(feed if ok else "Not Found", status=200 if ok else 404)
+        import data.cache as dc
+        with patch.object(dc, "get", return_value=None), patch.object(dc, "put"), \
+             patch.object(ir.requests, "get", side_effect=fake_get), \
+             patch.object(ec, "_fetch_pr_body", return_value=body):
+            return ir._irapp_announcement(home, "2026-10-13"), fetched
+
+    def test_hban_call_details_from_alternate_feed(self):
+        info, fetched = self._ann("https://ir.huntington.com/",
+                                  "/news-presentations/press-releases/rss",
+                                  self.HBAN_FEED, self.HBAN_BODY)
+        self.assertEqual(info, {"release_date": "2026-10-22", "call_time": "9a ET",
+                                "dial_in": "(877) 407-8029 (ID 13762987)"})
+        self.assertNotIn("https://ir.huntington.com" + ir._IRAPP_RSS_PATH, fetched[1:],
+                         "after the probe, the standard path is never read")
+
+    def test_pnc_release_calendar_supplies_nothing(self):
+        info, _ = self._ann("https://investor.pnc.com/",
+                            "/news-events/financial-press-releases/rss",
+                            self.PNC_FEED, self.PNC_BODY)
+        self.assertIsNone(info)          # was call_date 2027-04-15 — a far quarter
+
+
+class TestReleaseCalendarIsNotAnAnnouncement(unittest.TestCase):
+    """Titles from prod's events table (survey 2026-10-13)."""
+
+    def test_multi_quarter_calendars_excluded(self):
+        from data.earnings_call import _is_earnings_announcement
+        for t in ("Fifth Third Bancorp Announces Earnings Release Dates for Fiscal Year 2027",
+                  "KEYCORP ANNOUNCES 2027 QUARTERLY EARNINGS CONFERENCE CALL DATES",
+                  "M&T Bank Corporation Announces Conference Call Dates to Review Quarterly 2028 Earnings",
+                  "The PNC Financial Services Group Provides Quarterly 2027 Earnings Release Dates",
+                  "Regions Financial Corp. Announces Quarterly Earnings Release Dates for 2027",
+                  "State Street Corporation (NYSE: STT) Announces Remaining 2026 Quarterly "
+                  "Financial Results Release Dates and Conference Call",
+                  "Bank of America Announces Fourth Quarter 2026 and Quarterly 2027 "
+                  "Financial Reporting Dates"):
+            self.assertFalse(_is_earnings_announcement(t), t)
+
+    def test_single_quarter_dates_titles_kept(self):
+        from data.earnings_call import _is_earnings_announcement
+        for t in ("Fulton Financial Corporation Announces Dates for Third Quarter 2026 "
+                  "Earnings Release and Webcast",
+                  "Metropolitan Bank Holding Corp. Schedules Third Quarter 2026 Earnings "
+                  "Release and Conference Call Dates",
+                  "Northeast Bank Announces Dates for Fiscal 2026 Fourth Quarter Earnings "
+                  "Results and Conference Call",
+                  "Bank OZK Announces Third Quarter 2026 Earnings Release and Conference Call Dates",
+                  "SmartFinancial Sets Dates for Third Quarter Earnings Release and Conference Call",
+                  "Atlantic Union Bankshares Announces Q2 2026 Financial Results and Capital Updates",
+                  "Huntington Bancshares Incorporated Announces Third Quarter 2026 Earnings Call Details"):
+            self.assertTrue(_is_earnings_announcement(t), t)
+
+
 if __name__ == "__main__":
     unittest.main()
