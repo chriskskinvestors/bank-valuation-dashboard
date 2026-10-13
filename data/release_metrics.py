@@ -135,8 +135,12 @@ _TABLE_TAIL = re.compile(r"^[\s,]*[($]?\d")
 # ratio, as adjusted, of 52.1%") disqualifies. Basis markers (FTE / taxable-
 # equivalent / a bare "(non-GAAP)" footnote tag) are NOT variants — they mark
 # the conventional reported basis — and stay eligible.
+# "Operating expenses" is the GAAP expense line, not an "operating" variant:
+# Citi 3Q26 "Efficiency Ratio (total operating expenses/total revenues, net)"
+# was refused as non-GAAP.
 _CONNECTOR_EXCLUDE = re.compile(
-    r"\b(?:adjusted|core|operating|normalized|underlying|pro forma)\b|"
+    r"\b(?:adjusted|core|operating(?! expenses?\b)|normalized|underlying|"
+    r"pro forma)\b|"
     # A forecast, not a result: NEWT 2Q26 "within our 2Q26 EPS guidance range
     # of $0.42-$0.52" shipped $0.42 as diluted EPS (reported: $0.47).
     r"\b(?:guidance|outlook|forecast|target)\b", re.I)
@@ -853,6 +857,8 @@ def _row_values(cells: list[str], slots: bool = False,
             if raw.startswith("(") and "." in m.group(1):
                 v = -v
             elif _FOOTNOTE.match(raw):
+                if slots and n_periods and len(vals) >= n_periods:
+                    vals.append(None)     # "(4)%": a change value (Citi)
                 continue
             vals.append(v)
     return vals
@@ -1745,12 +1751,25 @@ _RECOVERY_LABEL = re.compile(r"(?i)\brecover")
 _NUMERIC_CELL = re.compile(r"^[\s$%(),.\d*\-]+$")
 
 
-def _segment_table(pre_text: str, title: str) -> bool:
+# A header CAPTION cell that is a bare segment name followed by its units
+# note: Citi 3Q26 "Services ($ in millions, …)", "Markets (…)", "Banking
+# (…)", "Wealth (…)", "USCC (a) (…)", "All Other (Managed Basis) (a)(b)
+# (…)" beside the firmwide "Citigroup ($ in millions, …)" — every segment
+# repeats "Total revenues, net of interest expense" / "RoTCE" / "Efficiency
+# Ratio", which refused the firm's own figures.
+_SEGMENT_CAPTION = re.compile(
+    r"(?i)^(?:services|markets|banking|wealth|uscc|all other|personal banking"
+    r"|corporate(?:\s*(?:and|&|/)\s*other)?|cards?)\b\s*(?:\([^)]{0,30}\)\s*)*"
+    r"(?:\(\$|$)")
+
+
+def _segment_table(pre_text: str, title: str, caption: str = "") -> bool:
     """True for a segment table: segment vocabulary in the table's own
-    title rows, or an UPPER-CASE segment page heading in the text right
-    above it (prose that merely mentions "commercial banking" is mixed case
-    and never trips this)."""
-    if _SEGMENT_TITLE.search(title):
+    title rows, a bare segment name as the header's caption cell, or an
+    UPPER-CASE segment page heading in the text right above it (prose that
+    merely mentions "commercial banking" is mixed case and never trips
+    this)."""
+    if _SEGMENT_TITLE.search(title) or _SEGMENT_CAPTION.match(caption.strip()):
         return True
     m = _SEGMENT_TITLE.search(pre_text[-100:])
     return bool(m) and m.group(0).isupper()
@@ -1831,9 +1850,11 @@ def extract_table_metrics(html: str, expected_qend: str,
         if not hdr:
             continue                      # no period row → skip table
         qends, hdr_i, span_i, n_change, widths, inter = hdr
+        cap_cell = next((c for c in rows[hdr_i] if c), "")
         if _segment_table(
                 _flat_text((html or "")[max(0, tm.start() - 1500):tm.start()]),
-                " ".join(c for r in rows[:hdr_i] for c in r if c)):
+                " ".join(c for r in rows[:hdr_i] for c in r if c),
+                "" if _period_qend(cap_cell) else cap_cell):
             continue                      # a business segment's table
         if quarter_only:
             head_text = " ".join(c for r in rows[:hdr_i + 1] for c in r if c)
@@ -2385,7 +2406,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v33:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v34:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2412,11 +2433,16 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
-    # v33 (2026-10-13): a NON-2.02 exhibit must also name the results as
+    # v34 (2026-10-13): a NON-2.02 exhibit must also name the results as
     # what it reports (ir_provider._RESULTS_TITLE) — dividend notices
     # (CAC/CFFI/NBHC/QCRH/FKYS/FMCB), a deck (CHMG) and a scheduling notice
     # (SSB) were these banks' frontier records; and a forecast is never a
     # result (NEWT's "EPS guidance range of $0.42-$0.52" read as EPS).
+    # (Re-bumped past v33, which #401 used for Citi.)
+    # v33 (2026-10-13): Citi-style segment tables named in the header
+    # caption ("Services ($ in millions …)") are skipped; "(4)%" change
+    # cells hold their column; "total operating expenses" in a label's
+    # definition is not an "operating" variant (Citi efficiency 58.5%).
     # v32 (2026-10-13): the finder steps past a NON-RESULTS 2.02 exhibit
     # (NEWT's dividend declarations, deal closings) and never past an
     # Item 4.02 filing — NEWT's record's frontier IS the dividend 8-K.
@@ -2495,7 +2521,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v33:{int(cik)}"
+    key = f"release_metrics:v34:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

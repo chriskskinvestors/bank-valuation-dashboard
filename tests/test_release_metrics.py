@@ -803,8 +803,13 @@ class TestMegaCapTableShapes(unittest.TestCase):
             "All Other (Managed Basis) ($ in millions)",
             ["Total revenues", zw, "1,737", zw, "1,682", zw, "1,716", zw,
              "3%", zw, "1%"])
+        # v33: the caption "All Other (Managed Basis) ($ in millions)" names
+        # a segment, so that table is skipped outright — the firmwide figure
+        # serves, and the segment's own row never ships on its own.
         m = extract_table_metrics(firmwide + segment, "2026-06-30")
-        self.assertIsNone(m.get("total_revenue"))
+        self.assertEqual(m.get("total_revenue"), 24_766_000_000.0)
+        self.assertIsNone(
+            extract_table_metrics(segment, "2026-06-30").get("total_revenue"))
 
 
 class TestOrdinalQuarterHeaders(unittest.TestCase):

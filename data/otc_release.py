@@ -495,10 +495,11 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # (tests/test_wire_block_lanes.TestVersionHold enforces the hold).
     # Owed: release_metrics v26 (2026-10-12 — multi-quarter prose guard) and
     # v27 (2026-10-12 — YTD-banner headers, basic/diluted EPS pairs,
-    # consolidated vs continuing rows, plain vs TE NIM) and v30 (2026-10-13
+    # consolidated vs continuing rows, plain vs TE NIM) and v31 (2026-10-13
     # — capital / TCE / cost-of-deposits / loan-yield / NII+nonII table
     # reads, YTD sections, N/A slots, change-period headers; capital merged
-    # via merge_table_capital).
+    # via merge_table_capital) and v33 (2026-10-13 — caption-named segment
+    # tables, "(4)%" change cells, "operating expenses" not a variant).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
