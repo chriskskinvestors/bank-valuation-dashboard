@@ -140,7 +140,10 @@ _TABLE_TAIL = re.compile(r"^[\s,]*[($]?\d")
 # was refused as non-GAAP.
 _CONNECTOR_EXCLUDE = re.compile(
     r"\b(?:adjusted|core|operating(?! expenses?\b)|normalized|underlying|"
-    r"pro forma)\b", re.I)
+    r"pro forma)\b|"
+    # A forecast, not a result: NEWT 2Q26 "within our 2Q26 EPS guidance range
+    # of $0.42-$0.52" shipped $0.42 as diluted EPS (reported: $0.47).
+    r"\b(?:guidance|outlook|forecast|target)\b", re.I)
 # A table ROW label naming an exclusion ("Net interest margin FTE excluding
 # episodic items", FFIC) is a variant too — table readers only (prose
 # "excluding" handling lives in _EXCLUDE_*).
@@ -2403,7 +2406,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v33:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v34:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2430,6 +2433,12 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v34 (2026-10-13): a NON-2.02 exhibit must also name the results as
+    # what it reports (ir_provider._RESULTS_TITLE) — dividend notices
+    # (CAC/CFFI/NBHC/QCRH/FKYS/FMCB), a deck (CHMG) and a scheduling notice
+    # (SSB) were these banks' frontier records; and a forecast is never a
+    # result (NEWT's "EPS guidance range of $0.42-$0.52" read as EPS).
+    # (Re-bumped past v33, which #401 used for Citi.)
     # v33 (2026-10-13): Citi-style segment tables named in the header
     # caption ("Services ($ in millions …)") are skipped; "(4)%" change
     # cells hold their column; "total operating expenses" in a label's
@@ -2512,7 +2521,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v33:{int(cik)}"
+    key = f"release_metrics:v34:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

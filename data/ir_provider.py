@@ -161,6 +161,22 @@ def _is_earnings_headline(text: str) -> bool:
     return all(p.search(stripped) for p in _HEADLINE_PARTS)
 
 
+# The finder's stricter test for a NON-2.02 exhibit: its reports/announces
+# verb must take the results as its OBJECT — "REPORTS SECOND QUARTER 2026
+# RESULTS" (NPB), "ANNOUNCES EARNINGS FOR THE QUARTER ENDED" (FBP). The
+# bag-of-words gate above passed 11 of the 14 non-2.02 exhibits the finder
+# could select on 2026-10-13 that were NOT releases, on stray words:
+# dividends ("ANNOUNCES THIRD QUARTER DIVIDEND" + "Net income increased",
+# FKYS; "expected future earnings", CFFI; "payout results in", CAC), decks
+# (CHMG), "to Announce Quarterly Earnings Results on Wednesday" (SSB) — and
+# FMCB's dividend served its trailing-twelve-month ROA/ROE as Q2's.
+_RESULTS_TITLE = re.compile(
+    r"(?<!to )(?<!will )\b(?:reports?|announces?|posts?)\b"
+    r"(?:(?!dividend|\bcall\b|webcast|conference|presentation|\bdate\b|timing"
+    r"|schedul)[^.;:!?]){0,80}?\b(?:results|earnings|net (?:income|loss))\b"
+    r"(?!\s+(?:call|conference|webcast|release|date|presentation))", re.I)
+
+
 def _headline_text(html: str, limit: int = 800) -> str:
     """The exhibit's opening text (tags stripped, whitespace collapsed) —
     just enough for the headline gate."""
@@ -503,8 +519,9 @@ def latest_earnings_release(cik) -> dict | None:
     """I/O: locate + fetch the latest EX-99.1 earnings release for a CIK.
     Item 2.02 8-Ks are trusted outright; NEWER exhibit-bearing 8-Ks without
     2.02 (ASB furnishes its news release under Item 9.01 only) are accepted
-    only when the exhibit's opening text passes the earnings-headline gate —
-    a furnished investor deck never replaces a real release. Returns
+    only when the exhibit's opening text passes the earnings-headline gate
+    AND names the results as what it reports (_RESULTS_TITLE) — a furnished
+    investor deck or dividend notice never replaces a real release. Returns
     {url, html, filed_date, accession, form} or None. Any network or
     structure failure returns None — the resolver simply falls through to
     the SEC filing (this layer can only ever ADD a fresher source, never
@@ -535,8 +552,10 @@ def latest_earnings_release(cik) -> dict | None:
         if got and not (_is_call_transcript(got["html"])
                         or _is_notice_exhibit(got)
                         or _is_non_results_exhibit(got)):
-            if not cand.get("gated") or _is_earnings_headline(
-                    _headline_text(got["html"])):
+            if not cand.get("gated"):
+                return got
+            head = _headline_text(got["html"])
+            if _is_earnings_headline(head) and _RESULTS_TITLE.search(head):
                 return got
         if (not got and not cand.get("gated")) or cand.get("nonreliance"):
             return None
