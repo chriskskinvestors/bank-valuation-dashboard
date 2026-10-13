@@ -2903,7 +2903,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v37:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v38:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2930,6 +2930,10 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v38 (2026-10-13): supplement firmwide pages kept after the segment
+    # block travel with their own page heading — appended bare, Citi's
+    # AVERAGE BALANCES table inherited "SERVICES (In millions …)" and was
+    # skipped as a segment (NIM / loan yield missing in prod on v35).
     # v37 (2026-10-13): NIM / efficiency basis audit — efficiency follows
     # the plain-over-FTE rule (SBSI, EWBC, VABK); GAAP-marked prose NIM is
     # plain-basis evidence, so FTE-only table columns step aside (CBFV,
@@ -3045,7 +3049,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v37:{int(cik)}"
+    key = f"release_metrics:v38:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -3285,7 +3289,12 @@ def _consolidated_html(sup_html: str, cap: int = 120_000) -> str:
         m = _FIRMWIDE_TITLE.search(heading)
         return bool(m) and m.group(0).isupper()
 
-    tail = [s for j, (s, (h, _t)) in enumerate(zip(segs, starts))
+    # Each kept table travels WITH its own page heading (the text just
+    # before it): appended bare, it inherited the last front-section
+    # heading — Citi's "SERVICES (In millions …)" — and was skipped as a
+    # segment table (its NIM / loan yield went missing in prod, v35).
+    tail = [(segs[j - 1][-1500:] if j else "") + s
+            for j, (s, (h, _t)) in enumerate(zip(segs, starts))
             if h >= end and s[:6].lower() == "<table" and _firmwide_page(j, s)]
     return (sup_html or "")[:end] + "".join(tail)
 

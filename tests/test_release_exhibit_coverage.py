@@ -272,6 +272,27 @@ class TestCitiSupplement(unittest.TestCase):
         self.assertEqual(_cols(self.html, "nco_ratio"), (1.09, 1.23, 1.21))
         self.assertEqual(_cols(self.html, "acl_loans"), (2.48, 2.54, 2.65))
 
+    def test_firmwide_page_after_segments_keeps_its_own_heading(self):
+        # Prod v35: the supplement's consolidated cut ended right after the
+        # "Page 4 SERVICES (In millions …)" heading and appended the
+        # AVERAGE BALANCES table bare — it inherited the Services heading,
+        # was skipped as a segment table, and Citi's NIM went missing.
+        # Citi's own tables and headings; the one-cell "Segment results"
+        # table is scaffolding standing in for the full supplement's
+        # boundary (which falls inside the segment page, after its heading).
+        import re
+        tables = re.findall(r"(?is)<table[^>]*>.*?</table>", self.html)
+        doc = ("<p>" + "Financial summary. " * 600 + "</p>" + tables[0]
+               + "<p>Page 4 SERVICES (In millions of dollars, except as "
+               "otherwise noted)</p><table><tr><td>Segment results</td></tr>"
+               "</table>" + tables[1]
+               + "<p>AVERAGE BALANCES AND INTEREST RATES (1)(2)(3)(4) Taxable "
+               "Equivalent Basis (In millions of dollars, except as "
+               "otherwise noted)</p>" + tables[2])
+        cut = rm._consolidated_html(doc)
+        self.assertNotIn(tables[1], cut)                  # segment page out
+        self.assertEqual(_cols(cut, "nim"), (2.43, 2.54, 2.40))
+
     def test_segment_page_heading_skipped(self):
         import re
         pre = "Page 4 SERVICES (In millions of dollars, except as otherwise noted)"
@@ -416,7 +437,7 @@ class TestReleaseMetricsEndToEnd(unittest.TestCase):
 
     def test_unty_record(self):
         out = rm.release_metrics(920427)
-        self.assertIn("release_metrics:v37:920427", self.store)
+        self.assertIn("release_metrics:v38:920427", self.store)
         self.assertEqual(out["capital"]["cet1_ratio"], 14.46)
         self.assertEqual(out["capital"]["lev_ratio"], 13.22)
         self.assertEqual(out["prior_metrics"]["cet1_ratio"], 14.19)
