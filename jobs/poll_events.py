@@ -394,6 +394,7 @@ def _purge_junk_events() -> int:
     third-party mentions, foreign-ticker tags). Idempotent; reuses exactly the
     filters the adapters apply at ingest."""
     import json
+    from datetime import datetime
     from sqlalchemy import text
     from data.events.store import _get_engine, TOPIC_SOURCE
     from data.events.wire_base import is_safe_news_url, is_junk_news, match_tickers
@@ -410,9 +411,17 @@ def _purge_junk_events() -> int:
     eng = _get_engine()
     with eng.connect() as conn:
         rows = conn.execute(text(
-            "SELECT id, ticker, source, url, headline, summary, "
+            "SELECT id, ticker, source, url, headline, summary, published_at, "
             "CASE WHEN source = 'ir_site' THEN raw_json END AS raw_json FROM events"
         )).mappings().all()
+
+    def _subsecond(ts) -> bool:
+        if isinstance(ts, str):   # SQLite hands back the stored string
+            try:
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+        return bool(getattr(ts, "microsecond", 0))
 
     def _is_bad(r) -> bool:
         if not is_safe_news_url(r["url"]):
@@ -428,6 +437,14 @@ def _purge_junk_events() -> int:
                 raw = None
             if isinstance(raw, dict) and raw.get("date_inferred"):
                 return True
+        # IR rows whose published_at is a wall-clock reading. Every dated IR path
+        # (Q4 'MM/DD/YYYY HH:MM:SS', RSS pubDate, a date in the link) yields whole
+        # seconds; a sub-second stamp can only be datetime.now() — the 05-26..06-23
+        # scraper's undated fallback (raw date_inferred wrongly False: it tested
+        # `pub is None` after assigning now; HBAN/FHN) or the store's future-date
+        # clamp/heal (BAC's 2027-maturity notices re-stamped to 07-14 ingest).
+        if r["source"] == "ir_site" and _subsecond(r["published_at"]):
+            return True
         # Topic rows have a sentinel ticker ('TOPIC:MACRO'), so the foreign-
         # paren-ticker check must not apply — pass ticker=None for those.
         tk = None if r["source"] == TOPIC_SOURCE else r["ticker"]

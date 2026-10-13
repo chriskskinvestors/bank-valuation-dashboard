@@ -439,8 +439,10 @@ class TestPurgeDateInferredRows(unittest.TestCase):
         from sqlalchemy import text
 
         def ev(ext, headline, raw):
+            # Feed dates are whole seconds (a sub-second stamp is a poll time).
             return Event(ticker="HAFC", source="ir_site", event_type="press_release",
-                         headline=headline, published_at=NOW - timedelta(days=3),
+                         headline=headline,
+                         published_at=(NOW - timedelta(days=3)).replace(microsecond=0),
                          url=ext, external_id=ext, raw=raw)
 
         store.insert_events_returning_new([
@@ -459,6 +461,60 @@ class TestPurgeDateInferredRows(unittest.TestCase):
             kept = sorted(r[0] for r in c.execute(text("SELECT headline FROM events")).all())
         self.assertEqual(kept, ["Example Bancorp Dated Scrape Release Headline",
                                 "Hanmi Bank Named to Piper Sandler Sm-All Stars Class of 2026"])
+        self.assertEqual(pe._purge_junk_events(), 0, "idempotent")
+
+    def test_purges_wall_clock_stamps_flagged_dated(self):
+        """Prod 2026-10-13: 10 of 811 ir_site rows carried a poll-time date while
+        raw said date_inferred=false — the 05-26 scraper set pub=now BEFORE
+        testing `pub is None` (HBAN/FHN), and the future-date heal re-stamped
+        BAC's notices to ingested_at. Sub-second precision is the proof: no IR
+        feed dates to the microsecond. Real dated rows (whole seconds) stay."""
+        import data.db as db
+        import data.events.store as store
+        import jobs.poll_events as pe
+        from data.events.base import Event
+        from sqlalchemy import text
+
+        def ev(tk, url, headline, pub, raw):
+            return Event(ticker=tk, source="ir_site", event_type="press_release",
+                         headline=headline, published_at=pub, url=url,
+                         external_id=url, raw=raw)
+
+        utc = timezone.utc
+        bac = {"ir_home": "https://investor.bankofamerica.com/", "date_inferred": False}
+        hban = {"ir_home": "https://ir.huntington.com/", "date_inferred": False}
+        store.insert_events_returning_new([
+            # Exact prod rows: a MARCH release healed to its 07-14 ingest time …
+            ev("BAC", "https://investor.bankofamerica.com/content/newsroom/press-releases/"
+                      "2026/03/bank-of-america-announces-redemption-of-jpy-27-800-000-000-0-534.html",
+               "Bank of America Announces Redemption of twenty-seven point eight billion "
+               "Japanese yen JPY 27,800,000,000 zero point five three four percent",
+               datetime(2026, 7, 14, 5, 5, 35, 859886, tzinfo=utc), bac),
+            # … and a 06-09 release stamped with the scrape time (dateline 4:00pm EDT).
+            ev("HBAN", "https://ir.huntington.com/news-presentations/press-releases/"
+                       "detail/999/huntington-bank-opens-first-branch-in-kernersville",
+               "Huntington Bank Opens First Branch in Kernersville View Press Release",
+               datetime(2026, 6, 9, 20, 10, 23, 324525, tzinfo=utc), hban),
+            # Kept: Q4 API time, IRapp RSS pubDate, a date read from the link.
+            ev("PFS", "https://investors.provident.bank/news/detail/1/q2",
+               "Provident Financial Services Reports Second Quarter 2026 Results",
+               datetime(2026, 7, 28, 16, 15, 0, tzinfo=utc),
+               {"ir_home": "https://investors.provident.bank/", "platform": "q4"}),
+            ev("HBAN", "https://ir.huntington.com/news-presentations/press-releases/"
+                       "detail/1024/x",
+               "Huntington Bancshares Incorporated Announces Third Quarter 2026 "
+               "Earnings Call Details",
+               datetime(2026, 9, 30, 20, 23, 0, tzinfo=utc),
+               {"ir_home": "https://ir.huntington.com/", "platform": "irapp"}),
+            ev("EXB", "https://ir.example.com/news/2026-10-01/x",
+               "Example Bancorp Dated Scrape Release Headline",
+               datetime(2026, 10, 1, tzinfo=utc),
+               {"ir_home": "https://ir.example.com/", "date_inferred": False}),
+        ])
+        self.assertEqual(pe._purge_junk_events(), 2)
+        with db._engine.connect() as c:
+            kept = sorted(r[0] for r in c.execute(text("SELECT ticker FROM events")).all())
+        self.assertEqual(kept, ["EXB", "HBAN", "PFS"])
         self.assertEqual(pe._purge_junk_events(), 0, "idempotent")
 
 
