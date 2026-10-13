@@ -499,7 +499,9 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # — capital / TCE / cost-of-deposits / loan-yield / NII+nonII table
     # reads, YTD sections, N/A slots, change-period headers; capital merged
     # via merge_table_capital) and v33 (2026-10-13 — caption-named segment
-    # tables, "(4)%" change cells, "operating expenses" not a variant).
+    # tables, "(4)%" change cells, "operating expenses" not a variant)
+    # and v35 (2026-10-13 — oldest-first split headers with change labels,
+    # measure-major rate tables, NCL/ACLL labels, Tier 1 / average assets).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
