@@ -1830,7 +1830,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v29:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v30:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1857,6 +1857,10 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v30 (2026-10-13): the finder also steps past a call TRANSCRIPT
+    # furnished under 2.02 after the release (PEBO served NCO only, BCBP
+    # nothing; SBFG's Q4-25 transcript read 2024's $1.72 EPS as the
+    # quarter's) — their records' frontier IS the transcript.
     # v29 (2026-10-13): the finder (ir_provider.latest_earnings_release)
     # steps past a call NOTICE to the previous release — WSBC's Item 2.02
     # "to Host … Earnings Conference Call" record (frontier = the notice)
@@ -1920,7 +1924,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v29:{int(cik)}"
+    key = f"release_metrics:v30:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

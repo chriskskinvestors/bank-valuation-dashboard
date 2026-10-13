@@ -423,8 +423,30 @@ def _fetch_ex99(cik, hit: dict) -> dict | None:
 
 
 # Item-2.02 8-Ks the finder walks back through when the newer ones are call
-# notices (a notice per quarter → the 2nd is normally the release).
+# notices or transcripts (one of each per quarter at most → the 3rd at the
+# latest is the release).
 _MAX_202 = 3
+
+# A call TRANSCRIPT / script furnished under Item 2.02 days after the release
+# names itself in its opening: "Conference Call Script 2nd Quarter 2026
+# Results" (PEBO 2026-07-27), "TRANSCRIPT OF CONFERENCE CALL AND WEBCAST"
+# (SBFG), "TRANSCRIPT 08-03-2026 … Second Quarter Earnings Call" (BCBP).
+# 2026-10-13 scan of 1,213 real 2.02 exhibit openings (347 SEC banks): these
+# two markers hit exactly those 5 transcripts (all within 75 chars) and no
+# release mentions either in its first 600 — wider words misfire ("script"
+# in STT's "description", INBK's "Company to hold earnings call today").
+_TRANSCRIPT_OPEN = re.compile(r"(?i)\btranscript\b|\bcall script\b")
+_TRANSCRIPT_WINDOW = 300
+
+
+def _is_call_transcript(html: str) -> bool:
+    """A transcript is never the release: it narrates figures in
+    conversation, so extraction reads them out of context (SBFG's Q4-25
+    transcript yielded diluted EPS $1.72 — "a 27% lift over our 2024 EPS of
+    $1.72"; the quarter's was $0.63) or reads almost nothing (PEBO: NCO
+    only, BCBP: nothing), shadowing the real release."""
+    return bool(_TRANSCRIPT_OPEN.search(
+        _headline_text(html, _TRANSCRIPT_WINDOW)))
 
 
 def _is_notice_exhibit(got: dict) -> bool:
@@ -460,10 +482,11 @@ def latest_earnings_release(cik) -> dict | None:
     furnished "WesBanco, Inc. to Host 2026 Third Quarter Earnings Conference
     Call and Webcast on Thursday, October 22" under Item 2.02 (0001193125-
     26-412356, 2026-10-02), and as the newest 2.02 it shadowed the real Q2
-    release with a figure-less Q3 record. A notice (_is_notice_exhibit) is
-    stepped past to the previous release (up to _MAX_202 Item-2.02 8-Ks
-    back); a 2.02 whose exhibit can't be fetched still ends the search
-    (None — an older release must not stand in for an unread newer one)."""
+    release with a figure-less Q3 record. Nor is a call transcript
+    (_is_call_transcript — PEBO, SBFG, BCBP). Either is stepped past to the
+    previous release (up to _MAX_202 Item-2.02 8-Ks back); a 2.02 whose
+    exhibit can't be fetched still ends the search (None — an older release
+    must not stand in for an unread newer one)."""
     try:
         cik10 = str(int(cik)).zfill(10)
         subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
@@ -477,7 +500,7 @@ def latest_earnings_release(cik) -> dict | None:
             if not cand.get("gated"):
                 return None
             continue
-        if _is_notice_exhibit(got):
+        if _is_call_transcript(got["html"]) or _is_notice_exhibit(got):
             continue
         if not cand.get("gated") or _is_earnings_headline(
                 _headline_text(got["html"])):
