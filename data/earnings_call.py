@@ -27,7 +27,8 @@ from datetime import date, datetime
 # very common "9:00 am (ET)" with the zone in parentheses).
 _TIME_RE = re.compile(
     r"(\d{1,2})(?::(\d{2}))?\s*([ap])\.?\s*m\.?\s*[(\[]?\s*"
-    r"(eastern|central|mountain|pacific|e[ds]?t|c[ds]?t|m[ds]?t|p[ds]?t)\b",
+    # "E.T." dotted (NPB: "at 10:00 a.m. E.T. on October 21") as well as "ET".
+    r"(eastern|central|mountain|pacific|e\.?[ds]?\.?t|c[ds]?t|m[ds]?t|p[ds]?t)\b",
     re.I,
 )
 _TZ_ABBR = {"eastern": "ET", "central": "CT", "mountain": "MT", "pacific": "PT"}
@@ -63,14 +64,26 @@ def _parse_call_time(text: str) -> str | None:
     Prefer a time-with-zone right after a call cue ("…conference call at 9:00 a.m.
     ET…") over the first time in the body — a scraped PR often leads with its
     publication timestamp ("June 30, 2026 7:29am EDT"), which is NOT the call time.
-    Falls back to the first time-with-zone. None if absent."""
+    Falls back to the first time-with-zone. A dateline stamp is skipped even
+    inside a cue window: an IR detail page opens with its own TITLE, so a
+    "… Conference Call Details September 03, 2026 8:15 am EDT" header put the
+    cue right before PNC's stamp (read as an 8:15a call; the call was 10 a.m.).
+    None if absent."""
+    text = text or ""
+
+    def _first(start, end):
+        for t in _TIME_RE.finditer(text, start, end):
+            if not _is_dateline_stamp(text, t):
+                return t
+        return None
+
     m = None
-    for cue in _CALL_CUE_RE.finditer(text or ""):
-        m = _TIME_RE.search(text, cue.start(), cue.start() + 160)
+    for cue in _CALL_CUE_RE.finditer(text):
+        m = _first(cue.start(), cue.start() + 160)
         if m:
             break
     if not m:
-        m = _TIME_RE.search(text or "")
+        m = _first(0, len(text))
     if not m:
         return None
     hour, minute, ap, tz = m.group(1), m.group(2), m.group(3).lower(), m.group(4).lower()
@@ -79,6 +92,26 @@ def _parse_call_time(text: str) -> str | None:
         tzab = tz[0].upper() + "T"          # e/c/m/p + DT/ST -> ET/CT/MT/PT
     clock = f"{hour}:{minute}" if minute else hour
     return f"{clock}{ap} {tzab}"
+
+
+# "<Month> <D>, <YYYY> " immediately before a time = a publication stamp.
+_STAMP_DATE_BEFORE_RE = re.compile(r"\b([A-Za-z]{3,9})\.?\s+\d{1,2},?\s+\d{4}\s*$")
+# The stamp's own shape: undotted am/pm + a 3-letter zone ("8:15 am EDT").
+_STAMP_TIME_RE = re.compile(r"\d{1,2}(?::\d{2})?\s*[ap]m\s*[ecmp][ds]t", re.I)
+_STAMP_HEADER_CHARS = 400
+
+
+def _is_dateline_stamp(text: str, t: re.Match) -> bool:
+    """True when the time match `t` is the page's publication stamp: in the
+    header (first _STAMP_HEADER_CHARS), stamp-shaped, and directly after a full
+    date with no separator ("September 03, 2026 8:15 am EDT" — PNC/AMTB/NPB/
+    HBAN IR pages). A stated call time is introduced ("at 10 a.m.", "…, 2026,
+    10:00 a.m.") or dotted — EWBC's schedule table "Tuesday, July 21, 2026
+    2 p.m. PT" is a call time and stays one."""
+    if t.start() > _STAMP_HEADER_CHARS or not _STAMP_TIME_RE.fullmatch(t.group(0)):
+        return False
+    m = _STAMP_DATE_BEFORE_RE.search(text[max(0, t.start() - 30):t.start()])
+    return bool(m and m.group(1).lower() in _MONTHS)
 
 
 def _parse_webcast_url(text: str) -> str | None:
@@ -158,6 +191,10 @@ def mid_label(ci: dict | None) -> str:
 _MONTHS = {m: i for i, m in enumerate(
     ("january", "february", "march", "april", "may", "june", "july", "august",
      "september", "october", "november", "december"), 1)}
+# AP-style abbreviations ("Thursday, Oct. 15, 2026" — PNC; "Sept. 30" — the
+# wires): exact forms only, so an arbitrary word never reads as a month.
+_MONTHS.update({m[:3]: i for m, i in list(_MONTHS.items())})
+_MONTHS["sept"] = 9
 _WD = r"(?:mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?,?\s+"   # "Thursday, " / "Fri "
 _ON_DATE_RE = re.compile(
     r"\b(?:"
@@ -194,7 +231,10 @@ def _is_earnings_announcement(headline: str) -> bool:
     if _DATES_RE.search(hl) and ("quarterly" in hl or not _QUARTER_NAMED_RE.search(hl)):
         return False
     return (any(c in hl for c in _ANNOUNCE_CUES)
-            and any(k in hl for k in _EARNINGS_KW))
+            and (any(k in hl for k in _EARNINGS_KW)
+                 # PNC: "Announces Third Quarter Conference Call Details" — a
+                 # named quarter's conference call IS the earnings call.
+                 or (bool(_QUARTER_NAMED_RE.search(hl)) and "conference call" in hl)))
 
 
 _DATES_RE = re.compile(r"\bdates\b")
@@ -318,7 +358,14 @@ def _parse_call_date(text: str, today_iso: str) -> str | None:
         d = _parse_on_date(text[cue.start():cue.start() + 170])
         if d and d >= today_iso:
             return d
+    # "…will hold a conference call for investors the same day at 10 a.m." (PNC)
+    # — the call date is stated, by reference to the release date in the body.
+    if _SAME_DAY_CALL_RE.search(text):
+        return _parse_release_date(text, today_iso)
     return None
+
+
+_SAME_DAY_CALL_RE = re.compile(r"(?:conference call|webcast)[^.]{0,80}?\bthe same day\b", re.I)
 
 
 # Report timing stated in the announcement itself ("… will report results after
