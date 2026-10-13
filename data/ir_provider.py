@@ -94,23 +94,28 @@ def _latest_earnings_8k(submissions: dict) -> dict | None:
 _FURNISH_ITEMS = {"2.01", "7.01", "8.01", "9.01"}
 
 
-def _earnings_8k_candidates(submissions: dict, limit: int = 4) -> list[dict]:
+def _earnings_8k_candidates(submissions: dict, limit: int = 4,
+                            max_202: int = 1) -> list[dict]:
     """Pure: newest-first 8-K candidates for the earnings release. An Item
     2.02 filing qualifies unconditionally; a filing WITHOUT 2.02 but carrying
     any furnish-capable item (_FURNISH_ITEMS — item lists are filer-authored
     and earnings releases DO ship mis-itemized) qualifies as {gated: True}
     and the caller must verify the exhibit's headline before trusting it.
-    Stops at the first 2.02 hit (anything older is stale by definition).
-    `limit` caps only the GATED candidates (each costs an exhibit fetch);
-    the scan always continues to the 2.02 — HBAN 2026-09-24: four routine
-    8.01/7.01/5.02 + 9.01 filings after its 2Q26 release (0000049196-26-
-    000060) used to exhaust the cap, so the real release was never reached
-    and the bank had no release at all."""
-    out, n_gated = [], 0
+    Stops at the `max_202`-th 2.02 hit (anything older is stale by
+    definition; more than one only so a caller can step past a 2.02 call
+    notice). `limit` caps only the GATED candidates (each costs an exhibit
+    fetch); the scan always continues to the 2.02 — HBAN 2026-09-24: four
+    routine 8.01/7.01/5.02 + 9.01 filings after its 2Q26 release (0000049196-
+    26-000060) used to exhaust the cap, so the real release was never
+    reached and the bank had no release at all."""
+    out, n_gated, n_202 = [], 0, 0
     for present, hit in _iter_8ks(submissions):
         if _EARNINGS_ITEM in present:
             out.append({**hit, "gated": False})
-            break
+            n_202 += 1
+            if n_202 >= max_202:
+                break
+            continue
         if present & _FURNISH_ITEMS and n_gated < limit:
             out.append({**hit, "gated": True})
             n_gated += 1
@@ -417,6 +422,29 @@ def _fetch_ex99(cik, hit: dict) -> dict | None:
             "accession": hit["accession"], "form": hit["form"]}
 
 
+# Item-2.02 8-Ks the finder walks back through when the newer ones are call
+# notices (a notice per quarter → the 2nd is normally the release).
+_MAX_202 = 3
+
+
+def _is_notice_exhibit(got: dict) -> bool:
+    """A call/webcast notice: release_metrics.is_call_notice flags the
+    opening AND the exhibit yields no results figure (a dividend per share
+    is not one — NEWT). Both are required: MVBF's real 2Q26 release opens
+    "Announces Second Quarter 2026 Results / Company to Host a Conference
+    Call and Webcast" with its "reported net income" clause past the
+    opening window, so is_call_notice alone would skip it (2026-10-13 scan
+    of 403 SEC banks' last three 2.02 exhibits)."""
+    from data.release_metrics import extract_release_metrics, is_call_notice
+    html = got["html"]
+    if not is_call_notice(html):
+        return False
+    qend = _quarter_end_before(got.get("filed_date") or "")
+    figures = {**extract_release_metrics(html, expected_qend=qend),
+               **extract_capital_ratios(html)}
+    return all(v is None for k, v in figures.items() if k != "div_ps")
+
+
 def latest_earnings_release(cik) -> dict | None:
     """I/O: locate + fetch the latest EX-99.1 earnings release for a CIK.
     Item 2.02 8-Ks are trusted outright; NEWER exhibit-bearing 8-Ks without
@@ -426,19 +454,33 @@ def latest_earnings_release(cik) -> dict | None:
     {url, html, filed_date, accession, form} or None. Any network or
     structure failure returns None — the resolver simply falls through to
     the SEC filing (this layer can only ever ADD a fresher source, never
-    break one)."""
+    break one).
+
+    A call/webcast NOTICE is never the release, whatever its item: WSBC
+    furnished "WesBanco, Inc. to Host 2026 Third Quarter Earnings Conference
+    Call and Webcast on Thursday, October 22" under Item 2.02 (0001193125-
+    26-412356, 2026-10-02), and as the newest 2.02 it shadowed the real Q2
+    release with a figure-less Q3 record. A notice (_is_notice_exhibit) is
+    stepped past to the previous release (up to _MAX_202 Item-2.02 8-Ks
+    back); a 2.02 whose exhibit can't be fetched still ends the search
+    (None — an older release must not stand in for an unread newer one)."""
     try:
         cik10 = str(int(cik)).zfill(10)
         subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
     except Exception:
         return None
-    for cand in _earnings_8k_candidates(subs):
+    for cand in _earnings_8k_candidates(subs, max_202=_MAX_202):
         if not cand.get("accession"):
             continue
-        if not cand.get("gated"):
-            return _fetch_ex99(cik, cand)
         got = _fetch_ex99(cik, cand)
-        if got and _is_earnings_headline(_headline_text(got["html"])):
+        if not got:
+            if not cand.get("gated"):
+                return None
+            continue
+        if _is_notice_exhibit(got):
+            continue
+        if not cand.get("gated") or _is_earnings_headline(
+                _headline_text(got["html"])):
             return got
     return None
 
