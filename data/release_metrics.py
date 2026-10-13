@@ -1016,6 +1016,65 @@ def _span_row_values(cells: list[str], pos: list[tuple], ycols: list,
     return out
 
 
+# POINT-IN-TIME metrics: balance-sheet values AT a date — the same figure
+# in a quarter column and in a year-to-date column ending that date.
+_PIT_KEYS = frozenset({"cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio",
+                       "tce_ratio", "acl_loans", "npa_assets", "bv_ps",
+                       "bv_ps_common", "tbv_ps"})
+# A column banner that STATES point-in-time values: "At or For the Six
+# Months Ended", "At", "As of".
+_PIT_BANNER = re.compile(r"(?i)^\s*(?:at|as of)\b")
+
+
+def _span_pit_columns(rows: list[list[str]], hdr_i: int) -> list:
+    """[((start, end), qend), …] — grid range and date of each year cell of
+    a span-paired month / year header (_span_pairs) whose banner STATES
+    point-in-time values. PBFS 2Q26 prints its capital and ACL rows only
+    under "At or For the | Six Months Ended | June 30, | 2026 | 2025":
+    "Common equity tier 1 capital to risk weighted assets | 13.22% |
+    17.28%" — the balance sheet AT June 30, 2026 / 2025, which IS the
+    quarter-end value. A "For the Six Months Ended" banner states nothing
+    of the kind (no "At") → not a point-in-time column. Unproven → []."""
+    if hdr_i < 2:
+        return []
+    pairs = _span_pairs(rows, hdr_i - 1, hdr_i)
+    months = [_MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
+              for c in rows[hdr_i - 1] if c.strip()]
+    if not pairs or not all(m in _QE_MONTH for m in months):
+        return []
+    from datetime import date as _date
+    lay = _span_layout(rows, hdr_i)
+    ycells = [lay[hdr_i][n] for n, c in enumerate(rows[hdr_i])
+              if _YEAR_CELL.match(c.strip())]
+    out = []
+    for (ys, ye), (k, y) in zip(ycells, pairs):
+        if any(_PIT_BANNER.match(c) for r in range(hdr_i - 1)
+               for c, (s, e) in zip(rows[r], lay[r]) if c and s < ye and ys < e):
+            out.append(((ys, ye), _date(y, months[k],
+                                        _QE_MONTH[months[k]]).isoformat()))
+    return out
+
+
+def _pit_row_values(cells: list[str], pos: list[tuple], pit: list,
+                    qends: list[str]) -> list | None:
+    """One value per qend from the row's point-in-time column of the same
+    date (_span_pit_columns) — None where there is no such column; None
+    (row unread) when a column holds two numbers."""
+    out = []
+    for q in qends:
+        cols = [r for r, d in pit if d == q]
+        if len(cols) != 1:
+            out.append(None)
+            continue
+        ys, ye = cols[0]
+        under = [c for c, (cs, ce) in zip(cells, pos) if c and cs < ye and ys < ce]
+        vals = _row_values([""] + under, slots=True)
+        if len(vals) > 1:
+            return None
+        out.append(vals[0] if vals else None)
+    return out
+
+
 def _span_pairs(rows: list[list[str]], i: int, j: int) -> list[tuple] | None:
     """[(part index, year), …] in year-row order when the HTML spans PROVE
     which period-part cell (row i: "June 30," / "1st Quarter") each year
@@ -2350,6 +2409,7 @@ def extract_table_metrics(html: str, expected_qend: str,
         tcol = col
         ycols = _span_year_columns(rows, hdr_i)
         lay = _span_layout(rows, len(rows) - 1) if ycols else None
+        pit = _span_pit_columns(rows, hdr_i) if ycols else []
         cmp = _cmp_cols(rows[hdr_i], qends, n_change)
         # Magnitude sniff for "$K" specs: the table's own units statement
         # (e.g. "(dollars in thousands, except per share data)") — anywhere
@@ -2474,6 +2534,18 @@ def extract_table_metrics(html: str, expected_qend: str,
                 # under its year cell's columns — never a positional count.
                 k, col = len(qends), tcol
                 vals = _span_row_values(cells, lay[r_i], ycols, k)
+                if vals is not None and pit and all(v is None for v in vals):
+                    # Printed only under a point-in-time banner group
+                    # (_span_pit_columns): the same-dated column serves the
+                    # quarter — point-in-time keys only, never a flow ratio
+                    # (PBFS's six-month NCO 0.17 beside them stays unread).
+                    pv = _pit_row_values(cells, lay[r_i], pit, qends)
+                    if pv and not (_CONNECTOR_EXCLUDE.search(label)
+                                   or _ROW_VARIANT.search(label) or st["var"]):
+                        _try({kk: sp for kk, sp in specs.items()
+                              if kk in _PIT_KEYS}, label, row_text, pv,
+                             scope, f"{section_label} | {outer_label}")
+                    continue
                 if vals is None or all(v is None for v in vals):
                     continue
             else:
@@ -2903,7 +2975,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v38:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v39:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2930,6 +3002,12 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v39 (2026-10-13): point-in-time rows printed only under an "At or
+    # For the Six Months Ended" group serve the same-dated quarter
+    # (PBFS capital / ACL); the release's own table value for the current
+    # quarter must agree with the served one, else comparatives n/a and
+    # the current too unless a declared dividend or a proven-annualized
+    # NCO rate (WNEB; BHB / HBT / PKBK / MNSB / CBAN served wrong prose).
     # v38 (2026-10-13): supplement firmwide pages kept after the segment
     # block travel with their own page heading — appended bare, Citi's
     # AVERAGE BALANCES table inherited "SERVICES (In millions …)" and was
@@ -3049,7 +3127,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v38:{int(cik)}"
+    key = f"release_metrics:v39:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -3141,6 +3219,8 @@ def release_metrics(cik) -> dict | None:
         "frontier": acc,
     }
     val["capital"] = merge_table_capital(val["metrics"], val["capital"])
+    _comparative_basis_guard(
+        val, extract_table_metrics(rel["html"], qend) if qend else {})
     for bucket in ("prior_metrics", "yoy_metrics"):
         _order_capital(val[bucket])
     # The 8-K's financial supplement (EX-99.2): megabanks keep NIM / ROA /
@@ -3213,6 +3293,51 @@ def _order_capital(bucket: dict) -> None:
     if bucket and not _capital_ordered(bucket):
         for k in ("cet1_ratio", "t1_ratio", "total_ratio"):
             bucket[k] = None
+
+
+def _comparative_basis_guard(val: dict, cur_tab: dict) -> None:
+    """The release's own TABLE value for the current quarter (cur_tab) must
+    agree with the served current value (often prose) — else the two
+    readings measure different things, and Q/Q / Y/Y comparatives (table
+    reads) can't sit beside the served figure. On disagreement:
+
+    - comparatives → n/a, always;
+    - the CURRENT value → n/a too, because the prose reader is the usual
+      culprit (2Q26: BHB "55.76% efficiency ratio, compared to 56.92%"
+      served the prior quarter's 56.92; HBT's NCO the year-ago 0.12; PKBK
+      the six-month efficiency / ROA; MNSB "the month of June produced an
+      annualized ROA of 1.03%" (quarter 0.85); CBAN the operating ROA) and
+      a release that disagrees with itself (THFF TBV $46.98 vs $45.96) has
+      no provable value — EXCEPT:
+      * div_ps: prose deliberately reads the dividend just DECLARED (EFSC
+        "$0.35 … for the third quarter"), the table the quarter's;
+      * nco_ratio proven annualized: prose = 4 × table within rounding —
+        WNEB 2Q26 narrates 0.33% "on an annualized basis" while its table
+        row is quarterly (0.08% | 0.00% | … | (0.03)%), which put prior
+        0.00 / year-ago -0.03 beside 0.33.
+    The key is recorded (`basis_split`) so no later fill (AI) re-fills it;
+    the supplement fill already requires agreement on the current column.
+    Rates and per-share values only, at the coarser printed half-ULP."""
+    split = []
+    cur_bucket = val.get("metrics") or {}
+    for k, cur in list(cur_bucket.items()):
+        t = cur_tab.get(k)
+        if (k not in _TABLE_SPECS or _TABLE_SPECS[k][1] not in ("%", "$")
+                or not isinstance(cur, float) or not isinstance(t, float)):
+            continue
+        ulp_c, ulp_t = 0.5 * 10.0 ** -_dec(cur), 0.5 * 10.0 ** -_dec(t)
+        if abs(cur - t) <= max(ulp_c, ulp_t) + 1e-9:
+            continue
+        split.append(k)
+        for b in ("prior_metrics", "yoy_metrics"):
+            if (val.get(b) or {}).get(k) is not None:
+                val[b][k] = None
+        if k == "div_ps" or (k == "nco_ratio" and abs(cur - 4 * t)
+                             <= 4 * ulp_t + ulp_c + 1e-9):
+            continue
+        cur_bucket[k] = None
+    if split:
+        val["basis_split"] = sorted(split)
 
 
 def merge_table_capital(metrics: dict, capital: dict | None) -> dict:
@@ -3402,10 +3527,13 @@ def _ai_fill(val: dict, cik, rel: dict) -> str:
     # The AI can't tell per-common from total-equity BV: with preferred equity
     # in the release, BV/share stays deterministic-only (NPB, see _BV_COMMON).
     pref = _release_shows_preferred_equity(rel.get("html") or "")
+    split = set(val.get("basis_split") or ())
     for bucket_key, period in (("metrics", "cur"), ("prior_metrics", "prior"),
                                ("yoy_metrics", "yoy")):
         bucket = val.setdefault(bucket_key, {})
         for k, v in (ai.get(period) or {}).items():
+            if k in split:
+                continue                  # _comparative_basis_guard
             if k == "bv_ps" and pref and not _bv_ties_to_common(
                     rel.get("html") or "", v):
                 continue
