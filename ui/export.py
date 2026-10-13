@@ -334,12 +334,15 @@ def table_export(df, filename: str, key: str, *, sheet: str | None = None,
                  provenance: dict[str, object] | None = None,
                  freeze_cols: int = 0, label: str = "Export") -> None:
     """Small right-aligned Export action for a data table. Writes one
-    .xlsx (see module doc); the workbook is built on click."""
+    .xlsx (see module doc); the workbook is built on click. `df` may be a
+    zero-argument callable returning the frame, so data that is costly to
+    assemble (Branch Proximity's full pair list) is also built on click."""
     fname = safe_filename(filename)
     sheet_name = sheet or fname
 
     def _build() -> bytes:
-        return build_workbook(df, sheet=sheet_name, formats=formats,
+        data = df() if callable(df) else df
+        return build_workbook(data, sheet=sheet_name, formats=formats,
                               row_formats=row_formats, provenance=provenance,
                               freeze_cols=freeze_cols)
 
