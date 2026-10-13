@@ -22,6 +22,7 @@ from data.fdic_client import fetch_financials, build_fdic_provenance
 from data import sec_client
 from data.validation import validate_bank_metrics, summary as _validation_summary, Finding
 from data.provenance import Source
+from utils.formatting import pct, usd_compact_from_thousands
 
 
 def render_data_quality(ticker: str):
@@ -296,7 +297,7 @@ def render_data_quality(ticker: str):
                     raw_rows.append({"Label": xlabel, "FDIC Field": field_name,
                                      "Value": None, "Unit": unit, "As Of": as_of})
                     rows.append({"FDIC Field": field_name, "Label": label,
-                                 "Value": "n/a", "Unit": unit, "As Of": as_of})
+                                 "Value": "—", "Unit": unit, "As Of": as_of})
                     continue
                 # Export row: the FDIC value as reported — $thousands stay
                 # unscaled under a "($K)" label; ratios are percent units.
@@ -305,22 +306,14 @@ def render_data_quality(ticker: str):
                                  "Unit": unit, "As Of": as_of})
                 raw_row_fmt[xlabel] = "usd_k" if unit.startswith("$") else "pct"
                 if unit.startswith("$"):
-                    # FDIC dollar fields are reported in $thousands. Scale to
-                    # actual dollars, then format adaptively so small banks and
-                    # negative net income render correctly (the old < 1000
-                    # threshold mislabeled any sub-$1M line item as raw dollars).
-                    dollars = v * 1000
-                    a = abs(dollars)
-                    if a >= 1e9:
-                        display = f"${dollars/1e9:.2f}B"
-                    elif a >= 1e6:
-                        display = f"${dollars/1e6:.1f}M"
-                    elif a >= 1e3:
-                        display = f"${dollars/1e3:.0f}K"
-                    else:
-                        display = f"${dollars:,.0f}"
+                    # FDIC dollar fields are $thousands: the shared compact
+                    # formatter scales them ($B / $M / $K), keeps the
+                    # thousands separator on mega-bank totals ("$4,091.39B",
+                    # not "$4091.39B") and puts a negative's sign before the
+                    # "$" ("-$1.2M", never "$-1.2M").
+                    display = usd_compact_from_thousands(v)
                 else:
-                    display = f"{v:.2f}%"
+                    display = pct(v)          # zero carries no sign
                 rows.append({
                     "FDIC Field": field_name,
                     "Label": label,
