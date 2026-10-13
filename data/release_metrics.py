@@ -2382,7 +2382,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v31:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v32:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2409,6 +2409,10 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v32 (2026-10-13): the finder steps past a NON-RESULTS 2.02 exhibit
+    # (NEWT's dividend declarations, deal closings) and never past an
+    # Item 4.02 filing — NEWT's record's frontier IS the dividend 8-K.
+    # (Re-bumped past v31, which #395 used for exhibit coverage.)
     # v31 (2026-10-13): Results-board exhibit coverage (UNTY/FBK/JPM/WFC/
     # GS audit) — capital / TCE / cost-of-deposits / loan-yield (incl.
     # average-balance groups) / NII+nonII-sum table reads; YTD sections and
@@ -2483,7 +2487,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v31:{int(cik)}"
+    key = f"release_metrics:v32:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
