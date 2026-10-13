@@ -608,6 +608,13 @@ def _q4_announcement(ir_home: str, today_iso: str) -> dict | None:
 # carries the release/call text, which our existing parsers handle. This mirrors
 # the Q4 path (functional detection + structured feed + shared body parsers).
 _IRAPP_RSS_PATH = "/news-events/press-releases/rss"
+# Same platform, other section layouts — probed in order, first feed wins:
+# HBAN serves /news-presentations/…, PNC /news-events/financial-press-releases/…
+_IRAPP_RSS_PATHS = (
+    _IRAPP_RSS_PATH,
+    "/news-presentations/press-releases/rss",
+    "/news-events/financial-press-releases/rss",
+)
 
 
 def _rss_tag(item: str, tag: str) -> str | None:
@@ -619,15 +626,17 @@ def _rss_tag(item: str, tag: str) -> str | None:
     return _html.unescape(m.group(1)).strip() or None
 
 
-def _irapp_site(ir_home: str) -> bool:
-    """True if the host is an IRapp/BusinessWire IR site — its press-release RSS
-    (/news-events/press-releases/rss) returns feed items. Functional + cached 7d,
-    same as _q4_site, so discovery auto-finds these without a curated entry."""
+def _irapp_rss_path(ir_home: str) -> str | None:
+    """The host's IRapp/BusinessWire press-release RSS path — the first of
+    _IRAPP_RSS_PATHS that returns feed items — or None if it isn't an IRapp
+    site. Functional + cached 7d, same as _q4_site, so discovery auto-finds
+    these without a curated entry."""
     parsed = urlparse(ir_home)
     host = parsed.netloc
     if not host:
-        return False
-    ck = f"irapp_site:v1:{host}"
+        return None
+    # v2: caches the feed PATH; v1's bool negatives hid HBAN/PNC's alternate paths.
+    ck = f"irapp_site:v2:{host}"
     cache = None
     try:
         from data import cache as _c
@@ -635,24 +644,32 @@ def _irapp_site(ir_home: str) -> bool:
         cache = _c
         hit = _c.get(ck)
         if hit and is_fresh(hit, 7 * 24 * 3600):
-            return bool(hit.get("is_irapp"))
+            return hit.get("rss_path") or None
     except Exception:
         pass
-    is_irapp = False
-    try:
-        resp = requests.get(
-            f"{parsed.scheme or 'https'}://{host}{_IRAPP_RSS_PATH}", timeout=8,
-            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
-        is_irapp = resp.status_code == 200 and "<item>" in resp.text
-    except Exception:
-        is_irapp = False
+    rss_path = None
+    for path in _IRAPP_RSS_PATHS:
+        try:
+            resp = requests.get(
+                f"{parsed.scheme or 'https'}://{host}{path}", timeout=8,
+                headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
+        except Exception:
+            break                            # host unreachable — no point probing on
+        if resp.status_code == 200 and "<item>" in resp.text:
+            rss_path = path
+            break
     try:
         if cache is not None:
-            cache.put(ck, {"is_irapp": is_irapp,
+            cache.put(ck, {"rss_path": rss_path or "",
                            "cached_at": datetime.now().isoformat()})
     except Exception:
         pass
-    return is_irapp
+    return rss_path
+
+
+def _irapp_site(ir_home: str) -> bool:
+    """True if the host is an IRapp/BusinessWire IR site (see _irapp_rss_path)."""
+    return _irapp_rss_path(ir_home) is not None
 
 
 def _rss_pub_date(s: str | None) -> datetime | None:
@@ -678,13 +695,14 @@ def _irapp_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str
     IRapp site whose feed can't be read returns [] — never the undated HTML
     fallback; the full-lookback rescan catches up next cycle. Items without a
     parseable pubDate are dropped (n/a over a guessed date)."""
-    if not _irapp_site(ir_home):
+    rss_path = _irapp_rss_path(ir_home)
+    if rss_path is None:
         return None
     parsed = urlparse(ir_home)
     host = f"{parsed.scheme or 'https'}://{parsed.netloc}"
     try:
         resp = requests.get(
-            host + _IRAPP_RSS_PATH, timeout=10,
+            host + rss_path, timeout=10,
             headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
         if resp.status_code != 200:
             return []
