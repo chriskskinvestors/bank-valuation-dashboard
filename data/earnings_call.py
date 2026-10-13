@@ -182,10 +182,24 @@ def _is_earnings_announcement(headline: str) -> bool:
     plus an earnings/results keyword — whether or not it states the date inline
     ('… Announces Schedule for Second Quarter 2026 Results', '… Announces Earnings
     Release Date and Conference Call'). Used to pick which PRs to body-fetch; the
-    date itself is then parsed from the body."""
+    date itself is then parsed from the body.
+
+    A multi-quarter release CALENDAR ('Provides Quarterly 2027 Earnings Release
+    Dates', '… Release Dates for Fiscal Year 2027') is not an announcement: its
+    first future date is a far quarter, not the next report (PNC's 2027
+    calendar read as a 2027-04-15 call ahead of its Oct-2026 report). Single-
+    quarter 'Dates for Third Quarter … Release and Conference Call' titles name
+    their quarter and never say 'quarterly'."""
     hl = (headline or "").lower()
+    if _DATES_RE.search(hl) and ("quarterly" in hl or not _QUARTER_NAMED_RE.search(hl)):
+        return False
     return (any(c in hl for c in _ANNOUNCE_CUES)
             and any(k in hl for k in _EARNINGS_KW))
+
+
+_DATES_RE = re.compile(r"\bdates\b")
+_QUARTER_NAMED_RE = re.compile(r"\b(?:first|second|third|fourth|1st|2nd|3rd|4th)\s+quarter\b"
+                               r"|\bq[1-4]\b")
 
 
 _RELEASE_CUE_RE = re.compile(r"\b(?:release|report|announce|issue|publish)\b", re.I)

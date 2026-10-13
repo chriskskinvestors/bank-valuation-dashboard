@@ -723,8 +723,9 @@ def _irapp_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str
 def _irapp_announcement(ir_home: str, today_iso: str) -> dict | None:
     """Parse an IRapp/BusinessWire IR site's latest earnings-ANNOUNCEMENT from its
     press-release RSS + detail page: release/call dates, time, webcast, dial-in,
-    timing. Same shape as _q4_announcement. Functional detection — a non-IRapp
-    host's RSS path 404s / isn't RSS, returning None. None when nothing found."""
+    timing. Same shape as _q4_announcement. Reads the host's discovered feed
+    path (_irapp_rss_path — HBAN/PNC serve alternate sections); None for a
+    non-IRapp host or when nothing found."""
     from data.events.wire_base import is_safe_news_url
     from data.earnings_call import (parse_call_info, _parse_release_date,
                                     _parse_call_date, _is_earnings_announcement,
@@ -733,9 +734,12 @@ def _irapp_announcement(ir_home: str, today_iso: str) -> dict | None:
     host = f"{parsed.scheme or 'https'}://{parsed.netloc}"
     if not host.startswith("http"):
         return None
+    rss_path = _irapp_rss_path(ir_home)
+    if rss_path is None:
+        return None                          # not this platform
     try:
         resp = requests.get(
-            host + _IRAPP_RSS_PATH, timeout=10,
+            host + rss_path, timeout=10,
             headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
         if resp.status_code != 200 or "<item>" not in resp.text:
             return None                      # not this platform
