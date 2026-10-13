@@ -52,7 +52,9 @@ _NUM = r"(\d{1,2}(?:\.\d{1,2})?|\.\d{1,2})"
 
 _PCT_SPECS = {
     "nim": (r"net interest margin", (0.5, 8.0)),
-    "efficiency": (r"efficiency ratio", (20.0, 110.0)),
+    # JPM's name for it: "reported overhead ratio of 54% and managed overhead
+    # ratio of 54%" (owner 2026-10-13: map it) — never the managed one.
+    "efficiency": (r"(?:efficiency|(?<!managed )overhead) ratio", (20.0, 110.0)),
     "roa": (r"return on (?:average )?(?:total )?assets", (0.05, 4.0)),
     # "tangible" can't slip in: after "on (average )?" the next word must be
     # "(common )(shareholders')equity", so ROTCE text never matches the ROE spec.
@@ -109,6 +111,15 @@ _MULTI_PERIOD = re.compile(
     r"\b(?:nine|six|twelve|9|6|12)[- ]months?\b|\byear[- ]to[- ]date\b|"
     r"\bytd\b|\bfirst (?:half|nine months)\b|\bfull[- ]year\b|"
     r"\bfor the (?:fiscal )?year\b(?![- ]ago)", re.I)
+# …and the same period phrase right AFTER the value: GS 3Q26 "The firm's
+# efficiency ratio was 59.4% for the first nine months of 2026, compared
+# with 62.1% …" shipped as the quarter's efficiency (the quarter's isn't
+# stated). The phrase must lead the tail — "18.7% for the third quarter of
+# 2026 and 20.7% for the first nine months" keeps its quarter value.
+_MULTI_PERIOD_AFTER = re.compile(
+    r"^\s*,?\s*(?:(?:for|during|in|over) the (?:first |last |past |trailing )?"
+    r"(?:nine|six|twelve|9|6|12)[- ]months?\b|(?:on a )?year[- ]to[- ]date\b"
+    r"|ytd\b|for the (?:fiscal |full )?year\b(?![- ]ago))", re.I)
 
 _AGREE_PCT = 0.011      # two-decimal percent agreement
 _AGREE_USD = 0.011      # cent agreement for per-share values
@@ -154,7 +165,8 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
         if _EXCLUDE_SENTENCE.search(text[max(0, start - 70):start]):
             continue
         if (_MULTI_PERIOD.search(text[start:end]) or _MULTI_PERIOD.search(
-                text[max(0, start - 70):start].rsplit(". ", 1)[-1])):
+                text[max(0, start - 70):start].rsplit(". ", 1)[-1])
+                or _MULTI_PERIOD_AFTER.match(text[end:end + 50])):
             continue
         if _CONNECTOR_EXCLUDE.search(text[start:end]):
             continue
@@ -417,6 +429,11 @@ def _release_shows_preferred_equity(html: str) -> bool:
         return True
 
 _DIV_PATS = [
+    # JPM 3Q26 "Common dividend of $4.4 billion or $1.65 per share" — the
+    # per-share figure trails the dollar total.
+    re.compile(r"(?<!special )(?<!preferred )dividends? of \$\s?[\d,.]+ "
+               r"(?:billion|million),? or \$\s?(\d{1,2}\.\d{2,4}) per "
+               r"(?:common )?share", re.I),
     re.compile(r"(?<!special )(?<!annual )dividend of \$\s?(\d{1,2}\.\d{2,4}) per "
                r"(?:common )?share", re.I),
     re.compile(r"(?<!special )(?<!annual )dividend[^$%]{0,30}?to \$\s?"
@@ -508,6 +525,11 @@ _ADJ_EPS_PATS = [
                r"(?::|\b(?:of|was|were))\s*\$\s?(\d{1,2}\.\d{2})", re.I),
     re.compile(r"\(or \$\s?(\d{1,2}\.\d{2}) excluding (?:notable|significant) "
                r"items\)", re.I),
+    # JPM 3Q26 headline: "NET INCOME OF $15.8 BILLION ($5.75 PER SHARE)
+    # EXCLUDING A SIGNIFICANT ITEM" (2Q26 put the exclusion first).
+    re.compile(r"net income of \$\s?[\d,.]+ (?:billion|million)\s*\(\s*\$\s?"
+               r"(\d{1,2}\.\d{2}) per (?:diluted )?(?:common )?share\s*\)\s*"
+               r"excluding (?:an? |the )?(?:notable|significant) items?\b", re.I),
     re.compile(r"excluding (?:notable|significant) items of \$\s?[\d,.]+ "
                r"(?:billion|million)\s*\(\s*\$\s?(\d{1,2}\.\d{2}) per "
                r"(?:diluted )?(?:common )?share\)", re.I),
@@ -558,7 +580,8 @@ def _adj_eps_metric(text: str) -> float | None:
             after = text[m.end():m.end() + 60]
             if (_ADJ_EPS_PRIOR.search(before) or _ADJ_EPS_FROM.search(before)
                     or _ADJ_EPS_PRIOR_AFTER.match(after)
-                    or _ADJ_EPS_PAIR.match(after)):
+                    or _ADJ_EPS_PAIR.match(after)
+                    or _MULTI_PERIOD_AFTER.match(after)):
                 continue
             if _TABLE_TAIL.match(after[:12]):
                 continue                  # flattened multi-period table row
@@ -719,7 +742,9 @@ _QE_MONTH = {3: 31, 6: 30, 9: 30, 12: 31}
 # analogous "B/(W)" better/worse; HBAN "LQ" linked-quarter; RF "2Q26 vs.
 # 1Q26" comparisons, whose period tokens must never read as periods) —
 # never period columns.
-_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|lq|vs|versus|change|"
+# EWBC "Qtr-o-Qtr | Yr-o-Yr" basis-point change columns.
+_CHANGE_COL = re.compile(r"(?i)\b(?:seq|yr/yr|yoy|qoq|qtr-o-qtr|yr-o-yr|lq|vs|"
+                         r"versus|change|"
                          r"bps|%)\b|%"
                          r"|[ob]/\([uw]\)")
 
@@ -788,12 +813,32 @@ _FOOTNOTE = re.compile(r"^\(\d\)$")
 _CELL_NUM = re.compile(r"\(?\$?\s?(\d{1,3}(?:,\d{3})*\.?\d{0,4}|\.\d{1,4})\)?")
 
 
-def _row_values(cells: list[str]) -> list[float]:
+# A cell that HOLDS a column without a number: "N/A" (UNTY's adjusted EPS
+# for a quarter with no adjustments — "1.51 | N/A | 1.33"), "NM", or a
+# dash ("—", or U+FFFD where a cp1252 dash was decoded as UTF-8). Dropping
+# such a cell shifted every later value one column left, so the row either
+# failed the width check (UNTY: 2 values under 3 periods) or, beside change
+# columns, read a neighbor's value.
+_SLOT_CELL = re.compile(r"(?i)^\*?(?:n/?a|n\.?m\.?|[—–\-�]+)$")
+
+
+def _row_values(cells: list[str], slots: bool = False,
+                n_periods: int = 0) -> list[float]:
     """Numeric values across a row's non-label cells, in order. Footnote
     markers ('(1)') and symbol-only cells are skipped; a parenthesized
-    decimal is negative; thousands separators are stripped."""
+    decimal is negative; thousands separators are stripped. `slots`: an
+    N/A / NM / dash cell yields None in its column's place (see _SLOT_CELL)
+    instead of vanishing — opt-in, callers must handle None. With slots,
+    once `n_periods` values are in, a footnote-shaped "(6)" cell is a
+    trailing change column's negative value, held as None (WFC 3Q26 "1.87 |
+    2.00 | 1.66 | (6) | 13": dropping the "(6)" broke the 3 + 2 width) —
+    inside the period columns it stays a footnote, as before."""
     vals = []
     for c in cells[1:]:
+        if slots and c and (_SLOT_CELL.match(c) or (
+                n_periods and len(vals) >= n_periods and _FOOTNOTE.match(c))):
+            vals.append(None)
+            continue
         if not c or _FOOTNOTE.match(c) or c in ("%", "$"):
             continue
         for m in _CELL_NUM.finditer(c):
@@ -810,29 +855,92 @@ def _row_values(cells: list[str]) -> list[float]:
     return vals
 
 
+# Ratio-denominator connectors ("to", "/", "as a % of", "as a percentage
+# of") and the leading qualifiers a credit-ratio label may carry.
+_PCT_OF = r"(?:to|/|as a (?:%|percent(?:age)?) of) "
+_NCO_PREFIX = r"(?:(?:qtd|quarterly|annualized)\s+)*"
+
 # Table-row label anchors (matched at the START of the row's first cell) with
 # the value kind: '%' rows must carry a percent sign somewhere, '$' rows a
 # dollar sign — a same-named row in a different unit never qualifies.
 _TABLE_SPECS = {
-    "nim": (r"(?:net interest margin|nim\b)", "%", (0.5, 8.0)),
-    "efficiency": (r"efficiency ratio", "%", (20.0, 110.0)),
+    # JPM's NIM is "NET YIELD ON INTEREST-EARNING ASSETS" (its supplement's
+    # average-rates block); the "… excluding Markets" memo row is a variant.
+    "nim": (r"(?:net interest margin|nim\b|net yield on (?:average )?"
+            r"interest-earning assets)", "%", (0.5, 8.0)),
+    # JPM names its efficiency ratio the "overhead ratio" (owner 2026-10-13:
+    # map it); the "managed" overhead ratio is a non-GAAP basis and never
+    # starts a row label matched here (start-anchored).
+    "efficiency": (r"(?:efficiency|overhead) ratio", "%", (20.0, 110.0)),
     "roa": (r"return on (?:average )?(?:total )?assets", "%", (0.05, 4.0)),
     "roe": (r"(?:return on (?:average )?(?:common )?(?:shareholders['’]?,? )?equity"
             r"|roe\b)", "%", (0.5, 40.0)),
     "rotce": (r"(?:return on (?:average )?tangible common "
               r"(?:shareholders['’]?,? )?equity|rotce\b)", "%", (0.5, 60.0)),
-    "nco_ratio": (r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
-                  r"(?: (?:to|/) average (?:total )?loans| ratio)", "%", (0.0, 5.0)),
-    "npa_assets": (r"non-?performing assets (?:to|/|as a percentage of) "
-                   r"total assets", "%", (0.0, 10.0)),
-    "acl_loans": (r"allowance for credit losses(?: on loans(?: hfi)?,?)? "
-                  r"(?:to|/|as a percentage of) (?:total )?loans", "%",
-                  (0.1, 6.0)),
+    # Denominator forms: "to average loans", "/ average loans", "as a % of
+    # average total loans (annualized)" (WFC), "as a percentage of average
+    # loans HFI" (FBK); a leading "annualized" / "QTD" qualifier is allowed.
+    # The band floor is −1: a NET RECOVERY quarter prints a negative ratio
+    # ("(0.02)"), a real value the 0.0 floor used to refuse.
+    "nco_ratio": (_NCO_PREFIX + r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
+                  r"(?:\s*\(annualized\))?"
+                  r"(?: " + _PCT_OF + r"(?:qtd )?average (?:total )?loans"
+                  r"| ratio| rate)", "%", (-1.0, 5.0)),
+    # The inverted-sign label: "QTD annualized net recoveries (chargeoffs)
+    # to QTD average loans" (UNTY) prints recoveries POSITIVE — the value is
+    # negated into nco_ratio (see _INVERTED).
+    "nco_ratio_inv": (_NCO_PREFIX + r"net recoveries\s*\(charge-?offs\)"
+                      r"(?:\s*\(annualized\))? " + _PCT_OF +
+                      r"(?:qtd )?average (?:total )?loans", "%", (-5.0, 1.0)),
+    # "Nonaccrual assets (incl. OREO) to total assets" is the NPA line for
+    # banks that name it so (owner 2026-10-13: map it — UNTY).
+    "npa_assets": (r"(?:non-?performing|non-?accrual) assets(?: \([^)]{0,30}\))? "
+                   + _PCT_OF + r"total assets", "%", (0.0, 10.0)),
+    "acl_loans": (r"allowance for credit losses(?: (?:on|for) loans(?: hfi)?,?)? "
+                  + _PCT_OF + r"(?:total )?loans", "%", (0.1, 6.0)),
+    # Capital ratios (kind "%r": the row must carry a % or say "ratio" — a
+    # bare "Tier 1 capital | 25" in $ millions sits inside the band). Rows
+    # scoped to the BANK subsidiary are refused (_capital_scope_ok); a
+    # Standardized row beats an Advanced one (_SCOPE_PAIRS). The current-
+    # quarter values only fill gaps the prose-corroborated extractor
+    # (ir_provider.extract_capital_ratios) leaves — see merge_table_capital.
+    "cet1_ratio": (r"(?:common equity tier (?:1|one)|cet ?1)(?:\s*\([^)]{0,12}\))?"
+                   r"(?: risk-based)?(?: capital)?(?: ratio)?",
+                   "%r", (4.0, 30.0)),
+    # "Tier 1 capital to average assets" / "Tier 1 Capital / Average Assets"
+    # / "Tier 1 capital to total assets" (PDLB) are LEVERAGE ratios.
+    "t1_ratio": (r"(?:risk-based )?tier (?:1|one) (?:risk-based )?capital"
+                 r"(?!\s*(?:to|/)\s*(?:quarterly |adjusted )?(?:average |total )+"
+                 r"assets)(?!.*leverage)", "%r", (5.0, 32.0)),
+    "total_ratio": (r"(?:risk-based )?total (?:risk-based )?capital"
+                    r"(?! to (?:quarterly |adjusted )?average)", "%r", (7.0, 35.0)),
+    "lev_ratio": (r"(?:tier (?:1|one) )?leverage(?: ratio)?"
+                  r"|tier (?:1|one) capital\s*(?:to|/)\s*(?:quarterly |adjusted )?"
+                  r"(?:average |total )+assets", "%r", (3.0, 20.0)),
+    # COMMON only: "Tangible equity to tangible assets" includes preferred.
+    "tce_ratio": (r"(?:tangible common equity|tce) (?:ratio|" + _PCT_OF +
+                  r"(?:total )?tangible assets)", "%", (2.0, 25.0)),
+    # Never "… deposits and other borrowings" (a funding cost) nor a spot
+    # rate ("Cost of total deposits, Qtr-End" / "at period end").
+    "cost_of_deposits": (r"(?:annualized |average )?(?:cost of (?:total )?deposits"
+                         r"|total (?:cost of )?deposits? costs?)"
+                         r"(?!.*\b(?:and|borrowings?|spot|qtr[- ]end|quarter[- ]end"
+                         r"|period[- ]end|end of (?:the )?period|at)\b)",
+                         "%", (0.0, 7.0)),
+    # EWBC "Average loan yield" / "Average cost of deposits".
+    "loan_yield": (r"(?:average )?(?:yield on (?:total )?loans(?: and leases)?"
+                   r"|(?:total )?loans? yields?)", "%", (1.0, 12.0)),
     "tbv_ps": (r"tangible book value per (?:common )?share", "$", (1.0, 500.0)),
     "bv_ps": (r"book value per (?:common )?share", "$", (1.0, 900.0)),
     "bv_ps_common": (r"book value per common share", "$", (1.0, 900.0)),
     "div_ps": (r"(?:cash )?dividends?(?: declared| paid)? per (?:common )?share",
                "$", (0.005, 10.0)),
+    # The bare "Dividends paid (QTD)" row (UNTY) is per share only by its
+    # SECTION ("SHARE INFORMATION" / "COMMON SHARE DATA"); kind "$s" reads
+    # it only under such a section — elsewhere the same label is a dollar
+    # total (cash-flow / equity statements).
+    "div_ps_sec": (r"(?:cash )?dividends?(?: declared| paid)?(?: \(qtd\))?\s*$",
+                   "$s", (0.005, 10.0)),
     # Actuals fill (2026-07-13, owner): EPS + total revenue from the release
     # itself so the boards aren't blank while FMP's consensus feed lags a
     # fresh report. GAAP diluted EPS here; the ADJUSTED variant (what street
@@ -856,7 +964,8 @@ _TABLE_SPECS = {
     # disagree and the guard refuses, instead of a lone segment row
     # shipping as the firmwide figure. "Net revenue - reported" is JPM's
     # GAAP line ("- managed" never matches the end anchor's basis word).
-    "total_revenue": (r"(?:total revenues?(?:, net of interest expense)?"
+    # GS: "Total net revenues" (its income statement's firmwide line).
+    "total_revenue": (r"(?:total (?:net )?revenues?(?:, net of interest expense)?"
                       r"|net revenues?\s*[-–—]\s*reported)"
                       r"\s*(?:\(\d\))?\s*$", "$K", (5e6, 100e9)),
     # EPS tie-out inputs (analysis/valuation._release_eps_tie_out): net
@@ -903,22 +1012,138 @@ _ADJ_TABLE_SPECS = {
 }
 
 
-def _period_header(rows: list[list[str]]) -> tuple | None:
+def _period_header(rows: list[list[str]], detail: bool = False) -> tuple | None:
     """The table's PERIOD HEADER: (qends, hdr_i, span_i, n_change) — the ISO
     quarter-end per period column, the header row index, the row where a
     "Three Months Ended | Six Months Ended" span banner would sit, and the
-    count of trailing %-change columns value rows must also carry — or None
-    when no row proves the layout (bare years, lone dates). Shared by the
-    single-column reader (extract_table_metrics) and the period-series
-    reader (extract_table_series): one header proof, two consumers.
-    """
+    count of trailing extra columns (%-change, year-to-date) value rows may
+    also carry — or None when no row proves the layout (bare years, lone
+    dates). Shared by the single-column reader (extract_table_metrics), the
+    period-series reader (extract_table_series) and release_shares: one
+    header proof, several consumers.
+
+    `detail=True` returns (qends, hdr_i, span_i, n_change, widths): the
+    set of row value counts that prove alignment. A plain header accepts
+    the quarters alone or + every change column (as always). An EXTENDED
+    header — trailing change-period or year-to-date columns folded out of
+    the periods (_fold_change_periods / the YTD trail) — accepts any count
+    from the quarters up to every extra column: the quarter columns LEAD,
+    and its ratio rows print a subset of the extras (JPM's supplement:
+    quarters + YTD, no change cells). Dash / N/A / NM cells hold their
+    columns (_row_values slots), so a missing value can't shift a quarter.
+    The 4-tuple's n_change is the full extra count."""
+    got = _period_header_raw(rows)
+    if not got:
+        return None
+    qends, hdr_i, span_i, n_change = got[:4]
+    n_ytd = got[4] if len(got) > 4 else 0
+    qends, n_fold, n_rest = _fold_change_periods(rows, qends, hdr_i)
+    if detail:
+        k = len(qends)
+        # A folded change period may print as a "$/bp | %" PAIR (FHN 2Q26:
+        # "… | 0.15 | $ — | — % | $ 0.02 | 13 %") — up to two cells each.
+        extra = n_change + 2 * n_fold + n_ytd
+        full = k + extra
+        if n_fold or n_ytd:
+            # A row narrower than the full width must still be WIDER than
+            # the year-to-date block (its periods + any trailing change
+            # cells): FUNC 2Q26 prints "Return on average assets | 1.20 |
+            # 1.20" under "Three Months Ended | Six Months Ended" twins —
+            # the SIX-month pair (its quarterly NIM is 3.98%, the row's
+            # 3.89%), which a quarters-first reading took as the quarter.
+            ytd_cols = n_ytd + n_rest + (n_change if (n_rest or n_ytd) else 0)
+            widths = {w for w in range(k, full + 1)
+                      if w == full or w > ytd_cols}
+        else:
+            widths = {k, k + n_change}
+        inter = _interleaved(rows[hdr_i], k, k + n_fold)
+        return qends, hdr_i, span_i, n_change, widths, inter
+    return qends, hdr_i, span_i, n_change + n_fold + n_ytd
+
+
+def _interleaved(hdr_cells: list[str], k: int, n_raw: int) -> tuple | None:
+    """(value positions of the first k periods, full row width) when the
+    header row prints CHANGE columns BETWEEN its period columns — BMRC 2Q26
+    "June 30, 2026 | March 31, 2026 | % Change | June 30, 2025 | % Change |
+    June 30, 2026 | June 30, 2025 | % Change": a positional read put the
+    9.4% change in the year-ago EPS column ($9.40 vs the real $(0.53)).
+    Each header cell is one value column, so a FULL-width row maps period j
+    to its own position; a row of exactly k values (change cells left
+    blank — ASB's ratio rows) reads in order. None when every change column
+    trails the periods (the ordinary layouts), or when the change cells
+    name periods themselves (MTB "Change 2Q26 vs. 1Q26") and were already
+    counted as header columns — the legacy positional read is right there."""
+    nz = [c for c in hdr_cells if c]
+    per = [j for j, c in enumerate(nz) if _period_qend(c)
+           and not _CHANGE_COL.search(c)]
+    if len(per) < 2 or len(per) != n_raw or len(per) < k:
+        return None
+    seq = nz[per[0]:]
+    pos = [j - per[0] for j in per]
+    if not any(_CHANGE_COL.search(c) for c in seq[:pos[-1]]):
+        return None
+    return pos[:k], len(seq)
+
+
+def _fold_change_periods(rows: list[list[str]], qends: list[str],
+                         hdr_i: int) -> tuple[list[str], int, int]:
+    """(qends, n_folded, n_ytd_folded): trailing header columns that RE-NAME leading
+    periods are extra columns, not periods —
+      CHANGE columns: a run of distinct NON-current leading periods under a
+      "change" banner (WFC 3Q26 "Sep 30, 2026 | Jun 30, 2026 | Sep 30, 2025
+      | Jun 30, 2026 | Sep 30, 2025" under "Sep 30, 2026 % Change from"; GS
+      "% CHANGE FROM"; JPM "3Q26 Change" over "2Q26 | 3Q25");
+      then optionally a YEAR-TO-DATE block of distinct leading periods,
+      when the band carries a quarter marker BEFORE a year-to-date marker
+      (WFC supplement "Quarter ended … Nine months ended": the YTD block
+      trails the quarters — NPB's "Three Months Ended | Six Months Ended"
+      twin columns fold the same way; a YTD-first band is refused as
+      before, never folded).
+    Read as periods, the duplicates made the prior and year-ago columns
+    ambiguous (refused) and every 3-value ratio row mismatched the 5-period
+    width (skipped)."""
+    n = len(qends)
+    above = [r for r in rows[:hdr_i] if any(r)][-3:]
+    band = " ".join(c for r in above + [rows[hdr_i]] for c in r if c)
+    q_m, y_m = _QTR_HDR.search(band), _YTD_HDR.search(band)
+    ytd_after = bool(q_m and y_m and q_m.start() < y_m.start())
+    for k in range(2, n):
+        head, tail = qends[:k], qends[k:]
+        if len(set(head)) != k:
+            break
+        if not all(q in head for q in tail):
+            continue
+        j = 0
+        while j < len(tail) and tail[j] in head[1:] and tail[j] not in tail[:j]:
+            j += 1
+        rest = tail[j:]
+        if j and not re.search(r"(?i)\bchange\b", band):
+            break
+        if rest and not (ytd_after and len(set(rest)) == len(rest)):
+            break
+        return head, n - k, len(rest)
+    return qends, 0, 0
+
+
+def _period_header_raw(rows: list[list[str]]) -> tuple | None:
+    """_period_header's layout proof before change-period folding: a
+    4-tuple, or a 5-tuple whose last item counts trailing year-to-date
+    columns (see the single-row branch)."""
     # span_i: the row where a "Three Months Ended | Six Months Ended"
     # SPAN banner would sit for this table's header shape — directly
     # above the period row for a single-row header, but above the MONTH
     # row for a split month/year header (ONB 2Q26: span, then "June 30,"
     # cells, then years — three rows; found 2026-08-20 wiring the EPS
     # tie-out, whose NI/share rows live in exactly those tables).
-    for i, cells in enumerate(rows[:8]):
+    # The first 8 NON-BLANK rows: Workiva supplements (JPM) pad tables with
+    # blank rows that used to push a real header past a fixed 8-row window.
+    seen = 0
+    for i, cells in enumerate(rows):
+        if not any(cells):
+            continue
+        seen += 1
+        if seen > 8:
+            break
         found = [q for _, q in _row_periods(cells)]
         if len(found) >= 2:
             # A caption/banner row ("2Q26 Change vs. | 1Q26 | 2Q25") can
@@ -967,6 +1192,18 @@ def _period_header(rows: list[list[str]]) -> tuple | None:
                 return None
             if trail and all(_CHANGE_COL.search(c) for c in trail):
                 n_change = len(trail)
+            elif (trail and all(_YEAR_CELL.match(c) or _CHANGE_COL.search(c)
+                                for c in trail)
+                  and any(_YEAR_CELL.match(c) for c in trail)):
+                # Trailing bare years under a year-to-date banner beside a
+                # QUARTERLY banner (JPM supplement: "QUARTERLY TRENDS |
+                # NINE MONTHS ENDED SEPTEMBER 30," over "3Q26 | … | 3Q25 |
+                # … | 2026 | 2025 | 2025"): a YTD block AFTER the quarter
+                # columns — extra columns, never periods.
+                band = " ".join(c for r in [r for r in rows[:i] if any(r)][-2:]
+                                for c in r if c)
+                if _YTD_HDR.search(band) and _QTR_HDR.search(band):
+                    return found, i, i - 1, n_change, len(trail)
             return found, i, i - 1, n_change
         # FITB-style SPLIT header: month names on one row, years on the
         # next ("March | December | March" over "2026 | 2025 | 2025 |
@@ -1062,7 +1299,8 @@ _YEAR_CELL = re.compile(r"^20\d{2}$")
 _MON_CELL = re.compile(
     r"(?i)^(january|february|march|april|may|june|july|august|september|"
     r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|"
-    r"dec)\.?(?:\s+(\d{1,2}))?,?$")
+    # "SEPTEMBER 30 ," — GS 3Q26 prints a space before the comma.
+    r"dec)\.?(?:\s+(\d{1,2}))?\s*,?$")
 _ORD_CELL = re.compile(
     r"(?i)^(?:(first|second|third|fourth|1st|2nd|3rd|4th)"
     r"(\s+(?:quarter|qtr\.?))?|q([1-4]))$")
@@ -1284,13 +1522,44 @@ def _cmp_proves(vals: list[float], n: int, cmp: list[tuple[int, int]]) -> bool:
 # it in the same table; when a metric has BOTH scopes, the consolidated
 # (whole-company) rows serve and the continuing-operations rows step aside.
 # Only explicit markers decide — an unscoped row is never dropped.
-_SCOPE_CONS = re.compile(r"(?i)\bconsolidated\b")
-_SCOPE_CONT = re.compile(r"(?i)\bcontinuing operations\b")
+# The same rule for two more explicit pairs: a STANDARDIZED capital row beats
+# an ADVANCED one (GS 3Q26 prints CET1 12.4% Standardized and 13.6% Advanced
+# under section rows; JPM's supplement the same — the Standardized ratio is
+# the headline/binding one, see ir_provider's capital note), and a REPORTED-
+# basis row beats a MANAGED-basis one (JPM's "Reported Basis" / "Managed
+# Basis" sections and "- reported" / "- managed" rows). (winner, loser)
+# pairs:
+_SCOPE_TAGS = {
+    "cons": re.compile(r"(?i)\bconsolidated\b"),
+    "cont": re.compile(r"(?i)\bcontinuing operations\b"),
+    "std": re.compile(r"(?i)\bstandardized\b"),
+    "adv": re.compile(r"(?i)\badvanced\b"),
+    # "Reported Basis" / "Managed Basis (b)" sections, "Overhead ratio -
+    # reported" / "Overhead ratio - managed" rows (JPM supplement: 2Q26
+    # reported 48 vs managed 47 refused both).
+    "rep": re.compile(r"(?i)\breported\b"),
+    "mgd": re.compile(r"(?i)\bmanaged\b"),
+}
+_SCOPE_PAIRS = (("cons", "cont"), ("std", "adv"), ("rep", "mgd"))
+# A BANK-SUBSIDIARY scope ("Unity Bank", "Bank capital ratios:") — capital
+# ratios there are the bank's, never the holdco's (holdco ≠ bank-sub), so
+# capital candidates carrying it are refused outright. A name with a holdco
+# word ("Unity Bancorp", "Bank of Marin Bancorp") is not bank-scoped.
+_SCOPE_BANK = re.compile(r"(?i)\bbank\b")
+_SCOPE_HOLDCO = re.compile(
+    r"(?i)\b(?:banc(?:orp|shares)|bankshares|corp(?:oration)?|company|"
+    r"consolidated|holding|financial|group|inc)\b")
 
 
-def _row_scope(text: str) -> str | None:
-    cons, cont = _SCOPE_CONS.search(text), _SCOPE_CONT.search(text)
-    return "cons" if cons and not cont else "cont" if cont and not cons else None
+def _row_scope(text: str) -> frozenset:
+    """The explicit scope tags a label (or section row) carries."""
+    tags = {t for t, rx in _SCOPE_TAGS.items() if rx.search(text)}
+    for win, lose in _SCOPE_PAIRS:
+        if win in tags and lose in tags:
+            tags -= {win, lose}           # both named → neither decides
+    if _SCOPE_BANK.search(text) and not _SCOPE_HOLDCO.search(text):
+        tags.add("bank")
+    return frozenset(tags)
 
 
 # A tax-equivalent NIM label ("Net interest margin (FTE)", "- TE", "tax-
@@ -1343,6 +1612,196 @@ def _plain_nim_basis(html: str) -> bool:
     return False
 
 
+# AVERAGE-BALANCE tables print each period as a GROUP of columns ("Average
+# Balance | Interest | Rate/Yield", UNTY 3Q26) under one period header, so
+# a row carries k × g values and the period's yield is the group's rate
+# cell. The group layout is PROVEN by a sub-header row of k identical
+# groups, each with exactly one rate/yield cell and one balance cell —
+# else the table is read as an ordinary period table (where these rows
+# fail the width check). Only these two rows are read from such a table:
+_AVG_YIELD_ROWS = {
+    # "Total loans (B)", "Loans, net", "Loans and leases (2)" — never a
+    # category ("Commercial loans") or held-for-sale line.
+    "loan_yield": (r"(?:total )?(?:net )?loans(?: and leases)?(?:,? net"
+                   r"(?: of unearned income)?| receivable| held for investment"
+                   r"| hfi)?(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$", (1.0, 12.0)),
+    # The ALL-deposits cost (noninterest-bearing included) — an
+    # "interest-bearing deposits" row is a different quantity.
+    "cost_of_deposits": (r"total deposits(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$",
+                         (0.0, 7.0)),
+}
+_AVG_RATE_CELL = re.compile(r"(?i)yield|rate")
+_AVG_BAL_CELL = re.compile(r"(?i)balance")
+
+
+def _avg_groups(rows: list[list[str]], hdr_i: int, k: int) -> tuple | None:
+    """(sub-header row index, group width g, rate position p) when one of
+    the two non-blank rows under the period header splits into k identical
+    column groups (optionally after a leading caption cell), each holding
+    exactly one rate/yield cell and one balance cell; else None."""
+    seen = 0
+    for j in range(hdr_i + 1, len(rows)):
+        nz = [c.lower() for c in rows[j] if c]
+        if not nz:
+            continue
+        seen += 1
+        if seen > 2:
+            break
+        if len(nz) % k:
+            nz = nz[1:]                   # leading caption cell
+        if not nz or len(nz) % k:
+            continue
+        g = len(nz) // k
+        grp = nz[:g]
+        if g < 2 or any(nz[i * g:(i + 1) * g] != grp for i in range(k)):
+            continue
+        rate = [i for i, c in enumerate(grp) if _AVG_RATE_CELL.search(c)]
+        if len(rate) == 1 and sum(1 for c in grp if _AVG_BAL_CELL.search(c)) == 1:
+            return j, g, rate[0]
+    return None
+
+
+# Alias spec keys → (target key, sign): the inverted-sign NCO label and the
+# section-gated dividend row read into their metric's candidates.
+_ALIASES = {"nco_ratio_inv": ("nco_ratio", -1.0), "div_ps_sec": ("div_ps", 1.0)}
+# A per-share SECTION ("SHARE INFORMATION", "COMMON SHARE DATA:", "Per
+# Common Share") — the only place a bare "Dividends paid" row is per share.
+_SHARE_SECTION = re.compile(r"(?i)\bshare\b")
+# Sub-row labels that only name a DENOMINATOR or a BASIS and take their
+# subject from the row above: WFC "Allowance for credit losses for loans |
+# $14,458" then "As a % of total loans | 1.38%"; GS / JPM "EARNINGS PER
+# COMMON SHARE" (section) then "Diluted 1 | $17.01".
+_PCT_SUBROW = re.compile(r"(?i)^as a (?:%|percent(?:age)?) of\b")
+# A bare loans row under an average-RATES / YIELDS section is the loan
+# yield (JPM supplement "AVERAGE RATES" → "Loans | 6.59", WFC "Average
+# Interest Rates" → "Loans | 5.65"); a bare total-loans
+# row under a net-charge-off RATES section is the NCO ratio (JPM "NET
+# CHARGE-OFF/(RECOVERY) RATES" → "Total retained loans | 0.59").
+_RATES_SECTION = re.compile(r"(?i)^(?:average |annualized )?(?:interest )?"
+                            r"(?:yields?|rates)"
+                            r"(?:\s*(?:and|/|&)\s*(?:yields?|rates))?\b(?!.*balance)")
+_LOANS_SUBROW = re.compile(r"(?i)^(?:total )?loans(?: and leases)?"
+                           r"(?:\s*\([a-z\d]\))*\s*$")
+_NCO_SECTION = re.compile(r"(?i)\bnet charge-?off(?:s|/\(recovery\))? "
+                          r"(?:rates?|ratios?)\b")
+_NCO_SUBROW = re.compile(r"(?i)^total (?:retained )?loans(?:\s*\([a-z\d]\))*\s*$")
+_EPS_SUBROW = re.compile(r"(?i)^diluted\b(?:\s*\(?\d\)?)?\s*$")
+_EPS_SECTION = re.compile(r"(?i)\b(?:earnings|net income) per (?:common )?share\b")
+
+
+def _compose_label(label: str, prev_label: str, section_label: str,
+                   outer_label: str = "") -> str:
+    """The row's effective label (see _PCT_SUBROW / _EPS_SUBROW); anything
+    else is returned unchanged. A composed label still has to match a spec
+    from its START, so only the subject row's own name can qualify it."""
+    if _PCT_SUBROW.match(label) and prev_label:
+        return f"{prev_label} {label}"
+    if _LOANS_SUBROW.match(label) and not re.search(
+            r"(?i)balance", section_label) and (
+            _RATES_SECTION.search(section_label)
+            or _RATES_SECTION.search(outer_label)):
+        # one level of nesting: JPM "AVERAGE RATES (c)" → "INTEREST-
+        # EARNING ASSETS" → "Loans | 6.59"
+        return "yield on loans"
+    if _NCO_SUBROW.match(label) and _NCO_SECTION.search(section_label):
+        return "net charge-off ratio"
+    if _EPS_SUBROW.match(label):
+        m = _EPS_SECTION.search(section_label)
+        if m:
+            return f"{m.group(0)} - diluted"
+    return label
+
+
+# Business-SEGMENT vocabulary. A table titled for a segment (KEY "Line of
+# Business Results"; FHN's page headings "COMMERCIAL, CONSUMER, AND WEALTH
+# Quarterly, Unaudited" / "WHOLESALE …" just above the table) or rows under
+# a segment section heading (KEY "Consumer Bank") print the same labels as
+# the firmwide rows — "Efficiency ratio 47.86%" beside the firm's 58.54% —
+# and are never firmwide figures. Change-column headers (_fold_change_
+# periods) made these tables readable, so they are now named and skipped.
+_SEGMENT_TITLE = re.compile(
+    r"(?i)\bsegments?\b|\blines? of business\b|\bbusiness (?:lines?|units?)\b"
+    r"|\bwholesale\b|\bconsumer (?:and|&) community bank|\bconsumer bank(?:ing)?\b"
+    r"|\bcommercial bank(?:ing)?\b|\bwealth (?:management|(?:and|&) investment)"
+    r"|\bcorporate (?:and|&) investment bank|\bretail bank(?:ing)?\b"
+    r"|\basset (?:and|&) wealth\b|\bglobal (?:banking|markets|wealth)\b"
+    r"|\bcommercial, consumer\b|\bcard services\b|\bpersonal banking\b"
+    r"|\binstitutional securities\b|\bplatform solutions\b")
+# A VARIANT block heading: an adjusted / core basis (or "operating" marked
+# non-GAAP) AND a block of figures — TRMK "FINANCIAL RATIOS - OPERATING
+# (NON-GAAP)", OCFC "Core Ratios". A bare "NON-GAAP MEASURES:" block is NOT
+# one: TBV / TCE / ROTCE are conventionally non-GAAP (FLG). Nor is
+# "Operating results:" (GAAP results of operations).
+_VARIANT_BLOCK = re.compile(
+    r"(?i)(?=.*(?:\b(?:adjusted|core|normalized|underlying|pro forma)\b"
+    r"|\boperating\b.*\bnon-?gaap\b|\bnon-?gaap\b.*\boperating\b))"
+    r"(?=.*\b(?:ratios|measures|metrics|data)\b)")
+_BPS_ROW = re.compile(r"(?i)\bbps\b|\bbasis points?\b")
+_RECOVERY_LABEL = re.compile(r"(?i)\brecover")
+# A row with no all-numeric cell (a banner / sub-header inside the table).
+_NUMERIC_CELL = re.compile(r"^[\s$%(),.\d*\-]+$")
+
+
+def _segment_table(pre_text: str, title: str) -> bool:
+    """True for a segment table: segment vocabulary in the table's own
+    title rows, or an UPPER-CASE segment page heading in the text right
+    above it (prose that merely mentions "commercial banking" is mixed case
+    and never trips this)."""
+    if _SEGMENT_TITLE.search(title):
+        return True
+    m = _SEGMENT_TITLE.search(pre_text[-100:])
+    return bool(m) and m.group(0).isupper()
+
+
+def _skip_row(cells: list[str], label: str, st: dict) -> bool:
+    """Advance the row-block state on a NON-DATA row and say whether to
+    skip the row. `st` keys: ytd / seg / var (rows of a year-to-date,
+    segment or non-GAAP block), section / outer (the two nearest label-only
+    headings). A label-only heading opens or closes blocks (a colon sub-
+    heading like "Loans:" keeps the open ones); a multi-cell banner row with
+    no numeric cell switches the year-to-date block (EWBC 2Q26's Selected
+    Ratios table runs a "Six Months Ended" block under the quarter block —
+    "Return on average assets | 1.77 | 1.59" was read as 2Q26 / 1Q26)."""
+    nz = [c for c in cells if c]
+    if len(nz) == 1:
+        sub = label.rstrip().endswith(":")
+        st["ytd"] = _ytd_section(label, st["ytd"])
+        st["seg"] = bool(_SEGMENT_TITLE.search(label)) or (st["seg"] and sub)
+        # TRMK 2Q26 "FINANCIAL RATIOS - OPERATING (NON-GAAP)" heads plain-
+        # labeled rows ("Return on average equity | 10.62 | n/a …"). Only a
+        # BLOCK heading counts — a reconciliation sub-heading naming one
+        # adjusted metric (PNFP "Adjusted return on average assets") sits
+        # over the GAAP row it starts from.
+        st["var"] = bool(_VARIANT_BLOCK.search(label)
+                         and not re.search(r"(?i)reconcil", label)) or (
+            st["var"] and sub)
+        st["outer"], st["section"] = st["section"], label
+        return True
+    if not any(_NUMERIC_CELL.match(c) for c in nz[1:]):
+        txt = " ".join(nz)
+        if len(txt) > 80:
+            return True               # a note / caption, not a banner (AROW)
+        if _YTD_HDR.search(txt) and not _QTR_HDR.search(txt):
+            st["ytd"] = True
+        elif _QTR_HDR.search(txt) and not _YTD_HDR.search(txt):
+            st["ytd"] = False
+        return True
+    return st["ytd"] or st["seg"]
+
+
+def _ytd_section(label: str, in_block: bool) -> bool:
+    """Whether the rows after a label-only SECTION row belong to a year-to-
+    date block. UNTY 3Q26 prints "FINANCIAL DATA - YEAR TO DATE" inside its
+    three-period quarter table: the block's two-column rows ("4.52 | 4.15 |
+    8.9" — 9M EPS, 9M EPS, % change) count three values and read the
+    nine-month EPS as the quarter's, so the real 1.70 was refused as a
+    disagreement. A YTD heading opens the block; the next heading that is
+    not a colon-terminated sub-heading ("Loans:") closes it."""
+    if _YTD_HDR.search(label) and not _QTR_HDR.search(label):
+        return True
+    return in_block and label.rstrip().endswith(":")
+
+
 def extract_table_metrics(html: str, expected_qend: str,
                           specs: dict | None = None,
                           adj_specs: dict | None = None,
@@ -1362,12 +1821,17 @@ def extract_table_metrics(html: str, expected_qend: str,
     all_specs = {**specs, **adj_specs}
     cands: dict = {k: [] for k in all_specs}     # [(value, scope, plain)]
     plain_nim = "nim" in specs and _plain_nim_basis(html)
-    for thtml in re.findall(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+    for tm in re.finditer(r"(?is)<table[^>]*>(.*?)</table>", html or ""):
+        thtml = tm.group(1)
         rows = _table_rows(thtml)
-        hdr = _period_header(rows)
+        hdr = _period_header(rows, detail=True)
         if not hdr:
             continue                      # no period row → skip table
-        qends, hdr_i, span_i, n_change = hdr
+        qends, hdr_i, span_i, n_change, widths, inter = hdr
+        if _segment_table(
+                _flat_text((html or "")[max(0, tm.start() - 1500):tm.start()]),
+                " ".join(c for r in rows[:hdr_i] for c in r if c)):
+            continue                      # a business segment's table
         if quarter_only:
             head_text = " ".join(c for r in rows[:hdr_i + 1] for c in r if c)
             if _YTD_HDR.search(head_text) and not _QTR_HDR.search(head_text):
@@ -1416,7 +1880,9 @@ def extract_table_metrics(html: str, expected_qend: str,
         # its own $ when the table's units statement covers per-share values.
         table_per_share = "per share" in table_text
 
-        def _try(specs, label, row_text, vals, scope):
+        def _try(specs, label, row_text, vals, scope, section_label):
+            if vals[col] is None:
+                return                    # N/A / NM / dash in this column
             for key, (lab_re, kind, band) in specs.items():
                 if not re.match(r"\s*" + lab_re, label, re.I):
                     continue
@@ -1424,9 +1890,32 @@ def extract_table_metrics(html: str, expected_qend: str,
                     if scale is None:
                         continue
                     v = vals[col] * scale
-                elif kind == "$" and "$" not in row_text and not table_per_share:
+                elif kind in ("$", "$s") and "$" not in row_text \
+                        and not table_per_share:
                     continue
-                elif kind == "%" and "%" not in row_text and "$" in row_text:
+                elif kind == "$s" and not _SHARE_SECTION.search(section_label):
+                    continue
+                elif kind == "%r" and (
+                        "bank" in scope
+                        or ("$" in row_text and "%" not in row_text)
+                        or ("%" not in row_text
+                            and "ratio" not in label.lower()
+                            and "ratio" not in section_label.lower())):
+                    # Capital: a bank-subsidiary row is not the holdco's
+                    # ratio; a dollar-capital row ("Tier 1 capital | 25"
+                    # in $ millions) is not a ratio — "ratio" must be in
+                    # the label or its section heading (WFC "Risk-based
+                    # capital ratios and components:" → "Tier 1 capital").
+                    continue
+                elif kind in ("%", "%r") and "%" not in row_text and (
+                        "$" in row_text
+                        or sum(1 for c in row_text.split(" | ")
+                               if _BPS_ROW.search(c)) >= len(qends)):
+                    # …and a basis-point row is not a percent row: BHRB
+                    # 2Q26 "Net charge-offs (recoveries) to average loans |
+                    # 6.5 bps | 0.6 bps" read 0.6 bps as 0.6%. (bps CHANGE
+                    # cells beside percent values — OPBK "57.64 | … | (33)
+                    # bps" — are not: every period cell must be in bps.)
                     # A $-bearing row can't be the ratio (TFC omits % signs
                     # entirely — the specific label + band disambiguate; only
                     # an explicit $ marks the row as a dollar line).
@@ -1437,10 +1926,21 @@ def extract_table_metrics(html: str, expected_qend: str,
                     continue
                 else:
                     v = vals[col]
+                if key == "nco_ratio" and v < 0 and not _RECOVERY_LABEL.search(label):
+                    # A parenthesized NCO ratio is a net RECOVERY only when
+                    # the label says recoveries: BANR's allowance roll-
+                    # forward prints charge-offs negative ("Net charge-offs
+                    # (101)" … "/ average loans receivable (0.001)%") — the
+                    # sign is presentation, the real ratio +0.001%.
+                    continue
                 if band[0] <= v <= band[1]:
                     cands[key].append((v, scope, _nim_plain_label(label)))
 
-        section = None
+        avg = (_avg_groups(rows, hdr_i, len(qends))
+               if specs is _TABLE_SPECS else None)
+        section, prev_label = frozenset(), ""
+        st = {"ytd": False, "seg": False, "var": False, "section": "",
+              "outer": ""}
         for cells in rows[hdr_i + 1:]:
             # Label = the first NON-EMPTY cell (WFC/JPM indent data rows with
             # a leading empty cell — cells[0] as label skipped every row,
@@ -1453,27 +1953,56 @@ def extract_table_metrics(html: str, expected_qend: str,
             label = cells[label_idx]
             if sum(1 for c in cells if c) == 1:
                 section = _row_scope(label)       # label-only section row
-            scope = _row_scope(label) or section
-            row_text = " ".join(cells)
+            if _skip_row(cells, label, st):
+                continue                  # heading / banner / YTD / segment
+            section_label, outer_label = st["section"], st["outer"]
+            label, prev_label = (_compose_label(label, prev_label,
+                                                section_label, outer_label),
+                                 label)
+            scope = _row_scope(label) | section
+            row_text = " | ".join(cells)
             # _row_values itself skips its first cell (the label slot), so
             # hand it the row FROM the label cell onward.
-            vals = _row_values(cells[label_idx:])
-            if len(vals) == len(qends) + n_change and n_change:
-                vals = vals[:len(qends)]  # trailing change cols (header-counted)
-            elif cmp and _cmp_proves(vals, len(qends), cmp):
-                vals = vals[:len(qends)]  # "$ chg | % chg" per comparison
-            if len(vals) != len(qends):
-                continue                  # colspan drift → alignment unproven
-            if _CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label):
-                # adjusted/core variant row — only the opt-in specs may read it
-                _try(adj_specs, label, row_text, vals, scope)
+            k = len(qends)
+            vals = _row_values(cells[label_idx:], slots=True, n_periods=k)
+            if avg and len(vals) == k * avg[1]:
+                v = vals[col * avg[1] + avg[2]]
+                if v is not None and not _ROW_VARIANT.search(label):
+                    for key, (lab_re, band) in _AVG_YIELD_ROWS.items():
+                        if (re.match(r"\s*" + lab_re, label, re.I)
+                                and band[0] <= v <= band[1]):
+                            cands[key].append((v, scope, False))
                 continue
-            _try(specs, label, row_text, vals, scope)
+            if inter and len(vals) != k:
+                if len(vals) != inter[1]:
+                    continue              # interleaved: full rows (or k) only
+                vals = [vals[j] for j in inter[0]]
+            elif len(vals) != k:
+                if len(vals) in widths:
+                    vals = vals[:k]       # trailing change / YTD columns
+                elif (cmp and None not in vals
+                        and _cmp_proves(vals, k, cmp)):
+                    vals = vals[:k]       # "$ chg | % chg" per comparison
+                else:
+                    continue              # colspan drift → alignment unproven
+            if (_CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label)
+                    or st["var"]):
+                # adjusted/core variant row — only the opt-in specs may read it
+                _try(adj_specs, label, row_text, vals, scope,
+                     f"{section_label} | {outer_label}")
+                continue
+            _try(specs, label, row_text, vals, scope,
+                 f"{section_label} | {outer_label}")
+    for alias, (target, sign) in _ALIASES.items():
+        if alias in cands and target in cands:
+            cands[target] += [(sign * v + 0.0, sc, pl)
+                              for v, sc, pl in cands.pop(alias)]
     out = {}
     for key, cs in cands.items():
-        if (any(sc == "cons" for _, sc, _ in cs)
-                and any(sc == "cont" for _, sc, _ in cs)):
-            cs = [c for c in cs if c[1] != "cont"]
+        for win, lose in _SCOPE_PAIRS:
+            if (any(win in sc for _, sc, _ in cs)
+                    and any(lose in sc for _, sc, _ in cs)):
+                cs = [c for c in cs if lose not in c[1]]
         if key == "nim" and plain_nim:
             cs = [c for c in cs if c[2]]
         vs = [v for v, _, _ in cs]
@@ -1499,7 +2028,26 @@ def extract_table_metrics(html: str, expected_qend: str,
             out[key] = max(vs, key=_dec)      # the most precise candidate
         else:
             out[key] = None
+    if specs is _TABLE_SPECS:
+        out["rev_sum"] = None
+        if out.get("total_revenue") is None:
+            out["rev_sum"] = _revenue_sum(html, expected_qend)
     return out
+
+
+def _revenue_sum(html: str, qend: str) -> float | None:
+    """Net interest income + noninterest income at `qend` — the release's
+    revenue when it prints no total line (UNTY 3Q26: $34,291K + $2,359K).
+    Owner 2026-10-13: show the sum, labeled as one (key `rev_sum`, never
+    `total_revenue`). Both lines read from period-proven quarter columns
+    under the revenue-basis specs (end-anchored: FTE / "after provision"
+    variants never match); either missing → None."""
+    t = extract_table_metrics(html, qend, specs={
+        k: _REV_TABLE_SPECS[k] for k in ("nii", "nonii")}, adj_specs={},
+        quarter_only=True)
+    if t.get("nii") is None or t.get("nonii") is None:
+        return None
+    return t["nii"] + t["nonii"]
 
 
 # ── Revenue basis (2026-10-06 review follow-up) ─────────────────────────────
@@ -1630,11 +2178,15 @@ def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float
         table_text = " ".join(" ".join(c for c in cells if c)
                               for cells in rows).lower()
         table_per_share = "per share" in table_text
+        st = {"ytd": False, "seg": False, "var": False, "section": "",
+              "outer": ""}
         for cells in rows[hdr_i + 1:]:
             label_idx = next((i for i, c in enumerate(cells) if c), None)
             if label_idx is None:
                 continue
             label = cells[label_idx]
+            if _skip_row(cells, label, st) or st["var"]:
+                continue                  # heading / YTD / segment / non-GAAP
             row_text = " ".join(cells)
             vals = _row_values(cells[label_idx:])
             if len(vals) == len(qends) + n_change and n_change:
@@ -1830,7 +2382,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v30:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v31:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -1857,6 +2409,13 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v31 (2026-10-13): Results-board exhibit coverage (UNTY/FBK/JPM/WFC/
+    # GS audit) — capital / TCE / cost-of-deposits / loan-yield (incl.
+    # average-balance groups) / NII+nonII-sum table reads; YTD sections and
+    # banners, N/A-dash slots, "% change from" period columns, segment and
+    # non-GAAP blocks; GS's nine-month efficiency refused (value-trailing
+    # period guard); the EX-99.2 supplement's consolidated tables fill
+    # what the release leaves empty; capital merged via merge_table_capital.
     # v30 (2026-10-13): the finder also steps past a call TRANSCRIPT
     # furnished under 2.02 after the release (PEBO served NCO only, BCBP
     # nothing; SBFG's Q4-25 transcript read 2024's $1.72 EPS as the
@@ -1924,7 +2483,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v30:{int(cik)}"
+    key = f"release_metrics:v31:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -2015,6 +2574,22 @@ def release_metrics(cik) -> dict | None:
         "accession": rel.get("accession"),
         "frontier": acc,
     }
+    val["capital"] = merge_table_capital(val["metrics"], val["capital"])
+    for bucket in ("prior_metrics", "yoy_metrics"):
+        _order_capital(val[bucket])
+    # The 8-K's financial supplement (EX-99.2): megabanks keep NIM / ROA /
+    # credit / capital history there, and the guarded-AI layer used to be
+    # the only reader (dead in prod 2026-10-13: API credit exhausted —
+    # owner: "why can't you just extract the data"). Same table readers,
+    # consolidated section only, gap-fill only.
+    try:
+        from data.ir_provider import earnings_supplement
+        sup = earnings_supplement(cik, rel.get("accession") or "")
+    except Exception:
+        sup = None
+    rel["_sup"] = sup                     # _ai_fill reuses it, no refetch
+    if sup and sup.get("html"):
+        _supplement_fill(val, sup["html"], rel["html"])
     val["ai_state"] = _ai_fill(val, cik, rel)
     val["ai_attempts"] = 1
     return _stamp(val)
@@ -2053,6 +2628,155 @@ def _consolidated_slice(sup_text: str, cap: int = 120_000) -> str:
     return sup_text[:_NO_MARKER_CAP]
 
 
+_CAP_KEYS = ("cet1_ratio", "t1_ratio", "total_ratio", "lev_ratio")
+
+
+def _capital_ordered(d: dict) -> bool:
+    """CET1 ≤ Tier 1 ≤ Total (5bp rounding slack) wherever both are present
+    — the identity every bank's risk-based ratios satisfy. A violation
+    means a row or column mix-up (the ir_provider rule)."""
+    c, t1, tot = d.get("cet1_ratio"), d.get("t1_ratio"), d.get("total_ratio")
+    return not ((c is not None and t1 is not None and c > t1 + 0.051)
+                or (t1 is not None and tot is not None and t1 > tot + 0.051)
+                or (c is not None and tot is not None and c > tot + 0.051))
+
+
+def _order_capital(bucket: dict) -> None:
+    """Blank a period bucket's risk-based ratios when they violate the
+    ordering identity (never guess which one is wrong)."""
+    if bucket and not _capital_ordered(bucket):
+        for k in ("cet1_ratio", "t1_ratio", "total_ratio"):
+            bucket[k] = None
+
+
+def merge_table_capital(metrics: dict, capital: dict | None) -> dict:
+    """The current quarter's capital dict: ir_provider's prose-AND-table
+    corroborated ratios win; the period-proven TABLE reads (extract_table_
+    metrics' capital specs) fill the gaps — UNTY 3Q26 states CET1 14.46% in
+    prose and in a table row with no "%" of its own, which the corroborator
+    requires, so every ratio was refused. Capital keys move out of
+    `metrics` (the exhibit merges capital over metrics; a None there must
+    not mask a value). Filled values that break CET1 ≤ T1 ≤ Total are
+    dropped again. Mutates `metrics`; returns the new capital dict."""
+    cap = dict(capital or {})
+    filled = []
+    for k in _CAP_KEYS:
+        v = metrics.pop(k, None)
+        if cap.get(k) is None and v is not None:
+            cap[k] = v
+            filled.append(k)
+    if filled and not _capital_ordered(cap):
+        for k in filled:
+            cap[k] = None
+    return cap
+
+
+# Exhibit keys the supplement may fill. Revenue is handled as one group
+# (total_revenue / rev_sum) and per-COMMON book value under preferred.
+_SUP_FILL_KEYS = (
+    "eps_adj", "eps_diluted", "nim", "efficiency", "roa", "roe", "rotce",
+    "loan_yield", "cost_of_deposits", "cet1_ratio", "t1_ratio", "total_ratio",
+    "lev_ratio", "tce_ratio", "tbv_ps", "bv_ps", "div_ps", "nco_ratio",
+    "npa_assets", "acl_loans")
+
+
+_FIRMWIDE_TITLE = re.compile(r"(?i)\bcredit[- ]related information\b|"
+                             r"\b(?:credit|asset) quality\b")
+
+
+def _consolidated_html(sup_html: str, cap: int = 120_000) -> str:
+    """The supplement's FIRMWIDE front section as HTML, cut at the same
+    boundary _consolidated_slice finds in text (first segment detail-page
+    header past the TOC, else the conservative front cap). The cut falls at
+    the start of the table (or text run) holding the boundary, so a segment
+    page's tables never enter — JPM's "CONSUMER & COMMUNITY BANKING
+    FINANCIAL HIGHLIGHTS" header sits inside the first segment table."""
+    segs = re.split(r"(?is)(<table[^>]*>.*?</table>)", sup_html or "")
+    starts, flat, tpos, hpos = [], [], 0, 0
+    for s in segs:
+        f = _flat_text(s)
+        starts.append((hpos, tpos))
+        flat.append(f)
+        tpos += len(f) + 1
+        hpos += len(s)
+    full = " ".join(flat)
+    cut = next((m.start() for m in _SEG_DETAIL.finditer(full)
+                if m.start() >= _TOC_FLOOR), None)
+    cut = min(cut, cap) if cut is not None else _NO_MARKER_CAP
+    end = max((h for h, t in starts if t <= cut), default=0)
+    # Past the segment pages, FIRMWIDE credit pages come back (JPM:
+    # "CREDIT-RELATED INFORMATION" after Corporate) — a table whose own
+    # title names one, and no segment, is kept.
+    tail = [s for s, (h, _t) in zip(segs, starts)
+            if h >= end and s[:6].lower() == "<table"
+            and _FIRMWIDE_TITLE.search(_flat_text(s)[:300])
+            and not _SEG_DETAIL.search(_flat_text(s)[:300])]
+    return (sup_html or "")[:end] + "".join(tail)
+
+
+def _supplement_fill(val: dict, sup_html: str, rel_html: str) -> None:
+    """Fill exhibit cells the RELEASE left empty from the supplement's
+    consolidated tables — per key, all three columns from ONE document: a
+    key the release states in any column is never touched (no mixed-basis
+    deltas: a release's plain NIM beside a supplement's FTE history). The
+    supplement reads through the same period-proven table reader."""
+    html = _consolidated_html(sup_html)
+    if not html:
+        return
+    periods = (("metrics", val.get("qend")),
+               ("prior_metrics", val.get("prior_qend")),
+               ("yoy_metrics", val.get("yoy_qend")))
+    tabs = {b: (extract_table_metrics(html, q) if q else {}) for b, q in periods}
+    cap = val.setdefault("capital", {})
+
+    def stated(k):
+        return (any((val.get(b) or {}).get(k) is not None for b, _ in periods)
+                or cap.get(k) is not None)
+
+    def rel_val(b, k):
+        v = (val.get(b) or {}).get(k)
+        return cap.get(k) if v is None and b == "metrics" else v
+
+    def agrees(a, b):
+        tol = max(_AGREE_USD, 0.5 * 10.0 ** -min(_dec(a), _dec(b)))
+        return abs(a - b) <= tol
+
+    pref = _release_shows_preferred_equity(rel_html)
+    filled_cap = []
+    for k in _SUP_FILL_KEYS:
+        src_k = "bv_ps_common" if (k == "bv_ps" and pref) else k
+        if stated(k):
+            # The release states this key somewhere: the supplement may
+            # fill its OTHER columns only when every column both documents
+            # print AGREES — proof they report one basis (JPM: release TBV
+            # $112.64 and dividend $1.65 = supplement's; the supplement
+            # adds 2Q26 / 3Q25). Any disagreement → release only.
+            both = [(rel_val(b, k), tabs[b].get(src_k)) for b, _ in periods]
+            both = [(a, s) for a, s in both if a is not None and s is not None]
+            if not both or not all(agrees(a, s) for a, s in both):
+                continue
+        for b, _ in periods:
+            v = tabs[b].get(src_k)
+            if v is None or rel_val(b, k) is not None:
+                continue
+            if b == "metrics" and k in _CAP_KEYS:
+                cap[k] = v
+                filled_cap.append(k)
+            else:
+                val.setdefault(b, {})[k] = v
+    if filled_cap and not _capital_ordered(cap):
+        for k in filled_cap:
+            cap[k] = None
+    for b, _ in periods[1:]:
+        _order_capital(val.get(b) or {})
+    if not (stated("total_revenue") or stated("rev_sum")):
+        key = ("total_revenue" if any(tabs[b].get("total_revenue") is not None
+                                      for b, _ in periods) else "rev_sum")
+        for b, _ in periods:
+            if tabs[b].get(key) is not None:
+                val.setdefault(b, {})[key] = tabs[b][key]
+
+
 def _ai_fill(val: dict, cik, rel: dict) -> str:
     """Fill val's None metric cells in place from the guarded-AI extraction
     (data/release_ai — verbatim-evidence verified, unit-safe keys only).
@@ -2070,11 +2794,14 @@ def _ai_fill(val: dict, cik, rel: dict) -> str:
         # consolidated front section so those cells can fill. All release_ai
         # guards (verbatim quote, number-in-quote, bands, segment rejection,
         # period proof) apply unchanged.
-        try:
-            from data.ir_provider import earnings_supplement
-            sup = earnings_supplement(cik, val.get("accession") or "")
-        except Exception:
-            sup = None
+        if "_sup" in rel:
+            sup = rel["_sup"]             # fetched by the extraction pass
+        else:
+            try:
+                from data.ir_provider import earnings_supplement
+                sup = earnings_supplement(cik, val.get("accession") or "")
+            except Exception:
+                sup = None
         if sup:
             text += ("\n\n[FINANCIAL SUPPLEMENT — CONSOLIDATED SECTION]\n"
                      + _consolidated_slice(_flat_text(sup.get("html") or "")))

@@ -495,7 +495,10 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # (tests/test_wire_block_lanes.TestVersionHold enforces the hold).
     # Owed: release_metrics v26 (2026-10-12 — multi-quarter prose guard) and
     # v27 (2026-10-12 — YTD-banner headers, basic/diluted EPS pairs,
-    # consolidated vs continuing rows, plain vs TE NIM).
+    # consolidated vs continuing rows, plain vs TE NIM) and v30 (2026-10-13
+    # — capital / TCE / cost-of-deposits / loan-yield / NII+nonII table
+    # reads, YTD sections, N/A slots, change-period headers; capital merged
+    # via merge_table_capital).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
@@ -760,6 +763,7 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
     from data.ir_provider import extract_capital_ratios
     from data.release_metrics import (_prior_quarter_end, _year_ago_qend,
                                       extract_release_metrics,
+                                      _order_capital, merge_table_capital,
                                       extract_table_metrics,
                                       extract_table_series)
     from data.release_shares import (extract_shares_outstanding,
@@ -792,13 +796,15 @@ def _extract_and_stamp(_stamp, prev, ticker, *, html, url, title, qend,
         "yoy_metrics": (extract_table_metrics(html, _year_ago_qend(qend))
                         if _year_ago_qend(qend) else {}),
         "yoy_qend": _year_ago_qend(qend),
-        "capital": extract_capital_ratios(html),
+        "capital": merge_table_capital(metrics, extract_capital_ratios(html)),
         "url": url,
         "title": title,
         "filed_date": filed_date,
         "source": "company_release",
         "transport": transport,
     }
+    for bucket in ("prior_metrics", "yoy_metrics"):
+        _order_capital(val[bucket])     # CET1 ≤ T1 ≤ Total, else blank
     if wire_url:
         # read from the bank's own copy because the wire refused this story
         val["wire_url"] = wire_url

@@ -321,7 +321,7 @@ def _render_reported_panel(ticker: str):
                     unsafe_allow_html=True)
         st.markdown(withheld, unsafe_allow_html=True)
         return
-    vals = {**(rel_all.get("metrics") or {}), **(rel_all.get("capital") or {})}
+    vals = _rel_current(rel_all)
     if any(v is not None for v in vals.values()):
         st.markdown('<div class="ec-sec">From the Release</div>',
                     unsafe_allow_html=True)
@@ -1948,6 +1948,27 @@ def _platform_hist_val(ticker: str, key: str, qend_iso) -> float | None:
         return None
 
 
+def _rel_current(rel: dict) -> dict:
+    """The release's current-quarter figures: `metrics` with the capital
+    dict's STATED ratios over them — a None capital entry never masks a
+    value (data/release_metrics.merge_table_capital)."""
+    return {**(rel.get("metrics") or {}),
+            **{k: v for k, v in (rel.get("capital") or {}).items()
+               if v is not None}}
+
+
+def _rev_is_sum(rel: dict) -> bool:
+    """True when the exhibit's Revenue row is net interest income +
+    noninterest income (data/release_metrics._revenue_sum, owner
+    2026-10-13): the release prints no total-revenue line in any column but
+    states both lines. Then every column shows the sum — never a sum beside
+    a printed total."""
+    buckets = [rel.get(b) or {} for b in ("metrics", "prior_metrics",
+                                          "yoy_metrics")]
+    return (not any(b.get("total_revenue") is not None for b in buckets)
+            and any(b.get("rev_sum") is not None for b in buckets))
+
+
 def _rel_exhibit_rows(r: dict) -> list[dict]:
     """The exhibit table rows (broker-sheet layout): the SAME fixed metric
     list for every bank — no more per-bank row shapes. Current quarter = the
@@ -1961,9 +1982,13 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     bank-sub capital must never be mixed."""
     rel = r.get("rel") or {}
     tk = r.get("ticker") or ""
-    cur = {**(rel.get("metrics") or {}), **(rel.get("capital") or {})}
-    prior = rel.get("prior_metrics") or {}
-    yoy = rel.get("yoy_metrics") or {}
+    cur = _rel_current(rel)
+    prior = dict(rel.get("prior_metrics") or {})
+    yoy = dict(rel.get("yoy_metrics") or {})
+    rev_sum = _rev_is_sum(rel)
+    if rev_sum:
+        for d in (cur, prior, yoy):
+            d["total_revenue"] = d.get("rev_sum")
     prior_q, yoy_q = rel.get("prior_qend"), rel.get("yoy_qend")
     fdic_hist = r.get("fdic_hist") or {}
     sec_hist = r.get("sec_hist") or {}
@@ -1980,7 +2005,8 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
     # when confirmed as a reported figure (score_rev) — ONB's feed figure is
     # its ADJUSTED revenue.
     if cur.get("total_revenue") is None and r.get("rev_act") is not None \
-            and not r.get("rev_act_src") and r.get("rev_basis") == "reported":
+            and not r.get("rev_act_src") and r.get("rev_basis") == "reported" \
+            and not rev_sum:
         cur["total_revenue"] = r["rev_act"]
     def _split_ok(v, c, unit):
         """Platform per-share history is incomparable with the release's
@@ -2018,7 +2044,9 @@ def _rel_exhibit_rows(r: dict) -> list[dict]:
             if not _split_ok(y, c, unit):
                 y = None
         rows.append({
-            "key": key, "label": label, "unit": unit,
+            "key": key,
+            "label": label + (" ‡" if rev_sum and key == "total_revenue" else ""),
+            "unit": unit,
             "yoy": y, "prior": p, "cur": c, "cons": cons.get(key),
             "lq_html": _rel_delta_html(key, c, p, unit),
             "yy_html": _rel_delta_html(key, c, y, unit),
@@ -2062,6 +2090,9 @@ def _rel_exhibit_table(r: dict) -> str:
         notes.append("* actuals from the release")
     if "GAAP" in (r.get("eps_act_src") or ""):
         notes.append("† EPS is the release's GAAP diluted (no adjusted stated)")
+    if _rev_is_sum(rel):
+        notes.append("‡ Revenue = net interest income + noninterest income "
+                     "(the release prints no total revenue line)")
     src = rel.get("url")
     link = (f'<a class="lnk" href="{_html.escape(src, quote=True)}" '
             f'target="_blank" rel="noopener">release ↗</a>' if src else "")
@@ -2304,7 +2335,7 @@ def _render_results_board():
     export_rows, rel_formats = [], {}
     for r in rows:
         rel = r.get("rel") or {}
-        relm = (rel.get("metrics") or {}) | (rel.get("capital") or {})
+        relm = _rel_current(rel)
         row = {
             "Ticker": r["ticker"], "Bank": get_name(r["ticker"]),
             "Reported": r.get("date"), "When": r.get("when"),
@@ -2340,6 +2371,11 @@ def _render_results_board():
             row[col] = relm.get(key)
             rel_formats[col] = ("pct" if unit == "%"
                                 else "usd" if unit == "$M" else "usd2")
+        # The release's NII + noninterest income when it prints no total
+        # revenue line (owner 2026-10-13) — its own column, never mixed
+        # into "Release Revenue".
+        row["Release NII + Nonint. Inc. ($)"] = relm.get("rev_sum")
+        rel_formats["Release NII + Nonint. Inc. ($)"] = "usd"
         export_rows.append(row)
     table_export(
         pd.DataFrame(export_rows), f"earnings_results_{today.isoformat()}",

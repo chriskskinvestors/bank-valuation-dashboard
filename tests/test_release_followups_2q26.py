@@ -109,7 +109,12 @@ class TestLoneYtdBannerOldForms(unittest.TestCase):
         # Pre-change: EPS None (1.57 vs 0.79 disagreed), div_ps 0.75 (H1).
         cur = extract_release_metrics(html, Q)
         self.assertEqual(cur["eps_diluted"], 0.79)
-        self.assertIsNone(cur["div_ps"])
+        # v31: the THREE-month table's own row "Dividends declared per common
+        # share | $0.75 | $ - | $0.73" states 2Q26 = $0.75 (a semi-annual
+        # payer: 1Q26 "-"). It used to read None only because the "-" cell
+        # broke the row width; the six-month table stays refused (above).
+        self.assertEqual(cur["div_ps"], 0.75)
+        self.assertIsNone(extract_table_metrics(html, PQ)["div_ps"])
         self.assertEqual(extract_table_metrics(html, YQ)["eps_diluted"], 0.36)
 
     def test_opbk_2q_tokens_under_six_month_banner(self):
