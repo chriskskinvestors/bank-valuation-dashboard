@@ -140,12 +140,11 @@ class TestFinderNeedsResultsTitle(unittest.TestCase):
 
 class TestGuidanceIsNotEps(unittest.TestCase):
     def test_newt_guidance_range_not_diluted_eps(self):
-        # Its only statements of $0.47 are unpaired "basic and diluted …
-        # $0.48 and $0.47" forms, and its income statement splits "Diluted"
-        # across a page — so n/a, never the guidance low end.
+        # Never the guidance low end ($0.42): its basic/diluted pairs read
+        # the reported $0.47 (tests/test_release_eps_pairs).
         from data.release_metrics import extract_release_metrics
         m = extract_release_metrics(NEWT_RELEASE_Q2, "2026-06-30")
-        self.assertIsNone(m["eps_diluted"])
+        self.assertEqual(m["eps_diluted"], 0.47)
         self.assertEqual(m["tbv_ps"], 12.13)          # the rest still reads
 
 

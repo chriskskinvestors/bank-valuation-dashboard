@@ -486,12 +486,24 @@ _EPS_BAND = (0.01, 60.0)
 _EPS_BASIC_BEFORE = re.compile(r"\bbasic\s+$", re.I)
 _PER_SH = r"(?:\s+per\s+(?:common\s+|diluted\s+|basic\s+)?share)?"
 _EPS_PAIR_TAIL = re.compile(_PER_SH + r"\s*,?\s*and\s+\$\s?\d", re.I)
+# "respectively" is optional: "Reports 2Q26 Basic and Diluted EPS of $0.48
+# and $0.47" (NEWT — its only statements; the statement table is a page
+# image) maps by the stated order too. What the stated order can NOT map is
+# a PERIOD pair: "Basic and diluted earnings per share for the quarters
+# ended March 31, 2026 and 2025 were $1.43 and $0.97, respectively" (STLE
+# 1Q26) is this year's and last year's EPS — 0.97 shipped as diluted.
 _EPS_PAIR = re.compile(
     r"\b(basic|diluted)\s+(?:and|&)\s+(diluted|basic)\s+"
     r"(?:earnings per (?:common )?share|eps\b)(?:\s*\(“?\"?eps”?\"?\))?"
-    r"[^$%]{0,60}?(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})"
+    r"([^$%]{0,60}?)(?::|\b(?:of|was|were|at))\s*\$\s?(\d{1,2}\.\d{2})"
     + _PER_SH + r"\s*,?\s*and\s+\$\s?(\d{1,2}\.\d{2})" + _PER_SH +
-    r"\s*,?\s*respectively", re.I)
+    r"(\s*,?\s*respectively)?", re.I)
+# Two periods named in the label ("for the second quarter of 2026 and 2025",
+# ENBP) or right after an unqualified pair ("$0.48 and $0.43 for 2Q26 and
+# 1Q26") — the two values are periods, not basic/diluted.
+_EPS_PAIR_PERIODS = re.compile(r"\b(?:and|&)\b", re.I)
+_EPS_PAIR_PERIODS_AFTER = re.compile(
+    r"^\s*,?\s*(?:for|in|during)\b[^.$;]{0,40}?\b(?:and|&)\b", re.I)
 
 
 def _eps_metric(text: str) -> float | None:
@@ -507,9 +519,16 @@ def _eps_metric(text: str) -> float | None:
                 yield m.start(), m.group(1), m.end()
         for m in _EPS_PAIR.finditer(text):
             first, second = m.group(1).lower(), m.group(2).lower()
-            if first != second:
-                yield (m.start(), m.group(3) if first == "diluted"
-                       else m.group(4), m.end())
+            if first == second or _EPS_PAIR_PERIODS.search(m.group(3)):
+                continue
+            if not m.group(6) and _EPS_PAIR_PERIODS_AFTER.match(
+                    text[m.end():m.end() + 60]):
+                continue
+            basic, diluted = ((m.group(4), m.group(5)) if first == "basic"
+                              else (m.group(5), m.group(4)))
+            if float(diluted) > float(basic):
+                continue                  # dilution never raises EPS
+            yield m.start(), diluted, m.end()
     return _clean(text, _gen(), _EPS_BAND, _AGREE_USD)
 
 # ADJUSTED / ex-items EPS — the basis street consensus is quoted on, so the
@@ -2406,7 +2425,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v34:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v35:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2433,6 +2452,11 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v35 (2026-10-13): prose basic/diluted EPS pairs map by stated order
+    # without "respectively" (NEWT 2Q26 reads its reported $0.47), and a
+    # PERIOD pair is never basic/diluted (STLE 1Q26 "for the quarters ended
+    # March 31, 2026 and 2025 were $1.43 and $0.97, respectively" shipped
+    # last year's 0.97 as diluted EPS).
     # v34 (2026-10-13): a NON-2.02 exhibit must also name the results as
     # what it reports (ir_provider._RESULTS_TITLE) — dividend notices
     # (CAC/CFFI/NBHC/QCRH/FKYS/FMCB), a deck (CHMG) and a scheduling notice
@@ -2521,7 +2545,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v34:{int(cik)}"
+    key = f"release_metrics:v35:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a

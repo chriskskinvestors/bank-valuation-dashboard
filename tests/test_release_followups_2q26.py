@@ -70,11 +70,14 @@ class TestBasicDilutedPairOrder(unittest.TestCase):
                 "and $1.25, respectively, in the second quarter.</p>")
         self.assertEqual(extract_release_metrics(text)["eps_diluted"], 1.08)
 
-    def test_unanchored_pair_is_na(self):
-        # No "respectively" → order unproven → n/a, never the first value.
+    def test_unanchored_pair_reads_stated_order(self):
+        # No "respectively" still maps by the stated order (2026-10-13: NEWT
+        # states EPS only as "Basic and Diluted EPS of $0.48 and $0.47"; the
+        # unsafe readings — two PERIODS — are refused by the period-list and
+        # dilution guards, tests/test_release_eps_pairs). Never the first value.
         text = ("<p>Basic and diluted earnings per common share were $1.25 "
                 "per share and $1.08 per share in the second quarter.</p>")
-        self.assertIsNone(extract_release_metrics(text)["eps_diluted"])
+        self.assertEqual(extract_release_metrics(text)["eps_diluted"], 1.08)
 
     def test_pair_tail_other_than_respectively_is_na(self):
         text = ("<p>Basic and diluted earnings per common share were $1.25 "
