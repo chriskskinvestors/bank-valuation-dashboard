@@ -344,7 +344,7 @@ class TestReleaseMetricsEndToEnd(unittest.TestCase):
 
     def test_unty_record(self):
         out = rm.release_metrics(920427)
-        self.assertIn("release_metrics:v32:920427", self.store)
+        self.assertIn("release_metrics:v33:920427", self.store)
         self.assertEqual(out["capital"]["cet1_ratio"], 14.46)
         self.assertEqual(out["capital"]["lev_ratio"], 13.22)
         self.assertEqual(out["prior_metrics"]["cet1_ratio"], 14.19)
