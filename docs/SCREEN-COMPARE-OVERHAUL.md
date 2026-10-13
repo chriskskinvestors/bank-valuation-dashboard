@@ -220,7 +220,7 @@ Build order (each its own verified, shippable batch):
     JWT health in Secret Manager (local copy expired ~2026-08-31); run the
     mislabel diagnostic in prod.
 
-- **B12** ✅ SHIPPED 2026-10-05..08 (PRs #249, #350, #353) — **AOCI % TCE
+- **B12** ✅ SHIPPED 2026-10-05..12 (PRs #249, #350, #353, #364) — **AOCI % TCE
   columns** (owner: "use your recommendations") + **As-of / Trends repair**.
   Prod-verified 2026-10-08/09.
   - **AOCI % TCE, both bases** (B9 deferred item, RESOLVED #249): five
@@ -262,8 +262,22 @@ Build order (each its own verified, shippable batch):
   - **Still open (owner)**: renew the FFIEC token in Secret Manager, then
     refresh-ffiec for 06/30/2026 fills bank AOCI (and every other FFIEC-fed
     view stuck at Q1); the Nov 1 scheduled run also fails until renewed. Run
-    the mislabel diagnostic in prod. All-banks Trends grid repopulates on the
-    next nightly refresh-trends (not yet verified).
+    the mislabel diagnostic in prod.
+  - **Trends nightly pre-warm was a no-op every other night** (#364, found
+    verifying the grid after #350): the all-banks grids are fresh for 36h but
+    refresh-trends runs every 24h through the same cache-first functions the
+    view uses, so a grid built at 11:11 was re-served next night — log "✓ FDIC
+    grid: 593 banks (100% coverage) in 0s", nothing written, exit 0. Data
+    refreshed every other day and the all-banks view showed "isn't cached
+    yet" from hour 36 to 48 (~12h of every 48). `quarterly_series` /
+    `sec_per_share_grid` take `rebuild=True`; the job passes it (coverage
+    gate unchanged; view paths untouched). Prod: manual run 2026-10-12 rebuilt
+    the FDIC grid in ~8 min (593 banks, 100%) and SEC per-share in 96 s; the
+    **scheduled run 2026-10-13 11:01 UTC rebuilt over a 21h-old grid** (FDIC
+    595 banks 100% at 11:08, SEC 328 at 11:10) — the case the old code
+    skipped. Values = raw FDIC (JPM Q2-2026 assets $4.091T, NIM 2.8818,
+    uninsured 60.92; BAC likewise). The newest column (Q3 2026) is blank for
+    all until FDIC publishes (0 filers on 10-12; due ~10-30).
 
 ## Do-not-touch (other lanes)
 
