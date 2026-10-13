@@ -26,6 +26,14 @@ remaining levers, in priority order. The nightly shift may pick items.
    helper (fresh-serve / guard-mismatch-rebuild / persist-on-build).
    Applied to the three measured costs: earnings calendar (6h, job-warmed
    nightly), FRED home-rates bundle (30 min), insider alerts (30 min).
+7. Branch Proximity (2026-10-12/13): vectorised pair search (JPM 35.4 s ->
+   3.2-4.4 s, PR #382), then the page's VIEW (pills, top-50 rollup, 25x10
+   rows, map points; <1 MB per bank x radius) is stored by `refresh-sod`
+   after every branches write and served while `branches_store.
+   store_version()` still matches (every writer bumps it) — live compute
+   otherwise. Full pair lists are not stored (JPM 10 mi = 1.2M pairs); the
+   Export builds them on click. Synthetic national store: page load 0.04 s
+   from the snapshot vs 2.3-3.4 s live; JPM-sized build 4.7 s for 4 radii.
 
 ## Remaining levers (status reconciled 2026-07-10 — most SHIPPED)
 1. **st.fragment per heavy section** — ✅ DONE (perf tab-switch track:

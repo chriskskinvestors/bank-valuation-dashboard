@@ -132,8 +132,8 @@ class TestCandidateFetchIsColumnLimited(unittest.TestCase):
 
     def test_query_does_not_select_star(self):
         import inspect
-        src = inspect.getsource(bs.get_branch_competitors)
-        q = src[src.index("cand = _q_to_df("):src.index("pairs = _pairs_within(")]
+        src = inspect.getsource(bs.proximity_inputs)
+        q = src[src.index('out["cand"] = _q_to_df('):]
         self.assertNotIn("SELECT *", q)
         self.assertIn("_CAND_COLS", q)
 
