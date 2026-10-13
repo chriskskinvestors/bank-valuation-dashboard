@@ -891,9 +891,12 @@ _TABLE_SPECS = {
     # loans HFI" (FBK); a leading "annualized" / "QTD" qualifier is allowed.
     # The band floor is −1: a NET RECOVERY quarter prints a negative ratio
     # ("(0.02)"), a real value the 0.0 floor used to refuse.
-    "nco_ratio": (_NCO_PREFIX + r"net (?:loan )?charge-?offs?(?: \(recoveries\))?"
+    # Citi: "Total NCLs (annualized) as a % of total average loans" (net
+    # credit losses = its net charge-offs).
+    "nco_ratio": (_NCO_PREFIX + r"(?:net (?:loan )?charge-?offs?(?: \(recoveries\))?"
+                  r"|(?:total )?(?:ncls?|net credit losses))"
                   r"(?:\s*\(annualized\))?"
-                  r"(?: " + _PCT_OF + r"(?:qtd )?average (?:total )?loans"
+                  r"(?: " + _PCT_OF + r"(?:qtd )?(?:total )?average (?:total )?loans"
                   r"| ratio| rate)", "%", (-1.0, 5.0)),
     # The inverted-sign label: "QTD annualized net recoveries (chargeoffs)
     # to QTD average loans" (UNTY) prints recoveries POSITIVE — the value is
@@ -905,8 +908,11 @@ _TABLE_SPECS = {
     # banks that name it so (owner 2026-10-13: map it — UNTY).
     "npa_assets": (r"(?:non-?performing|non-?accrual) assets(?: \([^)]{0,30}\))? "
                    + _PCT_OF + r"total assets", "%", (0.0, 10.0)),
-    "acl_loans": (r"allowance for credit losses(?: (?:on|for) loans(?: hfi)?,?)? "
-                  + _PCT_OF + r"(?:total )?loans", "%", (0.1, 6.0)),
+    # Citi: "Total ACLL as a % of total loans" (allowance for credit losses
+    # on loans).
+    "acl_loans": (r"(?:allowance for credit losses(?: (?:on|for) loans(?: hfi)?,?)?"
+                  r"|(?:total )?acll) " + _PCT_OF + r"(?:total )?loans", "%",
+                  (0.1, 6.0)),
     # Capital ratios (kind "%r": the row must carry a % or say "ratio" — a
     # bare "Tier 1 capital | 25" in $ millions sits inside the band). Rows
     # scoped to the BANK subsidiary are refused (_capital_scope_ok); a
@@ -918,14 +924,17 @@ _TABLE_SPECS = {
                    "%r", (4.0, 30.0)),
     # "Tier 1 capital to average assets" / "Tier 1 Capital / Average Assets"
     # / "Tier 1 capital to total assets" (PDLB) are LEVERAGE ratios.
+    # AVBC: "Tier 1 capital as a percentage of average assets" too.
     "t1_ratio": (r"(?:risk-based )?tier (?:1|one) (?:risk-based )?capital"
-                 r"(?!\s*(?:to|/)\s*(?:quarterly |adjusted )?(?:average |total )+"
-                 r"assets)(?!.*leverage)", "%r", (5.0, 32.0)),
+                 r"(?!\s*(?:to|/|as a (?:%|percent(?:age)?) of)\s*"
+                 r"(?:quarterly |adjusted )?(?:average |total )+assets)"
+                 r"(?!.*leverage)", "%r", (5.0, 32.0)),
     "total_ratio": (r"(?:risk-based )?total (?:risk-based )?capital"
                     r"(?! to (?:quarterly |adjusted )?average)", "%r", (7.0, 35.0)),
     "lev_ratio": (r"(?:tier (?:1|one) )?leverage(?: ratio)?"
-                  r"|tier (?:1|one) capital\s*(?:to|/)\s*(?:quarterly |adjusted )?"
-                  r"(?:average |total )+assets", "%r", (3.0, 20.0)),
+                  r"|tier (?:1|one) capital\s*(?:to|/|as a (?:%|percent(?:age)?)"
+                  r" of)\s*(?:quarterly |adjusted )?(?:average |total )+assets",
+                  "%r", (3.0, 20.0)),
     # COMMON only: "Tangible equity to tangible assets" includes preferred.
     "tce_ratio": (r"(?:tangible common equity|tce) (?:ratio|" + _PCT_OF +
                   r"(?:total )?tangible assets)", "%", (2.0, 25.0)),
@@ -1060,7 +1069,7 @@ def _period_header(rows: list[list[str]], detail: bool = False) -> tuple | None:
             # 1.20" under "Three Months Ended | Six Months Ended" twins —
             # the SIX-month pair (its quarterly NIM is 3.98%, the row's
             # 3.89%), which a quarters-first reading took as the quarter.
-            ytd_cols = n_ytd + n_rest + (n_change if (n_rest or n_ytd) else 0)
+            ytd_cols = n_ytd + n_rest + (n_change if n_rest else 0)
             widths = {w for w in range(k, full + 1)
                       if w == full or w > ytd_cols}
         else:
@@ -1304,7 +1313,7 @@ def _period_header_raw(rows: list[list[str]]) -> tuple | None:
 # header row; trailing cells must all be change columns. Anything else →
 # None (the table is skipped, never guessed).
 _YTD = "YTD"                 # a year-to-date column: kept, never a quarter
-_YEAR_CELL = re.compile(r"^20\d{2}$")
+_YEAR_CELL = re.compile(r"^20\d{2}(?:\s*\(\d\))?$")
 _MON_CELL = re.compile(
     r"(?i)^(january|february|march|april|may|june|july|august|september|"
     r"october|november|december|jan|feb|mar|apr|jun|jul|aug|sept?|oct|nov|"
@@ -1312,7 +1321,7 @@ _MON_CELL = re.compile(
     r"dec)\.?(?:\s+(\d{1,2}))?\s*,?$")
 _ORD_CELL = re.compile(
     r"(?i)^(?:(first|second|third|fourth|1st|2nd|3rd|4th)"
-    r"(\s+(?:quarter|qtr\.?))?|q([1-4]))$")
+    r"(\s+(?:quarter|qtr\.?))?|q([1-4])|([1-4])q)$")
 _QTR_WORD = re.compile(r"(?i)^(?:quarter|qtr\.?)$")
 
 
@@ -1392,10 +1401,62 @@ def _part_quarter(c: str) -> tuple[int, bool] | None:
         return mon // 3, True
     m = _ORD_CELL.match(c)
     if m:
-        if m.group(3):
-            return int(m.group(3)), True
+        if m.group(3) or m.group(4):
+            return int(m.group(3) or m.group(4)), True
         return _QNUM[m.group(1).lower()], bool(m.group(2))
     return None
+
+
+# Extra-column words in a split header's tails: comparison ("Increase/
+# (Decrease) from", "vs.") and year-to-date ("Nine Months", "YTD") cells.
+_EXTRA_HDR = re.compile(
+    r"(?i)increase|decrease|change|\bfrom\b|\bvs\b|months?|\bytd\b|nine|six|"
+    r"twelve|year")
+
+
+def _extended_split_tail(rows, i, last, qs, ptail, y) -> tuple | None:
+    """A split header whose year row runs ON past the quarters into change
+    LABELS and a year-to-date block — Citi's supplement, oldest first:
+        3Q   | 4Q   | 1Q   | 2Q   | 3Q   | (Decrease) from | Months | …
+        2025 | 2025 | 2026 | 2026 | 2026 | 2Q26 | 3Q25 | 2025 | 2026 | (Decrease)
+    The "2Q26 | 3Q25" cells name the comparison periods of two change
+    columns; "2025 | 2026 | (Decrease)" is the nine-month block. Read as a
+    header of its own, "2Q26 | 3Q25" put 2Q26 on the 3Q25 column. Proven
+    only when: one year per quarter part, the change labels are distinct
+    NON-latest quarters among the paired periods, the rest are years /
+    change words, every parts-row tail cell is an extra-column word, and
+    the band names a change. Returns the 5-tuple (…, n_change, n_ytd) —
+    an extended header, read with the YTD-aware widths — or None."""
+    from datetime import date as _date
+    if not y or len(y[0]) != len(qs) or not y[1]:
+        return None
+    qends = [_date(int(yy[:4]), *_Q_END[q]).isoformat()
+             for q, yy in zip(qs, y[0])]
+    if len(set(qends)) != len(qends):
+        return None
+    tail = y[1]
+    labels = []
+    for c in tail:
+        q = None if _CHANGE_COL.search(c) else _period_qend(c)
+        if not q:
+            break
+        labels.append(q)
+    rest = tail[len(labels):]
+    latest = max(qends)
+    if (not labels or len(set(labels)) != len(labels)
+            or any(q not in qends or q == latest for q in labels)):
+        return None
+    if not all(_YEAR_CELL.match(c) or _EXTRA_HDR.search(c) for c in rest):
+        return None
+    if not all(_EXTRA_HDR.search(c) for c in ptail):
+        return None
+    band = " ".join(c for r in [r for r in rows[:i] if any(r)][-2:]
+                    + rows[i:last + 2] for c in r if c)
+    if not re.search(r"(?i)increase|decrease|change", band):
+        return None
+    if rest and not _YTD_HDR.search(band):
+        return None
+    return qends, last + 1, i - 1, len(labels), len(rest)
 
 
 def _split_header(rows: list[list[str]], i: int) -> tuple | None:
@@ -1441,8 +1502,11 @@ def _split_header(rows: list[list[str]], i: int) -> tuple | None:
     if p:
         qs, ptail, last, n_chg, kind = p
         y = _header_parts(row(last + 1), _YEAR_CELL)
+        ext = _extended_split_tail(rows, i, last, qs, ptail, y)
+        if ext:
+            return ext
         if y and y[0] and is_change(y[1]) and not ytd_only(last + 1):
-            years = [int(c) for c in y[0]]
+            years = [int(c[:4]) for c in y[0]]
             if is_change(ptail) and len(years) == len(qs):
                 return ([qend(yy, q) for q, yy in zip(qs, years)], last + 1,
                         i - 1, max(len(ptail), n_chg, len(y[1])))
@@ -1633,7 +1697,13 @@ _AVG_YIELD_ROWS = {
     # category ("Commercial loans") or held-for-sale line.
     "loan_yield": (r"(?:total )?(?:net )?loans(?: and leases)?(?:,? net"
                    r"(?: of unearned income)?| receivable| held for investment"
-                   r"| hfi)?(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$", (1.0, 12.0)),
+                   r"| hfi)?(?:\s*\(net of unearned income\))?"
+                   r"(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$", (1.0, 12.0)),
+    # The NIM row of an average-rate table (Citi: "Net interest income as a
+    # % of average interest-earning assets (NIM)").
+    "nim": (r"(?:net interest income as a % of average interest-earning "
+            r"assets|net interest margin)(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$",
+            (0.5, 8.0)),
     # The ALL-deposits cost (noninterest-bearing included) — an
     # "interest-bearing deposits" row is a different quantity.
     "cost_of_deposits": (r"total deposits(?:\s*\([^)]{0,6}\))*(?:\s*\d)?\s*$",
@@ -1641,6 +1711,26 @@ _AVG_YIELD_ROWS = {
 }
 _AVG_RATE_CELL = re.compile(r"(?i)yield|rate")
 _AVG_BAL_CELL = re.compile(r"(?i)balance")
+
+
+def _measure_major(rows: list[list[str]], hdr_i: int, qends: list[str]) -> list | None:
+    """The base periods of a MEASURE-major average-rate table — each
+    measure's block repeats the periods (Citi's supplement: "Average Volumes
+    | Interest | % Average Rate" over "3Q25 | 2Q26 | 3Q26" × 3) — or None.
+    Proven by a banner of g ≥ 2 measure cells whose LAST names the rate,
+    over a period row that is exactly the base periods repeated g times."""
+    above = [r for r in rows[:hdr_i] if any(r)]
+    if not above:
+        return None
+    banner = [c for c in above[-1] if c]
+    g = len(banner)
+    if g < 2 or len(qends) % g or not _AVG_RATE_CELL.search(banner[-1]):
+        return None
+    k = len(qends) // g
+    base = qends[:k]
+    if k < 2 or len(set(base)) != k or qends != base * g:
+        return None
+    return base
 
 
 def _avg_groups(rows: list[list[str]], hdr_i: int, k: int) -> tuple | None:
@@ -1696,6 +1786,11 @@ _NCO_SECTION = re.compile(r"(?i)\bnet charge-?off(?:s|/\(recovery\))? "
 _NCO_SUBROW = re.compile(r"(?i)^total (?:retained )?loans(?:\s*\([a-z\d]\))*\s*$")
 _EPS_SUBROW = re.compile(r"(?i)^diluted\b(?:\s*\(?\d\)?)?\s*$")
 _EPS_SECTION = re.compile(r"(?i)\b(?:earnings|net income) per (?:common )?share\b")
+# Citi's supplement: "Diluted earnings per share:" (section) then "Income
+# (loss) from continuing operations | …" and "Net income (loss) | $2.85" —
+# only the NET INCOME row is the diluted EPS.
+_DIL_EPS_SECTION = re.compile(r"(?i)^diluted earnings per (?:common )?share\b")
+_NI_SUBROW = re.compile(r"(?i)^net income(?: \(loss\))?(?:\s*\(\d\))?\s*$")
 
 
 def _compose_label(label: str, prev_label: str, section_label: str,
@@ -1718,6 +1813,8 @@ def _compose_label(label: str, prev_label: str, section_label: str,
         m = _EPS_SECTION.search(section_label)
         if m:
             return f"{m.group(0)} - diluted"
+    if _NI_SUBROW.match(label) and _DIL_EPS_SECTION.match(section_label):
+        return "diluted earnings per share"
     return label
 
 
@@ -1763,6 +1860,13 @@ _SEGMENT_CAPTION = re.compile(
     r"(?:\(\$|$)")
 
 
+# …and Citi's supplement page heading: an UPPER-CASE bare segment name
+# right before the units caption ("SERVICES (In millions of dollars …)").
+_SEGMENT_PAGE = re.compile(
+    r"(?:^|\s)(?:SERVICES|MARKETS|BANKING|WEALTH|USCC|ALL OTHER|PERSONAL "
+    r"BANKING|CORPORATE)(?:\s*\([a-z0-9]\))*\s*\(In (?:millions|billions)")
+
+
 def _segment_table(pre_text: str, title: str, caption: str = "") -> bool:
     """True for a segment table: segment vocabulary in the table's own
     title rows, a bare segment name as the header's caption cell, or an
@@ -1770,6 +1874,8 @@ def _segment_table(pre_text: str, title: str, caption: str = "") -> bool:
     merely mentions "commercial banking" is mixed case and never trips
     this)."""
     if _SEGMENT_TITLE.search(title) or _SEGMENT_CAPTION.match(caption.strip()):
+        return True
+    if _SEGMENT_PAGE.search(pre_text[-120:]):
         return True
     m = _SEGMENT_TITLE.search(pre_text[-100:])
     return bool(m) and m.group(0).isupper()
@@ -1856,6 +1962,32 @@ def extract_table_metrics(html: str, expected_qend: str,
                 " ".join(c for r in rows[:hdr_i] for c in r if c),
                 "" if _period_qend(cap_cell) else cap_cell):
             continue                      # a business segment's table
+        base = (_measure_major(rows, hdr_i, qends)
+                if specs is _TABLE_SPECS else None)
+        if base:
+            # Rates are the LAST block: a row's last k values, every one a
+            # printed percent ("$14,967 | … | 2.40% | 2.54% | 2.43%").
+            if expected_qend in base:
+                k, col = len(base), base.index(expected_qend)
+                for cells in rows[hdr_i + 1:]:
+                    nz = [c for c in cells if c]
+                    if len(nz) < 2:
+                        continue
+                    vals = _row_values(cells[cells.index(nz[0]):], slots=True)
+                    pct = [c for c in nz[1:] if c.rstrip().endswith("%")]
+                    if len(vals) < k or len(vals) % k or len(pct) < k \
+                            or not all(c.rstrip().endswith("%")
+                                       for c in nz[-k:]):
+                        continue
+                    v = vals[-k + col]
+                    if v is None or _ROW_VARIANT.search(nz[0]):
+                        continue
+                    for key, (lab_re, band) in _AVG_YIELD_ROWS.items():
+                        if (re.match(r"\s*" + lab_re, nz[0], re.I)
+                                and band[0] <= v <= band[1]):
+                            cands[key].append((v, frozenset(),
+                                               key == "nim"))
+            continue
         if quarter_only:
             head_text = " ".join(c for r in rows[:hdr_i + 1] for c in r if c)
             if _YTD_HDR.search(head_text) and not _QTR_HDR.search(head_text):
@@ -2156,7 +2288,10 @@ _YTD_HDR = re.compile(
 # "Quarter Ended", "Quarterly", "1st Qtr", CUBB "Q2" / "Q2 2026"). No proof
 # → no series.
 _QTR_HDR = re.compile(r"(?i)\bthree\b|\bquarter|\bqtr\b|\b3[- ]months?\b"
-                      r"|\bq[1-4]\b")
+                      # Citi's bare "3Q | 4Q" part cells — NOT "2Q2026"
+                      # period tokens (OPBK: "For the Six Months Ended" over
+                      # "2Q2026 | 2Q2025" is a year-to-date table).
+                      r"|\bq[1-4]\b|\b[1-4]q\b")
 
 
 def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float]:
@@ -2406,7 +2541,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v34:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v35:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -2433,6 +2568,13 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v35 (2026-10-13): Citi's supplement — oldest-first split header
+    # whose year row runs on into change labels + a YTD block ("3Q | … | 3Q"
+    # over "2025 … 2026 | 2Q26 | 3Q25 | 2025 | 2026"), measure-major
+    # average-rate tables (NIM / loan yield), NCL / ACLL labels, firmwide
+    # page headings after the segment block, "Diluted earnings per share:"
+    # → "Net income (loss)"; year cells with footnotes ("2026 (1)"); Tier 1
+    # capital "as a percentage of average assets" is leverage (AVBC).
     # v34 (2026-10-13): a NON-2.02 exhibit must also name the results as
     # what it reports (ir_provider._RESULTS_TITLE) — dividend notices
     # (CAC/CFFI/NBHC/QCRH/FKYS/FMCB), a deck (CHMG) and a scheduling notice
@@ -2521,7 +2663,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v34:{int(cik)}"
+    key = f"release_metrics:v35:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
@@ -2719,7 +2861,13 @@ _SUP_FILL_KEYS = (
 
 
 _FIRMWIDE_TITLE = re.compile(r"(?i)\bcredit[- ]related information\b|"
-                             r"\b(?:credit|asset) quality\b")
+                             r"\b(?:credit|asset) quality\b|"
+                             # Citi's page headings: "ALLOWANCE FOR CREDIT
+                             # LOSSES ON LOANS (ACLL) …", "AVERAGE BALANCES
+                             # AND INTEREST RATES", "NON-ACCRUAL ASSETS"
+                             r"\ballowance for credit losses\b|"
+                             r"\baverage balances and interest rates\b|"
+                             r"\bnon-?accrual assets\b")
 
 
 def _consolidated_html(sup_html: str, cap: int = 120_000) -> str:
@@ -2745,10 +2893,18 @@ def _consolidated_html(sup_html: str, cap: int = 120_000) -> str:
     # Past the segment pages, FIRMWIDE credit pages come back (JPM:
     # "CREDIT-RELATED INFORMATION" after Corporate) — a table whose own
     # title names one, and no segment, is kept.
-    tail = [s for s, (h, _t) in zip(segs, starts)
-            if h >= end and s[:6].lower() == "<table"
-            and _FIRMWIDE_TITLE.search(_flat_text(s)[:300])
-            and not _SEG_DETAIL.search(_flat_text(s)[:300])]
+    def _firmwide_page(j, s):
+        title = _flat_text(s)[:300]
+        if _SEG_DETAIL.search(title):
+            return False
+        if _FIRMWIDE_TITLE.search(title):
+            return True
+        heading = flat[j - 1][-160:] if j else ""
+        m = _FIRMWIDE_TITLE.search(heading)
+        return bool(m) and m.group(0).isupper()
+
+    tail = [s for j, (s, (h, _t)) in enumerate(zip(segs, starts))
+            if h >= end and s[:6].lower() == "<table" and _firmwide_page(j, s)]
     return (sup_html or "")[:end] + "".join(tail)
 
 
