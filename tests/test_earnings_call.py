@@ -665,5 +665,83 @@ class TestBuildCallsAgenda(unittest.TestCase):
                                date(2026, 7, 13)), [])
 
 
+class TestIrPageAndApStyleFormats(unittest.TestCase):
+    """Formats the universe diff (2026-10-13, 4,908 real bodies old vs new)
+    surfaced. Fixtures are verbatim release text; every changed value in the
+    diff was verified against its release."""
+
+    # PNC 2026-09-03 IR detail page: title + publication stamp lead the body.
+    PNC = (
+        " The PNC Financial Services Group Announces Third Quarter Conference Call "
+        "Details September 03, 2026 8:15 am EDT Download as PDF PITTSBURGH , Sept. 3, "
+        "2026 /PRNewswire/ -- The PNC Financial Services Group, Inc. (NYSE: PNC) expects "
+        "to issue financial results for the third quarter 2026 at approximately 6:30 "
+        "a.m. (ET), Thursday, Oct. 15, 2026, as previously announced. PNC Chairman and "
+        "Chief Executive Officer William S. Demchak and Executive Vice President and Chief "
+        "Financial Officer Robert Q. Reilly will hold a conference call for investors the "
+        "same day at 10 a.m. (ET). Dial in numbers are (866) 604-1697 and (215) 268-9875.")
+    AMTB = (
+        " Amerant Bancorp Inc. to Announce Third Quarter 2026 Financial Results and Host "
+        "Conference Call September 30, 2026 4:30 PM EDT Download as PDF CORAL GABLES, "
+        "Fla.--(BUSINESS WIRE)-- Amerant Bancorp Inc. (NYSE: AMTB) today announced it will "
+        "release third quarter 2026 results on Thursday, October 22, 2026, after the "
+        "market closes. On Friday, October 23, 2026, Carlos Iafigliola, President and "
+        "Chief Executive Officer, and Sharymar Calderón, Senior Executive Vice-President "
+        "and Chief Financial Officer, will host a conference call at 9:00 AM ET to discuss "
+        "the Company’s third quarter 2026 financial and operating results.")
+    NPB = (
+        " Northpointe Bancshares, Inc. Announces Date of Third Quarter 2026 Earnings "
+        "Release and Conference Call September 21, 2026 4:27 pm EDT Download as PDF "
+        "GRAND RAPIDS, Mich.--(BUSINESS WIRE)-- Northpointe Bancshares, Inc. (NYSE: NPB) "
+        "announced today that it will release its third quarter 2026 financial results on "
+        "Tuesday, October 20, 2026, after market close. The Company will host a conference "
+        "call for investors and analysts at 10:00 a.m. E.T. on October 21, 2026.")
+    EWBC = (
+        "East West Bancorp, Inc. will host conference calls to review financial results "
+        "on the following dates: Financial Period Earnings Release Date Conference Call "
+        "Time Second Quarter 2026 Tuesday, July 21, 2026 2 p.m. PT/5 p.m. ET")
+
+    def test_pnc_full_format(self):
+        self.assertEqual(_parse_release_date(self.PNC, "2026-09-03"), "2026-10-15")
+        self.assertEqual(_parse_call_date(self.PNC, "2026-09-03"), "2026-10-15")  # "the same day"
+        ci = parse_call_info(self.PNC)
+        self.assertEqual(ci["call_time"], "10a ET")      # was the 8:15 am stamp
+        self.assertEqual(ci["dial_in"], "(866) 604-1697")
+
+    def test_publication_stamp_never_the_call_time(self):
+        self.assertEqual(parse_call_info(self.AMTB)["call_time"], "9:00a ET")   # was 4:30p
+        self.assertEqual(parse_call_info(self.NPB)["call_time"], "10:00a ET")   # was 4:27p
+
+    def test_dated_table_call_time_is_not_a_stamp(self):
+        self.assertEqual(parse_call_info(self.EWBC)["call_time"], "2p PT")
+
+    def test_ap_style_month_abbreviations(self):
+        self.assertEqual(_parse_on_date("before the market opens on Friday, Oct. 16, 2026."),
+                         "2026-10-16")
+        self.assertEqual(_parse_on_date("on Sept. 30, 2026"), "2026-09-30")
+        self.assertEqual(_parse_on_date("at noon central time on Tuesday, Jan. 21, 2025"),
+                         "2025-01-21")
+        self.assertIsNone(_parse_on_date("for The 15, 2026"))   # not a month
+        self.assertEqual(_announced_release_date(
+            "Wells Fargo to Announce Third Quarter 2026 Earnings on Oct. 13, 2026",
+            "2026-10-05"), "2026-10-13")
+
+    def test_same_day_needs_a_stated_release_date(self):
+        self.assertIsNone(_parse_call_date(
+            "will hold a conference call for investors the same day at 10 a.m. (ET).",
+            "2026-09-03"))
+
+    def test_quarter_conference_call_titles_are_announcements(self):
+        from data.earnings_call import _is_earnings_announcement
+        for t in ("The PNC Financial Services Group Announces Third Quarter Conference Call Details",
+                  "Banner Corporation Announces Third Quarter 2026 Conference Call and Webcast",
+                  "NBT Bancorp Inc. Announces Date of Third Quarter Conference Call",
+                  "Southside Bancshares, Inc. Announces Third Quarter Conference Call"):
+            self.assertTrue(_is_earnings_announcement(t), t)
+        for t in ("Acme Bancorp Announces Third Quarter Dividend",
+                  "Acme Bancorp Announces Conference Call to Discuss Merger"):
+            self.assertFalse(_is_earnings_announcement(t), t)
+
+
 if __name__ == "__main__":
     unittest.main()
