@@ -501,7 +501,13 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # via merge_table_capital) and v33 (2026-10-13 — caption-named segment
     # tables, "(4)%" change cells, "operating expenses" not a variant)
     # and v35 (2026-10-13 — oldest-first split headers with change labels,
-    # measure-major rate tables, NCL/ACLL labels, Tier 1 / average assets).
+    # measure-major rate tables, NCL/ACLL labels, Tier 1 / average assets)
+    # and v36 (2026-10-13 — prose basic/diluted EPS pairs by stated order,
+    # period pairs never basic/diluted)
+    # and v37 (2026-10-13 — plain-vs-FTE efficiency, GAAP-prose NIM basis,
+    # TE-titled tables, printed precision, YTD / LTM rows, colspan-proven
+    # split headers, in-body period rows, "division" segment headings,
+    # "$X or N%" changes, sentence-scoped periods, "6/30/26" dates).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
