@@ -12,6 +12,7 @@ non-disclosure → stays None, pinned too):
   WFC   ROA / NIM / efficiency / NCOs / ACL / CET1 under "% Change from".
   GS    nine-month efficiency refused; BV + EPS history; Standardized CET1.
   JPM   adj. EPS / dividend / overhead ratio prose; supplement history.
+  C     revenue / efficiency / RoTCE beside caption-named segment tables.
 Regression guards from the 217-bank old/new diff: FUNC, EWBC, TRMK, PDLB,
 KEY, FHN, BMRC, BANR.
 """
@@ -216,6 +217,26 @@ class TestJPM(unittest.TestCase):
         self.assertEqual(val["metrics"]["tbv_ps"], 111.11)
 
 
+class TestCiti(unittest.TestCase):
+    """Citi 3Q26: segment tables name the segment in the header caption
+    ("Services ($ in millions …)") and repeat the firmwide labels."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.html = _doc("C_2026-10-13_ex99_1.htm")
+
+    def test_firmwide_revenue_and_rotce(self):
+        # "Total revenues, net of interest expense | 23,845 | 24,766 |
+        # 22,090 | (4)% | 8%" — the "(4)%" change cell keeps the width.
+        self.assertEqual(_cols(self.html, "total_revenue"),
+                         (23_845e6, 24_766e6, 22_090e6))
+        self.assertEqual(_cols(self.html, "rotce"), (11.5, 13.0, 8.0))
+
+    def test_operating_expenses_in_definition_is_not_a_variant(self):
+        # "Efficiency Ratio (total operating expenses/total revenues, net)"
+        self.assertEqual(_cols(self.html, "efficiency"), (58.5, 57.4, 64.7))
+
+
 class TestCorpusRegressions(unittest.TestCase):
     """Cases the 217-bank old/new diff surfaced (2Q26 releases)."""
 
@@ -344,7 +365,7 @@ class TestReleaseMetricsEndToEnd(unittest.TestCase):
 
     def test_unty_record(self):
         out = rm.release_metrics(920427)
-        self.assertIn("release_metrics:v32:920427", self.store)
+        self.assertIn("release_metrics:v33:920427", self.store)
         self.assertEqual(out["capital"]["cet1_ratio"], 14.46)
         self.assertEqual(out["capital"]["lev_ratio"], 13.22)
         self.assertEqual(out["prior_metrics"]["cet1_ratio"], 14.19)
