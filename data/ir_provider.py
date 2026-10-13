@@ -107,17 +107,20 @@ def _earnings_8k_candidates(submissions: dict, limit: int = 4,
     fetch); the scan always continues to the 2.02 — HBAN 2026-09-24: four
     routine 8.01/7.01/5.02 + 9.01 filings after its 2Q26 release (0000049196-
     26-000060) used to exhaust the cap, so the real release was never
-    reached and the bank had no release at all."""
+    reached and the bank had no release at all. `nonreliance` marks an Item
+    4.02 filing (prior financials no longer reliable), which the caller must
+    never step past."""
     out, n_gated, n_202 = [], 0, 0
     for present, hit in _iter_8ks(submissions):
+        nonreliance = "4.02" in present
         if _EARNINGS_ITEM in present:
-            out.append({**hit, "gated": False})
+            out.append({**hit, "gated": False, "nonreliance": nonreliance})
             n_202 += 1
             if n_202 >= max_202:
                 break
             continue
         if present & _FURNISH_ITEMS and n_gated < limit:
-            out.append({**hit, "gated": True})
+            out.append({**hit, "gated": True, "nonreliance": nonreliance})
             n_gated += 1
     return out
 
@@ -449,22 +452,51 @@ def _is_call_transcript(html: str) -> bool:
         _headline_text(html, _TRANSCRIPT_WINDOW)))
 
 
-def _is_notice_exhibit(got: dict) -> bool:
-    """A call/webcast notice: release_metrics.is_call_notice flags the
-    opening AND the exhibit yields no results figure (a dividend per share
-    is not one — NEWT). Both are required: MVBF's real 2Q26 release opens
-    "Announces Second Quarter 2026 Results / Company to Host a Conference
-    Call and Webcast" with its "reported net income" clause past the
-    opening window, so is_call_notice alone would skip it (2026-10-13 scan
-    of 403 SEC banks' last three 2.02 exhibits)."""
-    from data.release_metrics import extract_release_metrics, is_call_notice
+def _has_results_figure(got: dict) -> bool:
+    """Any extracted results figure — a dividend per share is not one (NEWT
+    declares its dividend apart from earnings)."""
+    from data.release_metrics import extract_release_metrics
     html = got["html"]
-    if not is_call_notice(html):
-        return False
     qend = _quarter_end_before(got.get("filed_date") or "")
     figures = {**extract_release_metrics(html, expected_qend=qend),
                **extract_capital_ratios(html)}
-    return all(v is None for k, v in figures.items() if k != "div_ps")
+    return any(v is not None for k, v in figures.items() if k != "div_ps")
+
+
+def _is_notice_exhibit(got: dict) -> bool:
+    """A call/webcast notice: release_metrics.is_call_notice flags the
+    opening AND the exhibit yields no results figure. Both are required:
+    MVBF's real 2Q26 release opens "Announces Second Quarter 2026 Results /
+    Company to Host a Conference Call and Webcast" with its "reported net
+    income" clause past the opening window, so is_call_notice alone would
+    skip it (2026-10-13 scan of 403 SEC banks' last three 2.02 exhibits)."""
+    from data.release_metrics import is_call_notice
+    return is_call_notice(got["html"]) and not _has_results_figure(got)
+
+
+# Below this much document text an exhibit is an image (NWPP, OPHC, MBWM file
+# their releases as page images): unread, not disproven.
+_READABLE_MIN = 300
+
+
+def _is_non_results_exhibit(got: dict) -> bool:
+    """Not a report at all: NEWT's dividend declarations ("NewtekOne, Inc.
+    Declares Dividends on Common Stock and Series B Preferred Shares",
+    2026-09-14 — the newest 2.02, it shadowed the Q2 release) and loan-
+    origination update, deal closings (HBAN/Veritex, ENBP/Cecil), a
+    conference deck (PNC), all furnished under Item 2.02. ALL four are
+    required: readable text; no earnings headline (FKYS's real "Announces
+    Second Quarter 2026 Earnings" yields no figure and words its results
+    unusually); states no results (release_metrics.states_results); and no
+    results figure. 2026-10-13 scan of 1,213 real 2.02 exhibits (347 SEC
+    banks): skips exactly the non-reports above, KFFB's dividend notice,
+    BAFN's restatement notice and WSBC's call notices."""
+    from data.release_metrics import _flat_text, states_results
+    html = got["html"]
+    if (len(_flat_text(html)) < _READABLE_MIN or states_results(html)
+            or _is_earnings_headline(_headline_text(html))):
+        return False
+    return not _has_results_figure(got)
 
 
 def latest_earnings_release(cik) -> dict | None:
@@ -483,10 +515,14 @@ def latest_earnings_release(cik) -> dict | None:
     Call and Webcast on Thursday, October 22" under Item 2.02 (0001193125-
     26-412356, 2026-10-02), and as the newest 2.02 it shadowed the real Q2
     release with a figure-less Q3 record. Nor is a call transcript
-    (_is_call_transcript — PEBO, SBFG, BCBP). Either is stepped past to the
-    previous release (up to _MAX_202 Item-2.02 8-Ks back); a 2.02 whose
-    exhibit can't be fetched still ends the search (None — an older release
-    must not stand in for an unread newer one)."""
+    (_is_call_transcript — PEBO, SBFG, BCBP) or a non-results exhibit
+    (_is_non_results_exhibit — NEWT's dividend declarations). Each is
+    stepped past to the previous release (up to _MAX_202 Item-2.02 8-Ks
+    back); a 2.02 whose exhibit can't be fetched still ends the search
+    (None — an older release must not stand in for an unread newer one),
+    and so does an Item 4.02 filing stepped past: BAFN's 2.02+4.02 notice
+    (2026-07-15) says its Q1-2026 figures "should no longer be relied upon",
+    so falling back to that Q1 release would serve disowned numbers."""
     try:
         cik10 = str(int(cik)).zfill(10)
         subs = json.loads(_get(f"https://data.sec.gov/submissions/CIK{cik10}.json"))
@@ -496,15 +532,14 @@ def latest_earnings_release(cik) -> dict | None:
         if not cand.get("accession"):
             continue
         got = _fetch_ex99(cik, cand)
-        if not got:
-            if not cand.get("gated"):
-                return None
-            continue
-        if _is_call_transcript(got["html"]) or _is_notice_exhibit(got):
-            continue
-        if not cand.get("gated") or _is_earnings_headline(
-                _headline_text(got["html"])):
-            return got
+        if got and not (_is_call_transcript(got["html"])
+                        or _is_notice_exhibit(got)
+                        or _is_non_results_exhibit(got)):
+            if not cand.get("gated") or _is_earnings_headline(
+                    _headline_text(got["html"])):
+                return got
+        if (not got and not cand.get("gated")) or cand.get("nonreliance"):
+            return None
     return None
 
 
