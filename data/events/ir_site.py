@@ -113,7 +113,7 @@ def _scraped_pub_date(url: str, text: str, now: datetime) -> datetime | None:
     (a note's maturity, a meeting date), never the publication date. BAC's
     "…due May 4, 2027" redemption notices got stamped with their 2027 maturity
     dates and pinned the top of every published_at-sorted feed. None when
-    there's no usable date (caller falls back to now, marked date_inferred)."""
+    there's no usable date (caller drops the link)."""
     pub = _parse_date_in_text(url) or _parse_date_in_text(text)
     if pub and pub > now + timedelta(days=1):
         return None
@@ -317,8 +317,8 @@ def _q4_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, d
         link = it.get("LinkToDetailPage") or it.get("LinkToUrl") or ""
         if not headline or not link:
             continue
-        pub = _parse_q4_date(it.get("PressReleaseDate")) or datetime.now(timezone.utc)
-        if pub < cutoff:
+        pub = _parse_q4_date(it.get("PressReleaseDate"))
+        if pub is None or pub < cutoff:      # undated → dropped, never stamped now
             continue
         out.append((urljoin(host, link), headline, pub))
     return out
@@ -655,6 +655,53 @@ def _irapp_site(ir_home: str) -> bool:
     return is_irapp
 
 
+def _rss_pub_date(s: str | None) -> datetime | None:
+    """RFC-822 <pubDate> → aware UTC datetime; None when absent/unparseable.
+    IRapp feeds mix 4- and 2-digit years ("Fri, 04 Sep 26 16:05:00 -0400" on
+    FNWD/FCBM); email.utils maps a 2-digit year per RFC 2822 (26 → 2026)."""
+    from email.utils import parsedate_to_datetime
+    try:
+        d = parsedate_to_datetime((s or "").strip())
+    except (TypeError, ValueError, IndexError):
+        return None
+    if d is None:
+        return None
+    return (d if d.tzinfo else d.replace(tzinfo=timezone.utc)).astimezone(timezone.utc)
+
+
+def _irapp_press_releases(ir_home: str, cutoff: datetime) -> list[tuple[str, str, datetime]] | None:
+    """If `ir_home` is an IRapp site, return [(url, headline, published)] from its
+    press-release RSS, dated by each item's <pubDate>. The HTML listing's links
+    carry no date, so scraping it stamped whole archives with the poll time
+    (HAFC/FNWD/FCBM on 2026-10-10: "Hanmi Reports 2026 First Quarter Results"
+    shown as fresh news). None when NOT an IRapp site (caller HTML-scrapes). An
+    IRapp site whose feed can't be read returns [] — never the undated HTML
+    fallback; the full-lookback rescan catches up next cycle. Items without a
+    parseable pubDate are dropped (n/a over a guessed date)."""
+    if not _irapp_site(ir_home):
+        return None
+    parsed = urlparse(ir_home)
+    host = f"{parsed.scheme or 'https'}://{parsed.netloc}"
+    try:
+        resp = requests.get(
+            host + _IRAPP_RSS_PATH, timeout=10,
+            headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
+        if resp.status_code != 200:
+            return []
+        items = re.findall(r"<item>(.*?)</item>", resp.text, re.S)
+    except Exception:
+        return []
+    out: list[tuple[str, str, datetime]] = []
+    for it in items:
+        title = _rss_tag(it, "title")
+        link = _rss_tag(it, "link")
+        pub = _rss_pub_date(_rss_tag(it, "pubDate"))
+        if not title or not link or pub is None or pub < cutoff:
+            continue
+        out.append((urljoin(host, link), title, pub))
+    return out
+
+
 def _irapp_announcement(ir_home: str, today_iso: str) -> dict | None:
     """Parse an IRapp/BusinessWire IR site's latest earnings-ANNOUNCEMENT from its
     press-release RSS + detail page: release/call dates, time, webcast, dial-in,
@@ -881,7 +928,12 @@ class IRSiteAdapter(SourceAdapter):
         non_q4: list[tuple[str, str]] = []
 
         def _q4(t):
-            return _q4_press_releases(ir_map[t], cutoff)
+            # The IRapp RSS is a dated structured feed too (same phase, same
+            # bounded pool); only sites that are neither reach the HTML scrape.
+            q4 = _q4_press_releases(ir_map[t], cutoff)
+            if q4 is not None:
+                return "q4", q4
+            return "irapp", _irapp_press_releases(ir_map[t], cutoff)
 
         # HARD-bounded: collect whatever finishes within the budget and ABANDON
         # stragglers (cancel_futures) — a slow/hung IR host (or cache call) can no
@@ -897,15 +949,15 @@ class IRSiteAdapter(SourceAdapter):
                 done_tickers.add(ticker)
                 ir_home = ir_map[ticker]
                 try:
-                    q4 = fut.result()
+                    platform, items = fut.result()
                 except Exception as e:
                     print(f"[ir_site] {ticker} q4 error: {type(e).__name__}: {e}")
-                    q4 = None
-                if q4 is None:
+                    platform, items = None, None
+                if items is None:
                     non_q4.append((ticker, ir_home))   # defer to the HTML phase
                     continue
-                for url, headline, pub in q4:
-                    _emit(ticker, url, headline, pub, {"ir_home": ir_home, "platform": "q4"})
+                for url, headline, pub in items:
+                    _emit(ticker, url, headline, pub, {"ir_home": ir_home, "platform": platform})
         except _FTimeout:
             print(f"[ir_site] Q4 phase budget hit — {len(done_tickers)}/{len(order)} "
                   "sites checked; rest catch up next cycle")
@@ -928,12 +980,15 @@ class IRSiteAdapter(SourceAdapter):
                 print(f"[ir_site] {ticker} error: {type(e).__name__}: {e}")
                 continue
             for url, text in links:
-                now = datetime.now(timezone.utc)
-                pub = _scraped_pub_date(url, text, now)
-                if pub and pub < cutoff:
+                pub = _scraped_pub_date(url, text, datetime.now(timezone.utc))
+                # An undated link has NO knowable publication date — never stamp
+                # the poll time. That turned every first scrape into an archive
+                # flood (CUBB: 220 releases back to 2021 as 07-24 news), and a
+                # first-seen baseline wouldn't fix it: BAC's listing re-surfaced
+                # an August release as "new" on 10-08. Wires + 8-K carry these.
+                if pub is None or pub < cutoff:
                     continue
-                _emit(ticker, url, text, pub or now,
-                      {"ir_home": ir_home, "date_inferred": pub is None})
+                _emit(ticker, url, text, pub, {"ir_home": ir_home})
         return out
 
     def _find_press_links(self, ir_home: str,

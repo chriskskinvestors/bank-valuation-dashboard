@@ -393,6 +393,7 @@ def _purge_junk_events() -> int:
     """Delete events with spam/social URLs or junk headlines (structured notes,
     third-party mentions, foreign-ticker tags). Idempotent; reuses exactly the
     filters the adapters apply at ingest."""
+    import json
     from sqlalchemy import text
     from data.events.store import _get_engine, TOPIC_SOURCE
     from data.events.wire_base import is_safe_news_url, is_junk_news, match_tickers
@@ -409,12 +410,24 @@ def _purge_junk_events() -> int:
     eng = _get_engine()
     with eng.connect() as conn:
         rows = conn.execute(text(
-            "SELECT id, ticker, source, url, headline, summary FROM events"
+            "SELECT id, ticker, source, url, headline, summary, "
+            "CASE WHEN source = 'ir_site' THEN raw_json END AS raw_json FROM events"
         )).mappings().all()
 
     def _is_bad(r) -> bool:
         if not is_safe_news_url(r["url"]):
             return True
+        # IR-scraped rows stamped with the poll time because the link carried no
+        # date (raw date_inferred) — the adapter no longer emits these, and the
+        # stamp is a guess (335 rows in prod 2026-10-13: whole archives shown as
+        # fresh news). IRapp sites re-ingest from their RSS with real dates.
+        if r["source"] == "ir_site" and r["raw_json"]:
+            try:
+                raw = json.loads(r["raw_json"])
+            except ValueError:
+                raw = None
+            if isinstance(raw, dict) and raw.get("date_inferred"):
+                return True
         # Topic rows have a sentinel ticker ('TOPIC:MACRO'), so the foreign-
         # paren-ticker check must not apply — pass ticker=None for those.
         tk = None if r["source"] == TOPIC_SOURCE else r["ticker"]
