@@ -615,6 +615,13 @@ _IRAPP_RSS_PATHS = (
     "/news-presentations/press-releases/rss",
     "/news-events/financial-press-releases/rss",
 )
+# Any other section layout: every IRapp home page advertises its feed in an RSS
+# autodiscovery <link> (CBNA: /news/press-releases/rss), and the feed itself
+# names the platform in <generator>. The generator check is load-bearing — ~80
+# universe bank sites advertise WordPress marketing-blog feeds (dated podcasts,
+# promos) that must never be read as IR press releases.
+_RSS_LINK_RE = re.compile(r"<link[^>]+application/rss\+xml[^>]*>", re.I)
+_IRAPP_GENERATOR_RE = re.compile(r"<generator>\s*Equisolve", re.I)
 
 
 def _rss_tag(item: str, tag: str) -> str | None:
@@ -626,17 +633,45 @@ def _rss_tag(item: str, tag: str) -> str | None:
     return _html.unescape(m.group(1)).strip() or None
 
 
+def _irapp_advertised_rss_path(ir_home: str) -> str | None:
+    """Path of the IRapp feed the IR home page advertises (RSS autodiscovery
+    <link>), when it is on the same host, serves items, and names Equisolve
+    as its generator. None otherwise."""
+    import html as _html
+    html = _fetch(ir_home, timeout=8)
+    if not html:
+        return None
+    host = urlparse(ir_home).netloc
+    for tag in _RSS_LINK_RE.findall(html):
+        m = re.search(r'href="([^"]+)"', tag)
+        if not m:
+            continue
+        feed = urlparse(urljoin(ir_home, _html.unescape(m.group(1))))
+        if feed.netloc != host or not feed.path:
+            continue
+        try:
+            resp = requests.get(
+                f"{feed.scheme}://{host}{feed.path}", timeout=8,
+                headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
+        except Exception:
+            continue
+        if (resp.status_code == 200 and "<item>" in resp.text
+                and _IRAPP_GENERATOR_RE.search(resp.text)):
+            return feed.path
+    return None
+
+
 def _irapp_rss_path(ir_home: str) -> str | None:
     """The host's IRapp/BusinessWire press-release RSS path — the first of
-    _IRAPP_RSS_PATHS that returns feed items — or None if it isn't an IRapp
-    site. Functional + cached 7d, same as _q4_site, so discovery auto-finds
-    these without a curated entry."""
+    _IRAPP_RSS_PATHS that returns feed items, else the Equisolve feed the home
+    page advertises — or None if it isn't an IRapp site. Functional + cached
+    7d, same as _q4_site, so discovery auto-finds these without a curated entry."""
     parsed = urlparse(ir_home)
     host = parsed.netloc
     if not host:
         return None
-    # v2: caches the feed PATH; v1's bool negatives hid HBAN/PNC's alternate paths.
-    ck = f"irapp_site:v2:{host}"
+    # v3: v2 cached negatives for hosts only the advertised-feed probe finds (CBNA).
+    ck = f"irapp_site:v3:{host}"
     cache = None
     try:
         from data import cache as _c
@@ -648,16 +683,20 @@ def _irapp_rss_path(ir_home: str) -> str | None:
     except Exception:
         pass
     rss_path = None
+    reachable = True
     for path in _IRAPP_RSS_PATHS:
         try:
             resp = requests.get(
                 f"{parsed.scheme or 'https'}://{host}{path}", timeout=8,
                 headers={"User-Agent": "BankValuationDashboard (chris@kskinvestors.com)"})
         except Exception:
+            reachable = False
             break                            # host unreachable — no point probing on
         if resp.status_code == 200 and "<item>" in resp.text:
             rss_path = path
             break
+    if rss_path is None and reachable:
+        rss_path = _irapp_advertised_rss_path(ir_home)
     try:
         if cache is not None:
             cache.put(ck, {"rss_path": rss_path or "",

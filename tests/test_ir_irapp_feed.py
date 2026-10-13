@@ -12,7 +12,8 @@ Results" shown as Oct-10 news). Prod held 335 such date_inferred rows (CUBB:
     the 30-day lookback, and are never HTML-scraped.
   • The feed path is probed per host: the standard IRapp path, then the
     same platform's alternate sections (HBAN /news-presentations/…, PNC
-    /news-events/financial-press-releases/…).
+    /news-events/financial-press-releases/…), then the Equisolve feed the
+    home page advertises (CBNA /news/…) — never a WordPress blog feed.
   • An undated HTML-scraped link (any platform, first scrape or not) is
     dropped; a dated one keeps its own date.
   • An undated Q4 API item is dropped instead of stamped now.
@@ -108,8 +109,9 @@ _HBAN_RSS = f"""<?xml version="1.0" encoding="UTF-8" ?><rss version="2.0"><chann
 
 
 class _Resp:
-    def __init__(self, text, status=200):
+    def __init__(self, text, status=200, ctype="text/xml;charset=UTF-8"):
         self.text, self.status_code = text, status
+        self.headers = {"Content-Type": ctype}
 
 
 class TestRssPubDate(unittest.TestCase):
@@ -258,7 +260,9 @@ class TestIrappFeedPathProbe(unittest.TestCase):
     def test_no_feed_is_none_and_cached_negative(self):
         got, calls, put = self._probe("https://ir.example.com/")
         self.assertIsNone(got)
-        self.assertEqual(len(calls), len(ir._IRAPP_RSS_PATHS))
+        # every known path, then the home page for an advertised feed
+        self.assertEqual(calls, ["https://ir.example.com" + p for p in ir._IRAPP_RSS_PATHS]
+                         + ["https://ir.example.com/"])
         self.assertEqual(put.call_args[0][1]["rss_path"], "")
 
     def test_unreachable_host_stops_after_first_attempt(self):
@@ -271,6 +275,115 @@ class TestIrappFeedPathProbe(unittest.TestCase):
             self.assertTrue(ir._irapp_site("https://ir.huntington.com/"))
         with patch.object(ir, "_irapp_rss_path", return_value=None):
             self.assertFalse(ir._irapp_site("https://ir.example.com/"))
+
+
+# Live 2026-10-13, verbatim: CBNA's IR home advertises its feed at a path no
+# entry of _IRAPP_RSS_PATHS covers, so discovery never found the host.
+_CBNA_HOME_LINK = ('<link rel="alternate" type="application/rss+xml" title="Chain Bridge '
+                   'Bancorp, Inc. - Recent News" href="https://ir.chainbridgebank.com/news/'
+                   'press-releases/rss" />')
+_CBNA_RSS = """<?xml version="1.0" encoding="UTF-8" ?><!-- Generated on Tue, 13 Oct 2026 11:09:22 -0400--><rss version="2.0">
+    <channel>
+        <title>Chain Bridge Bancorp, Inc. (CBNA) Press Releases</title>
+        <link>https://ir.chainbridgebank.com/news/press-releases/rss</link>
+        <description></description>
+        <language>en-us</language>
+                <generator>Equisolve Investor Relations Suite</generator>
+                            <item>
+                <title><![CDATA[Chain Bridge Bancorp, Inc. Reports Second Quarter 2026 Financial Results]]></title>
+                <description><![CDATA[]]></description>
+                <link>https://ir.chainbridgebank.com/news/press-releases/detail/37/chain-bridge-bancorp-inc-reports-second-quarter-2026-financial-results</link>
+                <pubDate>Tue, 28 Jul 26 16:15:00 -0400</pubDate>
+                <guid>https://ir.chainbridgebank.com/news/press-releases/detail/37/chain-bridge-bancorp-inc-reports-second-quarter-2026-financial-results</guid>
+            </item>
+                    <item>
+                <title><![CDATA[Chain Bridge Bancorp, Inc. Reports First Quarter 2026 Financial Results]]></title>
+                <description><![CDATA[]]></description>
+                <link>https://ir.chainbridgebank.com/news/press-releases/detail/36/chain-bridge-bancorp-inc-reports-first-quarter-2026-financial-results</link>
+                <pubDate>Tue, 28 Apr 26 16:15:00 -0400</pubDate>
+                <guid>https://ir.chainbridgebank.com/news/press-releases/detail/36/chain-bridge-bancorp-inc-reports-first-quarter-2026-financial-results</guid>
+            </item>
+    </channel></rss>"""
+
+# Live 2026-10-13, verbatim head: a bank marketing site (FVCB) advertising a
+# dated WordPress feed — podcasts, not IR releases.
+_FVCB_HOME_LINK = ('<link rel="alternate" type="application/rss+xml" title="FVCbank &raquo; '
+                   'Feed" href="https://www.fvcbank.com/feed/" />')
+_FVCB_RSS = """<?xml version="1.0" encoding="UTF-8"?><rss version="2.0">
+<channel>
+	<title>FVCbank</title>
+	<link>https://s26680.pcdn.co/</link>
+	<generator>https://wordpress.org/?v=7.1.3</generator>
+	<item>
+		<title>Podcast Episode 8 &#124; Accountability Under Fire &#8211; Military Leadership Principles Can Build Strong Companies</title>
+		<link>https://s26680.pcdn.co/blog/episode-8-military-leadership-principles-can-build-strong-companies/</link>
+		<pubDate>Mon, 28 Sep 2026 15:48:21 +0000</pubDate>
+	</item>
+</channel></rss>"""
+
+# Live 2026-10-13: BAC's Equisolve IR host advertises the AEM newsroom's
+# "rss" URL — another host, which serves an HTML page.
+_BAC_HOME_LINK = ('<link rel="alternate" type="application/rss+xml" href='
+                  '"https://newsroom.bankofamerica.com/content/newsroom/press-releases.html/rss" />')
+
+
+class TestIrappAdvertisedFeed(unittest.TestCase):
+    """A host none of _IRAPP_RSS_PATHS answers is still found through the feed
+    its home page advertises — only when that feed is same-host and Equisolve."""
+
+    def _probe(self, home, home_html, feeds):
+        calls = []
+
+        def fake_get(url, *a, **k):
+            calls.append(url)
+            if url == home:
+                return _Resp(f"<html><head>{home_html}</head></html>",
+                             ctype="text/html; charset=UTF-8")
+            if url in feeds:
+                return _Resp(feeds[url])
+            return _Resp("Not Found", status=404, ctype="text/html")
+        import data.cache as dc
+        with patch.object(dc, "get", return_value=None), \
+             patch.object(dc, "put") as put, \
+             patch.object(ir.requests, "get", side_effect=fake_get):
+            got = ir._irapp_rss_path(home)
+        return got, calls, put.call_args[0][1]["rss_path"]
+
+    def test_cbna_advertised_equisolve_feed_found(self):
+        got, calls, cached = self._probe(
+            "https://ir.chainbridgebank.com/", _CBNA_HOME_LINK,
+            {"https://ir.chainbridgebank.com/news/press-releases/rss": _CBNA_RSS})
+        self.assertEqual(got, "/news/press-releases/rss")
+        self.assertEqual(cached, "/news/press-releases/rss")
+        self.assertEqual(calls[-1], "https://ir.chainbridgebank.com/news/press-releases/rss")
+
+    def test_wordpress_feed_rejected(self):
+        got, _calls, cached = self._probe(
+            "https://www.fvcbank.com/", _FVCB_HOME_LINK,
+            {"https://www.fvcbank.com/feed/": _FVCB_RSS})
+        self.assertIsNone(got)
+        self.assertEqual(cached, "")
+
+    def test_off_host_feed_never_fetched(self):
+        got, calls, _ = self._probe(
+            "https://investor.bankofamerica.com/", _BAC_HOME_LINK,
+            {"https://newsroom.bankofamerica.com/content/newsroom/press-releases.html/rss":
+             _CBNA_RSS})
+        self.assertIsNone(got)
+        self.assertFalse(any("newsroom" in c for c in calls))
+
+    def test_cbna_items_carry_their_own_pubdates(self):
+        cutoff = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        with patch.object(ir, "_irapp_rss_path", return_value="/news/press-releases/rss"), \
+             patch.object(ir.requests, "get", return_value=_Resp(_CBNA_RSS)) as get:
+            out = ir._irapp_press_releases("https://ir.chainbridgebank.com/", cutoff)
+        self.assertEqual(get.call_args[0][0],
+                         "https://ir.chainbridgebank.com/news/press-releases/rss")
+        self.assertEqual(out, [(
+            "https://ir.chainbridgebank.com/news/press-releases/detail/37/"
+            "chain-bridge-bancorp-inc-reports-second-quarter-2026-financial-results",
+            "Chain Bridge Bancorp, Inc. Reports Second Quarter 2026 Financial Results",
+            datetime(2026, 7, 28, 20, 15, tzinfo=timezone.utc))])
 
 
 class TestQ4UndatedItemDropped(unittest.TestCase):
