@@ -50,10 +50,18 @@ class TestSubBillionScalesToMillions(unittest.TestCase):
         self.assertEqual(format_value(40_000_000, "billions", 1), "$40.0M")    # BAFN-size
         self.assertEqual(format_value(999_000_000, "billions", 1), "$999.0M")
 
-    def test_billion_and_trillion_tiers_unchanged(self):
+    def test_billion_tier_and_no_trillions(self):
         self.assertEqual(format_value(1_000_000_000, "billions", 1), "$1.0B")
         self.assertEqual(format_value(2_100_000_000, "billions", 1), "$2.1B")
-        self.assertEqual(format_value(1.5e12, "billions", 1), "$1.5T")
+        # Owner decision 2026-10-13: a "($B)" column stays in billions with a
+        # thousands separator — JPM Total Assets was "$4.09T" on Screen /
+        # Compare under a "Total Assets ($B)" header.
+        self.assertEqual(format_value(4_091_390_000_000, "billions", 2),
+                         "$4,091.39B")
+        self.assertEqual(format_value(4_091_390_000_000, "billions", 1),
+                         "$4,091.4B")
+        self.assertEqual(format_value(1.5e12, "billions", 1), "$1,500.0B")
+        self.assertEqual(format_value(-1.5e12, "billions", 1), "-$1,500.0B")
 
     def test_never_zero_point_b(self):
         for v in (1e6, 4.9e7, 5e7, 1.2e8, 9.4e8):

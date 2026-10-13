@@ -264,12 +264,12 @@ def format_value(value, fmt: str, decimals: int = 2) -> str:
             return _money_scaled(value / 1e9, decimals, "B")
         return _money_scaled(value / 1e6, decimals, "M")
     elif fmt == "billions":
-        # Auto-scale: T >= $1T, B >= $1B, and M below $1B — a sub-$1B value
-        # must not collapse to "$0.0B" / "$0.1B" (UX-P1-09, BAFN/ATLO
-        # market cap). Each cell carries its own unit suffix.
+        # B >= $1B with a thousands separator — a mega-bank total stays in
+        # the column's "($B)" unit ("$4,091.4B", never "$4.09T"; owner
+        # decision 2026-10-13, matching Corporate Profile) — and M below
+        # $1B so a sub-$1B value never collapses to "$0.0B" / "$0.1B"
+        # (UX-P1-09, BAFN/ATLO market cap). Each cell carries its suffix.
         abs_v = abs(value)
-        if abs_v >= 1e12:
-            return _money_scaled(value / 1e12, decimals, "T")
         if abs_v >= 1e9:
             return _money_scaled(value / 1e9, decimals, "B")
         return _money_scaled(value / 1e6, decimals, "M")
