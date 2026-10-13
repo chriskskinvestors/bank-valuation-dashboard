@@ -508,7 +508,9 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # TE-titled tables, printed precision, YTD / LTM rows, colspan-proven
     # split headers, in-body period rows, "division" segment headings,
     # "$X or N%" changes, sentence-scoped periods, "6/30/26" dates)
-    # and v38 (2026-10-13 — firmwide supplement pages keep their headings).
+    # and v38 (2026-10-13 — firmwide supplement pages keep their headings)
+    # and v39 (2026-10-13 — point-in-time "At" columns, current-vs-table
+    # basis guard).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
