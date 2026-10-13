@@ -52,8 +52,11 @@ class TestIsCallTranscript(unittest.TestCase):
         # Why the notice rule can't catch them — and SBFG's is plain wrong:
         # 2024's full-year $1.72 read as the quarter's diluted EPS ($0.63).
         from data.release_metrics import extract_release_metrics
+        # (Since release_metrics v35 the sentence-scoped period check — "For
+        # the full year, our GAAP EPS of $2.19 … over our 2024 EPS of $1.72"
+        # — refuses it; PEBO's transcript still yields a figure.)
         sbfg = extract_release_metrics(SBFG_TRANSCRIPT, "2025-12-31")
-        self.assertEqual(sbfg["eps_diluted"], 1.72)
+        self.assertIsNone(sbfg["eps_diluted"])
         pebo = extract_release_metrics(PEBO_TRANSCRIPT, "2026-06-30")
         self.assertEqual(pebo["nco_ratio"], 0.31)
         for doc, d in ((SBFG_TRANSCRIPT, "2026-02-02"),

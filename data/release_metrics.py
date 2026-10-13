@@ -171,9 +171,13 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
             continue
         if _EXCLUDE_SENTENCE.search(text[max(0, start - 70):start]):
             continue
-        if (_MULTI_PERIOD.search(text[start:end]) or _MULTI_PERIOD.search(
-                text[max(0, start - 70):start].rsplit(". ", 1)[-1])
-                or _MULTI_PERIOD_AFTER.match(text[end:end + 50])):
+        heading = _list_heading(text, start)
+        if (_MULTI_PERIOD.search(text[start:end])
+                or _MULTI_PERIOD.search(_sentence_head(text, start))
+                or _MULTI_PERIOD_AFTER.match(text[end:end + 50])
+                or _MULTI_PERIOD.search(_value_tail(text, end))
+                or (_MULTI_PERIOD.search(heading)
+                    and not _QTR_HDR.search(heading))):
             continue
         if _CONNECTOR_EXCLUDE.search(text[start:end]):
             continue
@@ -187,9 +191,78 @@ def _clean(text: str, matches, band, agree_tol) -> float | None:
             return None
         if band[0] <= v <= band[1]:
             vals.append(v)
+    # Printed precision tightens agreement: two two-decimal figures 0.01
+    # apart are different numbers (BSRR 2Q26: the quarter's 3.74% beside the
+    # six-month 3.75%), so the tolerance is the coarser half-ULP when that
+    # is stricter than agree_tol ("3.7%" vs "3.71%" keeps agree_tol).
+    if vals:
+        agree_tol = min(agree_tol, 0.5 * 10.0 ** -min(_dec(v) for v in vals)
+                        + 1e-9)
     if not vals or (max(vals) - min(vals)) > agree_tol:
         return None
     return vals[0]
+
+
+# A sentence ends at ". " before a capital — past an optional list bullet
+# ("o", "·", "▪") or page number ("2025. 3 ASSET QUALITY The…", TMP), and
+# through zero-width spaces (JUVF) — or at a bullet / semicolon.
+_SENTENCE_BREAK = re.compile(
+    r"\.[\s​]+(?=(?:[o·▪*\-–—]\s+|\d{1,3}\s+)?[A-Z“\"(])|[■•▪●·;]")
+
+
+def _sentence_head(text: str, start: int) -> str:
+    """The candidate's sentence up to its label: BSRR 2Q26 "The Company's
+    improved financial performance metrics for the first half of 2026
+    include a net interest margin of 3.75%" puts its period phrase ~85
+    chars before the label — past the old fixed 70-char window."""
+    # One char past the label start, so a break right before the label
+    # ("…twelve months. Net interest margin…", OVLY) still sees its capital.
+    return _SENTENCE_BREAK.split(text[max(0, start - 400):start + 1])[-1][:-1]
+
+
+_NEXT_VALUE = re.compile(r"\d[\d,]*(?:\.\d+)?\s*%|\$\s?\d")
+
+
+def _value_tail(text: str, end: int) -> str:
+    """The value's own trailing clause: up to the next percent / dollar
+    value or the sentence end. WNEB 2Q26 "net charge-offs of $1.8 million,
+    or 0.34% of average loans, on an annualized basis, for the six months
+    ended June 30, 2026" — the period phrase trails the value past the
+    leading-only _MULTI_PERIOD_AFTER; the quarter's 0.33% is the figure."""
+    tail = text[end:end + 300]
+    m = _NEXT_VALUE.search(tail)
+    tail = tail[:m.start()] if m else tail
+    # A sentence end here may sit before a closing quote (ZION: "…of
+    # 0.06%.” OPERATING PERFORMANCE"), so any non-decimal period ends it.
+    return re.split(r"[.;■•▪●·][\"”’)]*(?:\s|$)", tail, maxsplit=1)[0]
+
+
+# An inline list bullet: a standalone "o" opening an item (BSRR's sub-
+# bullets, also right after a heading: "● Solid Capital and Liquidity o
+# Tangible book value …"), or a bullet glyph.
+_BULLET = re.compile(r"(?<!\S)o(?=\s+[A-Z“\"(])|[·▪•●■]")
+
+
+def _list_heading(text: str, start: int) -> str:
+    """The heading of the bullet list a candidate sits in, or "": walking
+    back over list items (each ends with a period) to the first segment
+    that does not — BSRR 2Q26 "● Strong YTD Earnings and Profitability
+    (first half compared to same period last year) o Diluted earnings per
+    share … o Efficiency ratio (1) improved to 57.70%" (the quarter's is
+    58.91%). Only a candidate in the FIRST sentence of its item counts —
+    flattened text loses paragraph ends, so a later sentence may be a new
+    paragraph after the list."""
+    parts = _BULLET.split(text[max(0, start - 1500):start + 1])
+    if len(parts) < 2 or _SENTENCE_BREAK.search(parts[-1]):
+        return ""
+    for seg in reversed(parts[:-1]):
+        seg = _SENTENCE_BREAK.split(seg.strip())[-1].strip()
+        # An item may lack a closing period, but a heading carries no value
+        # (CHMG "▪ YTD net income of $18.0 million and EPS of $3.73 ▪ QTD
+        # … EPS of $1.82 for the second quarter" is two items).
+        if seg and not seg.endswith(".") and not _NEXT_VALUE.search(seg):
+            return seg
+    return ""
 
 
 def _conn(n: int) -> str:
@@ -203,6 +276,11 @@ def _conn(n: int) -> str:
     return (r"(?:(?!bps\b|basis\s+points?\b|[■•;]|\.\s[A-Z])[^%])"
             + "{0,%d}?" % n)
 
+
+# "$6.3 million or " / "$12.3 million, or " right before a percent value.
+_DOLLAR_OR = re.compile(r"\$\s?[\d,.]+\s*(?:[mb]illion|thousand)?\s*,?\s*or\s+$",
+                        re.I)
+_DOLLAR_PAIR_KEYS = frozenset({"nco_ratio"})
 
 # "A and B were X% and Y%, respectively" — the pair form maps values by
 # ORDER. First-%-after-label handed the SECOND label the FIRST value (CCFN
@@ -225,7 +303,8 @@ _RESP_TAIL_USD = re.compile(r"^\s*and\s+\$\s?\d{1,3}\.\d{2}\b", re.I)
 
 def _pct_metric(text: str, label_re: str, band,
                 plain_only: bool = False,
-                marked_plain: bool = False) -> float | None:
+                marked_plain: bool = False,
+                dollar_pair: bool = False) -> float | None:
     """Percent metric: '<label> … <verb> X.XX%', the basis-point form
     '<label> … <verb> N bps' (÷100), or either side of an
     'A and B were X% and Y%, respectively' pair. `plain_only` drops a
@@ -234,7 +313,12 @@ def _pct_metric(text: str, label_re: str, band,
     was 3.38%", FRME) — the plain-basis release (see _plain_bases).
     `marked_plain` keeps ONLY candidates explicitly marked plain
     (_PLAIN_MARK: "GAAP net interest margin was 3.59%", COFS) — evidence
-    that the release states the plain basis (see _plain_bases)."""
+    that the release states the plain basis (see _plain_bases).
+    `dollar_pair` admits the "$X million, or N%" form — a ratio companion
+    to its dollar amount, true only of the credit ratios (_DOLLAR_PAIR_KEYS:
+    "net charge-offs of $12.3 million, or 0.25%"). For a level metric it
+    is a CHANGE: BKU 2Q26 "Net Interest Margin (NIM) p $6.3 million or 3%
+    from prior quarter" (NII growth) shipped NIM 3.0 (table: 3.06%)."""
     pat = re.compile(label_re + _conn(60) + _VERB + _NUM + r"\s*%", re.I)
     bps = re.compile(label_re + _conn(60) + _VERB +
                      r"(\d{1,3}(?:\.\d{1,2})?)\s*(?:bps|basis points?)\b", re.I)
@@ -269,6 +353,8 @@ def _pct_metric(text: str, label_re: str, band,
         for m in pat.finditer(text):
             if _RESP_TAIL.match(text[m.end():m.end() + 60]):
                 continue                  # the pair parser owns this value
+            if not dollar_pair and _DOLLAR_OR.search(text[m.start():m.start(1)]):
+                continue                  # "$6.3 million or 3%": a change
             if not _te(m.start(), m.end()):
                 yield m.start(), m.group(1), m.end()
         for m in bps.finditer(text):
@@ -693,7 +779,8 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
     text = _flat_text(html)
     out = {}
     for key, (label, band) in _PCT_SPECS.items():
-        out[key] = _pct_metric(text, label, band)
+        out[key] = _pct_metric(text, label, band,
+                               dollar_pair=key in _DOLLAR_PAIR_KEYS)
     # Plain-basis NIM release (_plain_bases): a narrated NIM serves only
     # when dropping its tax-equivalent candidates leaves the SAME value — a
     # TE narration (FRME "Net interest margin on a fully taxable equivalent
@@ -705,7 +792,8 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
     plain = _plain_bases(html)
     for key in plain:
         if out[key] is not None and out[key] != _pct_metric(
-                text, *_PCT_SPECS[key], plain_only=True):
+                text, *_PCT_SPECS[key], plain_only=True,
+                dollar_pair=key in _DOLLAR_PAIR_KEYS):
             out[key] = None
     for key, (label, denom, band) in _PINNED_SPECS.items():
         out[key] = _pinned_metric(text, label, denom, band)
@@ -762,7 +850,8 @@ _QTOK_QF = re.compile(r"\bQ([1-4])\s?['’]?(\d{2}|\d{4})\b", re.I)
 _FISCAL = re.compile(r"(?i)\bfiscal\b|\bfy")
 # Numeric date ("6/30/2026", RF) — any valid date, like _DTOK, so a monthly
 # column ("7/31/2026") still counts as a column, never silently dropped.
-_NUMDATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4})(?![\d/])")
+# Two-digit years read as 20xx ("6/30/26", CBFV 2Q26's ratio tables).
+_NUMDATE = re.compile(r"(?<![\d/])(\d{1,2})/(\d{1,2})/(\d{4}|\d{2})(?![\d/])")
 _QWORD = re.compile(r"\b(first|1st|second|2nd|third|3rd|fourth|4th)\s+"
                     r"(?:quarter|qtr\.?),?\s+(\d{4})", re.I)
 _QNUM = {"first": 1, "1st": 1, "second": 2, "2nd": 2,
@@ -822,29 +911,134 @@ def _period_qend(cell: str) -> str | None:
             return _date(int(m.group(2)), mon, _QE_MONTH[mon]).isoformat()
     m = _NUMDATE.search(cell)
     if m:
+        y = int(m.group(3))
         try:
-            return _date(int(m.group(3)), int(m.group(1)),
+            return _date(y + 2000 if y < 100 else y, int(m.group(1)),
                          int(m.group(2))).isoformat()
         except ValueError:
             return None
     return None
 
 
+class _Cell(str):
+    """A cell's text that remembers its HTML colspan / rowspan — the only
+    proof of which header cells sit above which columns (_span_pairs)."""
+
+    def __new__(cls, text: str, colspan: int = 1, rowspan: int = 1):
+        o = super().__new__(cls, text)
+        o.colspan, o.rowspan = colspan, rowspan
+        return o
+
+
+def _span_attr(attrs: str, name: str) -> int:
+    m = re.search(name + r"\s*=\s*[\"']?\s*(\d{1,3})", attrs or "", re.I)
+    return max(1, int(m.group(1))) if m else 1
+
+
 def _table_rows(table_html: str) -> list[list[str]]:
     """One <table>'s cells as [[cell_text, ...], ...] (tags stripped,
-    entities unescaped, whitespace collapsed)."""
+    entities unescaped, whitespace collapsed). Each cell is a _Cell (a
+    str) carrying its colspan / rowspan."""
     rows = []
     for tr in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", table_html):
-        cells = re.findall(r"(?is)<t[dh][^>]*>(.*?)</t[dh]>", tr)
+        cells = re.findall(r"(?is)<t[dh]([^>]*)>(.*?)</t[dh]>", tr)
         # Zero-width characters (C pads every cell with U+200B) are not
         # str.strip() whitespace — normalize them away or padding cells
         # read as non-empty labels/columns.
-        rows.append([re.sub(r"\s+", " ",
-                            re.sub("[\u200b\u200c\ufeff]", " ",
-                                   _h.unescape(re.sub(r"(?s)<[^>]+>", " ", c)))
-                            ).strip()
-                     for c in cells])
+        rows.append([_Cell(re.sub(r"\s+", " ",
+                                  re.sub("[\u200b\u200c\ufeff]", " ",
+                                         _h.unescape(re.sub(r"(?s)<[^>]+>", " ", c)))
+                                  ).strip(),
+                           _span_attr(a, "colspan"), _span_attr(a, "rowspan"))
+                     for a, c in cells])
     return rows
+
+
+def _span_layout(rows: list[list[str]], last: int) -> list[list[tuple]]:
+    """[start, end) grid columns of every cell in rows[0..last], honoring
+    colspan and the rowspans of cells above."""
+    held: dict[int, int] = {}            # column → last row it is held for
+    out = []
+    for r_i, cells in enumerate(rows[:last + 1]):
+        pos, c = [], 0
+        for cell in cells:
+            while held.get(c, -1) >= r_i:
+                c += 1
+            cs = getattr(cell, "colspan", 1)
+            rs = getattr(cell, "rowspan", 1)
+            pos.append((c, c + cs))
+            if rs > 1:
+                for k in range(c, c + cs):
+                    held[k] = r_i + rs - 1
+            c += cs
+        out.append(pos)
+    return out
+
+
+def _span_year_columns(rows: list[list[str]], hdr_i: int) -> list | None:
+    """Grid ranges of the year cells of a SPAN-PAIRED split header (the
+    years row hdr_i under a month / ordinal row whose cell count differs —
+    _span_pairs proved the pairing), else None. Value rows of such tables
+    are read by grid position (_span_row_values): CFBK 2Q26 prints "2026 |
+    2025 | % change | 2026 | 2025 | % change", and its EPS row carries no
+    change cells — four values that only the column grid can place."""
+    if hdr_i < 1:
+        return None
+    parts = [c.strip() for c in rows[hdr_i - 1] if c.strip()]
+    yrow = [c.strip() for c in rows[hdr_i] if c.strip()]
+    years = [c for c in yrow if _YEAR_CELL.match(c)]
+    split = (all(_MONTHS3.get(c.rstrip(".,")[:3].lower()) in _QE_MONTH
+                 for c in parts) or all(_QORD.match(c) for c in parts))
+    # Only the split header itself: quarter-end month / ordinal cells over
+    # bare years (+ change cells) — never a banner over period tokens (FNB
+    # "For the Six Months Ended" over "2Q26 | 1Q26 | 2Q25 | 2026 | 2025").
+    if (not split or len(parts) < 2 or len(parts) == len(years)
+            or not all(_YEAR_CELL.match(c) or _CHANGE_COL.search(c) for c in yrow)
+            or not _span_pairs(rows, hdr_i - 1, hdr_i)):
+        return None
+    lay = _span_layout(rows, hdr_i)
+    return [lay[hdr_i][n] for n, c in enumerate(rows[hdr_i])
+            if _YEAR_CELL.match(c.strip())]
+
+
+def _span_row_values(cells: list[str], pos: list[tuple], ycols: list,
+                     k: int) -> list | None:
+    """The first k period values of a row by grid overlap with the header's
+    year cells: one number per column (None when the column is blank or a
+    slot), or None (row unread) when a column holds two numbers."""
+    out = []
+    for ys, ye in ycols[:k]:
+        under = [c for c, (cs, ce) in zip(cells, pos) if c and cs < ye and ys < ce]
+        vals = _row_values([""] + under, slots=True)
+        if len(vals) > 1:
+            return None
+        out.append(vals[0] if vals else None)
+    return out
+
+
+def _span_pairs(rows: list[list[str]], i: int, j: int) -> list[tuple] | None:
+    """[(part index, year), …] in year-row order when the HTML spans PROVE
+    which period-part cell (row i: "June 30," / "1st Quarter") each year
+    cell (row j) sits under: every year cell overlaps exactly one non-empty
+    part cell (JMSB's year cells also span the "$" column left of the month
+    cell), every part cell is over at least one year, in order. BANC 2Q26
+    "June 30, | March 31, | June 30, | June 30," (the last colspan=3) over
+    "2026 | 2026 | 2025 | 2026 | 2025". Anything else → None (refused)."""
+    lay = _span_layout(rows, j)
+    parts = [lay[i][n] for n, c in enumerate(rows[i]) if c.strip()]
+    out = []
+    for n, c in enumerate(rows[j]):
+        if not _YEAR_CELL.match(c.strip()):
+            continue
+        ys, ye = lay[j][n]
+        cover = [k for k, (ps, pe) in enumerate(parts) if ps < ye and ys < pe]
+        if len(cover) != 1:
+            return None
+        out.append((cover[0], int(c.strip()[:4])))   # "2026 (1)"
+    ks = [k for k, _ in out]
+    if not out or ks != sorted(ks) or set(ks) != set(range(len(parts))):
+        return None
+    return out
 
 
 _FOOTNOTE = re.compile(r"^\(\d\)$")
@@ -1278,8 +1472,9 @@ def _period_header_raw(rows: list[list[str]]) -> tuple | None:
         # year row are trailing change columns (counted for alignment).
         # The counts must pair EXACTLY: FCCO 2Q26 prints "June 30, | March
         # 31, | June 30," over six years (each month spans a 2026 | 2025
-        # pair — colspans lost); zipping took Jun-26 / Mar-25 / Jun-26 and
-        # dropped three year cells. Unequal counts → no header (n/a).
+        # pair); zipping took Jun-26 / Mar-25 / Jun-26 and dropped three
+        # year cells. Unequal counts pair only when the HTML colspans prove
+        # each year's month (_span_pairs) — else no header (n/a).
         if i + 1 < len(rows):
             months = [_MONTHS3.get(c.strip().rstrip(".,")[:3].lower())
                       for c in cells if c.strip()]
@@ -1290,13 +1485,14 @@ def _period_header_raw(rows: list[list[str]]) -> tuple | None:
                 nxt = [c.strip() for c in rows[i + 1] if c.strip()]
                 years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
                 extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
-                if (len(years) == len(months)
-                        and all(_CHANGE_COL.search(c) for c in extras)):
+                pairs = (list(enumerate(years)) if len(years) == len(months)
+                         else _span_pairs(rows, i, i + 1))
+                if pairs and all(_CHANGE_COL.search(c) for c in extras):
                     if _ytd_only_head(rows, i, i + 1):
                         return None       # FITB "Year to Date" over "June | June"
                     from datetime import date as _date
-                    qends = [_date(y, m, _QE_MONTH[m]).isoformat()
-                             for m, y in zip(months, years)]
+                    qends = [_date(y, months[k], _QE_MONTH[months[k]]).isoformat()
+                             for k, y in pairs]
                     # span banner sits above the months row
                     return qends, i + 1, i - 1, len(extras)
         # TCBI-style split: ordinal-quarter row ("1st Quarter | 4th
@@ -1313,12 +1509,13 @@ def _period_header_raw(rows: list[list[str]]) -> tuple | None:
                     nxt = nxt[1:]
                 years = [int(c) for c in nxt if re.fullmatch(r"20\d{2}", c)]
                 extras = [c for c in nxt if not re.fullmatch(r"20\d{2}", c)]
-                if (len(years) == len(ords)
-                        and all(_CHANGE_COL.search(c) for c in extras)):
+                pairs = (list(enumerate(years)) if len(years) == len(ords)
+                         else _span_pairs(rows, i, i + 1))
+                if pairs and all(_CHANGE_COL.search(c) for c in extras):
                     from datetime import date as _date
                     qends = []
-                    for om, y in zip(ords, years):
-                        mo, dy = _Q_END[_QNUM[om.group(1).lower()]]
+                    for k, y in pairs:
+                        mo, dy = _Q_END[_QNUM[ords[k].group(1).lower()]]
                         qends.append(_date(y, mo, dy).isoformat())
                     return qends, i + 1, i - 1, len(extras)
         # CFR-style INVERTED split: a years row ("2026 | 2025") ABOVE the
@@ -2027,16 +2224,24 @@ def _skip_row(cells: list[str], label: str, st: dict) -> bool:
         # (six-month 2026 / 2025, bps change) read as 2Q26 / 1Q26; LNKB
         # 4Q25 re-declares five dates under its three-period header, so its
         # 5-value capital rows put 6/30/2025 in the 12/31/2024 column. A
-        # period set other than the table header's closes the rows to this
-        # reader until the header's own set is re-declared. Only after a
-        # data row: before one, a period row continues the header itself
-        # (INDB's "Jun 2026 vs. | Jun 2026 vs." over "Mar 2026 | Jun 2025").
-        found = {q for _, q in _row_periods(cells)}
-        if found and st.get("qends") and st.get("data"):
-            st["sub"] = found != set(st["qends"])
+        # period set other than the table header's becomes the rows'
+        # header — st["sub"] = (its periods, its trailing change-cell count,
+        # None when a non-change cell trails) — until the header's own set
+        # is re-declared. Only after a data row: before one, a period row
+        # continues the header itself (INDB's "Jun 2026 vs. | Jun 2026 vs."
+        # over "Mar 2026 | Jun 2025").
+        per = _row_periods(cells)
+        if per and st.get("qends") and st.get("data"):
+            found = [q for _, q in per]
+            if set(found) == set(st["qends"]):
+                st["sub"] = None
+            else:
+                trail = [c for c in cells[per[-1][0] + 1:] if c]
+                st["sub"] = (found, len(trail) if all(
+                    _CHANGE_COL.search(c) for c in trail) else None)
         return True
     st["data"] = True
-    return st["ytd"] or st["seg"] or st.get("sub", False)
+    return st["ytd"] or st["seg"]
 
 
 def _ytd_section(label: str, in_block: bool) -> bool:
@@ -2142,6 +2347,9 @@ def extract_table_metrics(html: str, expected_qend: str,
             col = qends.index(expected_qend)
         else:
             continue                      # ambiguous period row → skip table
+        tcol = col
+        ycols = _span_year_columns(rows, hdr_i)
+        lay = _span_layout(rows, len(rows) - 1) if ycols else None
         cmp = _cmp_cols(rows[hdr_i], qends, n_change)
         # Magnitude sniff for "$K" specs: the table's own units statement
         # (e.g. "(dollars in thousands, except per share data)") — anywhere
@@ -2222,7 +2430,7 @@ def extract_table_metrics(html: str, expected_qend: str,
         section, prev_label = frozenset(), ""
         st = {"ytd": False, "seg": False, "var": False, "section": "",
               "outer": "", "qends": qends}
-        for cells in rows[hdr_i + 1:]:
+        for r_i, cells in enumerate(rows[hdr_i + 1:], hdr_i + 1):
             # Label = the first NON-EMPTY cell (WFC/JPM indent data rows with
             # a leading empty cell — cells[0] as label skipped every row,
             # caught live 2026-07-13). Values parse only AFTER the label cell
@@ -2249,9 +2457,29 @@ def extract_table_metrics(html: str, expected_qend: str,
             row_text = " | ".join(cells)
             # _row_values itself skips its first cell (the label slot), so
             # hand it the row FROM the label cell onward.
-            k = len(qends)
-            vals = _row_values(cells[label_idx:], slots=True, n_periods=k)
-            if avg and len(vals) == k * avg[1]:
+            sub = st.get("sub")
+            if sub:
+                # Under a re-declared period row (see _skip_row): its own
+                # periods, exact width (+ its trailing change cells) only.
+                sq, s_chg = sub
+                if s_chg is None or sq.count(expected_qend) != 1:
+                    continue
+                k, col = len(sq), sq.index(expected_qend)
+                vals = _row_values(cells[label_idx:], slots=True, n_periods=k)
+                if len(vals) not in (k, k + s_chg):
+                    continue
+                vals = vals[:k]
+            elif ycols:
+                # Span-paired header: each period's value is the number
+                # under its year cell's columns — never a positional count.
+                k, col = len(qends), tcol
+                vals = _span_row_values(cells, lay[r_i], ycols, k)
+                if vals is None or all(v is None for v in vals):
+                    continue
+            else:
+                k, col = len(qends), tcol
+                vals = _row_values(cells[label_idx:], slots=True, n_periods=k)
+            if not sub and not ycols and avg and len(vals) == k * avg[1]:
                 v = vals[col * avg[1] + avg[2]]
                 if v is not None and not _ROW_VARIANT.search(label):
                     for key, (lab_re, band) in _AVG_YIELD_ROWS.items():
@@ -2474,7 +2702,7 @@ def extract_table_series(html: str, key: str = "eps_diluted") -> dict[str, float
             if label_idx is None:
                 continue
             label = cells[label_idx]
-            if _skip_row(cells, label, st) or st["var"]:
+            if _skip_row(cells, label, st) or st["var"] or st.get("sub"):
                 continue                  # heading / YTD / segment / non-GAAP
             row_text = " ".join(cells)
             vals = _row_values(cells[label_idx:])
@@ -2708,9 +2936,13 @@ def release_metrics(cik) -> dict | None:
     # COFS); rows of a TE-titled table are not plain (CARE); printed
     # precision ("3.90" = 2 decimals) drives table agreement; YTD / LTM
     # rows are never quarter values (WSBF, SFNC, TCBI); split month/year
-    # (and ordinal/year) headers must pair exactly (FCCO); an in-body
-    # period row re-declares the columns (EWBC 6M block, FSBC, FFIN,
-    # LNKB); "division" headings are segment blocks (CBAN).
+    # (and ordinal/year) headers pair 1:1 or as the HTML colspans prove,
+    # never truncated (FCCO); rows under an in-body period row read against
+    # it (EWBC 6M block, FSBC, FFIN, LNKB); "division" headings are segment
+    # blocks (CBAN); "$X million or N%" is a change, never a level ratio
+    # (BKU); multi-period context = the value's sentence, trailing clause
+    # and bullet-list heading, and two-decimal prose values a basis point
+    # apart disagree (BSRR, GS, MS, ASRV); "6/30/26" dates (CBFV, AUB).
     # (Re-bumped past v32-v36, which #399 / #401 / #402 / #404 / #405 used.)
     # v36 (2026-10-13): prose basic/diluted EPS pairs map by stated order
     # without "respectively" (NEWT 2Q26 reads its reported $0.47), and a

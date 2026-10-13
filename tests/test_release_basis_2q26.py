@@ -28,6 +28,19 @@ excerpts. Every expected value was read off the release's own text.
      "Net Interest Margin (NIM) (GAAP) increased to 3.68%" sat beside its
      FTE-only table's prior 3.88 / year-ago 3.55; COFS's "GAAP net interest
      margin was 3.59%" beside FTE 3.67 / 3.70. The FTE columns are n/a.
+
+Follow-up (same branch):
+  A. Split month / ordinal headers with unequal counts pair when the HTML
+     colspans PROVE each year's period (BANC, CFBK, CZFS, EBMT, ESQ, FFBC,
+     JMSB, OBT, PBFS, WNEB recovered; FCCO now proven too).
+  B. "$X million or N%" is a change, never a level NIM / ROA / ROE /
+     efficiency (BKU "Net Interest Margin (NIM) p $6.3 million or 3%").
+  C. The multi-period check covers the value's whole sentence, its own
+     trailing clause and its bullet-list heading; two-decimal prose values
+     a basis point apart disagree (BSRR's first-half 3.75%).
+  D. Rows under a re-declared in-body period row read against THAT row
+     (LNKB year-ago capital / NPA).
+  E. Two-digit-year numeric dates ("6/30/26", CBFV / AUB ratio tables).
 """
 import os
 import re
@@ -87,28 +100,44 @@ class TestInBodyPeriodRow(unittest.TestCase):
         self.assertEqual(
             rm.extract_release_metrics(self.html, Q)["nim"], 3.43)
 
-    def test_six_month_rows_closed_without_their_banner(self):
+    def test_block_rows_map_to_their_own_periods_only(self):
         # The same table with its "Six Months Ended (1)" banner text removed:
-        # only the period row "June 30, 2026 | June 30, 2025 | Yr-o-Yr" is
-        # left to mark the block. Pre-change: 3.43 vs 3.46 (current) and
-        # 3.49 vs 3.35 (prior) disagreed → n/a, and the 6M rows read as
-        # 2Q26 / 1Q26.
+        # the period row "June 30, 2026 | June 30, 2025 | Yr-o-Yr" is left to
+        # head the block, so its rows map to ITS periods. Pre-change: "3.46
+        # | 3.35 | 11" matched the table header's three periods and read as
+        # 2Q26 / 1Q26 (prior 3.49 vs 3.35 → n/a). Now 1Q26 is the quarter
+        # block's alone, and the unlabeled block's Jun-26 3.46 disagrees with
+        # 3.43 → n/a, never a guess.
         self.assertEqual(self.html.count("Six Months Ended (1)"), 1)
         html = self.html.replace("Six Months Ended (1)", "")
-        self.assertEqual(_cols(html, "nim"), (3.43, 3.49, 3.35))
-        self.assertEqual(_cols(html, "roa"), (1.75, 1.79, 1.62))
+        self.assertEqual(_cols(html, "nim"), (None, 3.49, 3.35))
+        self.assertEqual(_cols(html, "roa"), (None, 1.79, None))
 
-    def test_header_set_redeclared_reopens_rows(self):
-        rows = ("<tr><td></td><td>June 30, 2026</td><td>March 31, 2026</td></tr>"
-                "<tr><td>Return on average assets</td><td>1.10 %</td><td>1.05 %</td></tr>"
-                "<tr><td></td><td>June 30, 2026</td><td>June 30, 2025</td></tr>"
-                "<tr><td>Net interest margin</td><td>3.46 %</td><td>3.35 %</td></tr>"
-                "<tr><td></td><td>June 30, 2026</td><td>March 31, 2026</td></tr>"
-                "<tr><td>Net interest margin</td><td>3.43 %</td><td>3.49 %</td></tr>")
+    def test_redeclared_block_reads_against_its_header(self):
+        # Header 2Q26 | 1Q26 | 2Q25; a block re-declares five quarters; then
+        # the header's own set returns.
+        rows = ("<tr><td></td><td>6/30/2026</td><td>3/31/2026</td><td>6/30/2025</td></tr>"
+                "<tr><td>Return on average assets</td><td>1.10 %</td><td>1.05 %</td>"
+                "<td>0.98 %</td></tr>"
+                "<tr><td></td><td>6/30/2026</td><td>3/31/2026</td><td>12/31/2025</td>"
+                "<td>9/30/2025</td><td>6/30/2025</td></tr>"
+                "<tr><td>Common equity tier 1 capital ratio</td><td>10.94 %</td>"
+                "<td>11.39 %</td><td>11.51 %</td><td>11.71 %</td><td>10.74 %</td></tr>"
+                "<tr><td></td><td>6/30/2026</td><td>3/31/2026</td><td>6/30/2025</td></tr>"
+                "<tr><td>Net interest margin</td><td>3.43 %</td><td>3.49 %</td>"
+                "<td>3.35 %</td></tr>")
         html = f"<table>{rows}</table>"
-        self.assertEqual(rm.extract_table_metrics(html, Q)["nim"], 3.43)
-        self.assertEqual(rm.extract_table_metrics(html, PQ)["nim"], 3.49)
-        self.assertEqual(rm.extract_table_metrics(html, Q)["roa"], 1.10)
+        self.assertEqual(_cols(html, "cet1_ratio"), (10.94, 11.39, 10.74))
+        self.assertEqual(_cols(html, "nim"), (3.43, 3.49, 3.35))
+        self.assertEqual(_cols(html, "roa"), (1.10, 1.05, 0.98))
+
+    def test_block_with_a_non_change_trailer_is_unread(self):
+        rows = ("<tr><td></td><td>6/30/2026</td><td>3/31/2026</td></tr>"
+                "<tr><td>Return on average assets</td><td>1.10 %</td><td>1.05 %</td></tr>"
+                "<tr><td></td><td>6/30/2026</td><td>6/30/2025</td><td>Average</td></tr>"
+                "<tr><td>Net interest margin</td><td>3.46 %</td><td>3.35 %</td>"
+                "<td>3.40 %</td></tr>")
+        self.assertIsNone(rm.extract_table_metrics(f"<table>{rows}</table>", Q)["nim"])
 
 
 class TestPrintedPrecision(unittest.TestCase):
@@ -146,11 +175,44 @@ class TestPrintedPrecision(unittest.TestCase):
 class TestSplitHeaderNeverTruncated(unittest.TestCase):
     """Item 4 — FCCO."""
 
-    def test_fcco_three_months_over_six_years_refused(self):
+    def test_fcco_spans_prove_the_pairing(self):
+        # "Three months ended" ×2 / "Six months ended" over "June 30, |
+        # March 31, | June 30," (each colspan covering a "2026 | 2025" pair):
+        # Jun-26, Jun-25, Mar-26, Mar-25 + the six-month pair. Prose: "net
+        # interest margin, on a tax equivalent basis, was 3.51% … compared
+        # to 3.37% in the first quarter of 2026 and 3.21% in the second
+        # quarter of 2025" — the TE row; the plain row serves (3.50 / 3.35 /
+        # 3.19). Pre-change: zipped to Jun-26 / Mar-25 / Jun-26.
         html = _fx("FCCO.html")
+        self.assertEqual(rm._period_header(_tables(html)[0])[0],
+                         [Q, YQ, PQ, "2025-03-31"])
+        self.assertEqual(_cols(html, "nim"), (3.50, 3.35, 3.19))
+        self.assertEqual(_cols(html, "efficiency"), (58.79, 66.46, 66.04))
+        self.assertEqual(_cols(html, "roa"), (1.29, 0.95, 1.02))
+
+    def test_fcco_without_spans_refused(self):
+        html = re.sub(r' colspan="\d+"', "", _fx("FCCO.html"))
         self.assertIsNone(rm._period_header(_tables(html)[0]))
-        for key in ("nim", "efficiency", "roa", "roe"):
-            self.assertEqual(_cols(html, key), (None, None, None), key)
+        self.assertEqual(_cols(html, "nim"), (None, None, None))
+
+    def test_spans_recover_the_ten_banks(self):
+        # Main read these positionally (right by luck); item 4 refused them;
+        # the HTML colspans now prove them — same values as main, each
+        # checked against the release's own rows.
+        self.assertEqual(_cols(_fx("BANC.html"), "eps_diluted"),
+                         (None, 0.39, 0.12))      # 2Q26 is a $(1.61) loss
+        self.assertEqual(_cols(_fx("ESQ.html"), "efficiency"),
+                         (50.1, 51.1, 47.6))
+        self.assertEqual(_cols(_fx("FFBC.html"), "roa"), (1.37, 1.34, 1.52))
+        self.assertEqual(_cols(_fx("FFBC.html"), "bv_ps"), (28.46, 28.02, 26.71))
+        # JMSB's year cells also span the "$" column beside the month cell.
+        # "Net charge-offs to average loans (annualized) 0.03 % | - - % |
+        # 0.01 % | - - %": 2Q25 is a dash. Main dropped the dash and served
+        # the SIX-MONTH 2026 0.01 as 2Q25; the grid read finds the dash.
+        self.assertEqual(_cols(_fx("JMSB.html"), "nco_ratio"), (0.03, None, None))
+        # CFBK: "2026 | 2025 | % change | 2026 | 2025 | % change" — the EPS
+        # row carries no change cells; the grid places 0.90 / 0.77.
+        self.assertEqual(_cols(_fx("CFBK.html"), "eps_diluted"), (0.90, None, 0.77))
 
     def test_equal_counts_still_pair(self):
         rows = ("<tr><td>June</td><td>March</td><td>June</td></tr>"
@@ -258,16 +320,20 @@ class TestCorpusDiffCases(unittest.TestCase):
         self.assertEqual(rm.extract_table_metrics(html, Q)["loan_yield"], 6.70)
         self.assertEqual(rm.extract_table_metrics(html, PQ)["loan_yield"], 6.67)
 
-    def test_lnkb_five_date_block_closed(self):
-        # Under "12/31/2025 | 9/30/2025 | 12/31/2024" the block re-declared
+    def test_lnkb_five_date_block_reads_its_own_dates(self):
+        # Under "12/31/2025 | 9/30/2025 | 12/31/2024" the block re-declares
         # "12/31/2025 | 9/30/2025 | 6/30/2025 | 3/31/2025 | 12/31/2024":
-        # pre-change the year-ago column read 6/30/2025's CET1 11.51 (its
-        # 12/31/2024 value is 10.74).
+        # pre-change the year-ago column read 6/30/2025's CET1 11.51 / NPA
+        # 0.76 (the 12/31/2024 cells print 10.74 / 0.60).
         html = _fx("LNKB.html")
-        self.assertIsNone(
-            rm.extract_table_metrics(html, "2024-12-31")["cet1_ratio"])
-        self.assertEqual(rm.extract_table_metrics(html, "2025-12-31")["nim"],
-                         3.74)
+        cols = ("2025-12-31", "2025-09-30", "2024-12-31")
+
+        def c(key):
+            return tuple(rm.extract_table_metrics(html, q)[key] for q in cols)
+        self.assertEqual(c("cet1_ratio"), (10.94, 11.39, 10.74))
+        self.assertEqual(c("total_ratio"), (12.07, 12.31, 11.55))
+        self.assertEqual(c("npa_assets"), (0.79, 0.79, 0.60))
+        self.assertEqual(c("nim"), (3.74, 3.75, 3.85))
 
     def test_indb_header_continuation_is_not_a_block(self):
         # "Jun 2026 vs. | Jun 2026 vs." over "Mar 2026 | Jun 2025" continues
@@ -324,12 +390,132 @@ class TestCorpusDiffCases(unittest.TestCase):
         self.assertEqual(rm.extract_table_metrics(_fx("SFNC.html"), Q)
                          ["nco_ratio"], 0.20)
 
-    def test_esq_unpaired_month_year_header_refused(self):
-        # "June 30, | March 31, | June 30, | June 30," over five years —
-        # pairing is unprovable without colspans: refused (n/a), the cost
-        # of item 4 (pre-change read positionally).
+    def test_banner_over_period_tokens_is_not_a_split_header(self):
+        # FNB 2Q26 shape: "For the Six Months Ended" (colspan) over the YTD
+        # years beside "2Q26 | 1Q26 | 2Q25" — the grid reader stays off.
+        rows = ('<tr><td></td><td></td><td></td><td></td>'
+                '<td colspan="2">For the Six Months Ended June 30,</td></tr>'
+                "<tr><td></td><td>2Q26</td><td>1Q26</td><td>2Q25</td>"
+                "<td>2026</td><td>2025</td></tr>"
+                "<tr><td>Book value per common share</td><td>$ 19.34</td>"
+                "<td>$ 19.12</td><td>$ 18.17</td></tr>")
+        t = rm._table_rows(rows)
+        self.assertIsNone(rm._span_year_columns(t, rm._period_header(t)[1]))
+        self.assertEqual(_cols(f"<table>{rows}</table>", "bv_ps"),
+                         (19.34, 19.12, 18.17))
+
+    def test_esq_header_paired_by_spans(self):
+        # "June 30, | March 31, | June 30, | June 30," (the last colspan
+        # covering "2026 | 2025") over five years.
         html = _fx("ESQ.html")
-        self.assertIsNone(rm._period_header(_tables(html)[0]))
+        self.assertEqual(rm._period_header(_tables(html)[0])[0], [Q, PQ, YQ])
+
+
+class TestChangeConstructionNeverALevel(unittest.TestCase):
+    """B — BKU: "$6.3 million or 3%" is NII growth, never the NIM."""
+
+    def test_bku(self):
+        html = _fx("BKU.html")
+        self.assertEqual(rm.extract_release_metrics(html, Q)["nim"], 3.06)
+        self.assertIsNone(rm.extract_release_metrics(
+            html[:html.index("<table>", html.index("</table>"))])["nim"])
+
+    def test_credit_ratio_keeps_its_dollar_pair(self):
+        text = ("<p>The Company recorded net charge-offs of $1.8 million, or "
+                "0.33% of average loans, on an annualized basis.</p>")
+        self.assertEqual(rm.extract_release_metrics(text)["nco_ratio"], 0.33)
+
+
+class TestSentenceScopedPeriod(unittest.TestCase):
+    """C — BSRR: a first-half value never serves (nor agrees) as the quarter."""
+
+    def test_bsrr(self):
+        # Pre-change 3.75: the first-half bullet "Net interest margin
+        # remained strong at 3.75%" (under "(first half compared to same
+        # period last year)") was read first and "agreed" with the
+        # quarter's 3.74 at 0.011. (In the full release a further "● Net
+        # interest income increased … to 3.75%" item now DISAGREES at two
+        # decimals → prose n/a, and the summary table's 3.74 serves.)
+        html = _fx("BSRR.html")
+        prose = html[:html.index("<table>")]
+        self.assertEqual(rm.extract_release_metrics(prose)["nim"], 3.74)
+        self.assertEqual(rm.extract_release_metrics(html, Q)["nim"], 3.74)
+        self.assertIsNone(rm.extract_release_metrics(prose)["efficiency"])
+
+    def test_two_decimal_figures_a_basis_point_apart_disagree(self):
+        text = ("<p>Net interest margin was 3.74% for the quarter.</p>"
+                "<p>Net interest margin remained strong at 3.75%.</p>")
+        self.assertIsNone(rm.extract_release_metrics(text)["nim"])
+        # A one-decimal print keeps the 0.011 agreement: 3.71% vs 3.7%.
+        text = text.replace("3.74%", "3.71%").replace("3.75%", "3.7%")
+        self.assertEqual(rm.extract_release_metrics(text)["nim"], 3.71)
+
+    def test_period_phrase_trailing_the_value(self):
+        # WNEB 2Q26: the six-month 0.34% is never a candidate beside the
+        # quarter's 0.33%.
+        text = ("<p>The Company recorded net charge-offs of $1.8 million, or "
+                "0.33% of average loans, on an annualized basis, for the three "
+                "months ended June 30, 2026.</p><p>The Company recorded net "
+                "charge-offs of $1.8 million, or 0.34% of average loans, on an "
+                "annualized basis, for the six months ended June 30, 2026.</p>")
+        self.assertEqual(rm.extract_release_metrics(text)["nco_ratio"], 0.33)
+
+    def test_bullet_and_page_breaks_end_the_sentence(self):
+        # FCBC "…first six months of 2026 includes … $2.31 million. o Net
+        # interest margin remained strong at 4.38% in the second quarter".
+        text = ("<p>the first six months of 2026 includes pre-tax merger-related "
+                "costs of $2.31 million. o Net interest margin remained strong "
+                "at 4.38% in the second quarter of 2026.</p>")
+        self.assertEqual(rm.extract_release_metrics(text)["nim"], 4.38)
+
+
+    def test_bullet_list_heading_governs_its_items(self):
+        # BSRR 2Q26 (verbatim): the item's 57.70% is the first-half ratio;
+        # the quarter's (table) is 58.91%.
+        text = ("<p>● Strong YTD Earnings and Profitability (first half "
+                "compared to same period last year) o Diluted earnings per "
+                "share increased by $0.29, or 20%, to $1.72 per diluted share. "
+                "o Efficiency ratio (1) improved to 57.70%, as compared to "
+                "60.00%.</p>")
+        self.assertIsNone(rm.extract_release_metrics(text)["efficiency"])
+        # CHMG 2Q26: value-bearing items are items, not a heading.
+        text = ("<p>Second Quarter 2026 Highlights ▪ YTD net income of $18.0 "
+                "million and EPS of $3.73 ▪ QTD net income of $8.8 million and "
+                "EPS of $1.82 for the second quarter ▪ Net interest margin "
+                "increased 7 bps</p>")
+        self.assertEqual(rm.extract_release_metrics(text)["eps_diluted"], 1.82)
+
+    def test_trailing_first_half_phrase(self):
+        # GS 2Q26 (main served 58.8 as the quarter's efficiency ratio).
+        text = ("<p>The firm's efficiency ratio 3 was 58.8% for the first half "
+                "of 2026, compared with 62.0% for the first half of 2025.</p>")
+        self.assertIsNone(rm.extract_release_metrics(text)["efficiency"])
+
+    def test_sentence_end_before_a_closing_quote(self):
+        # ZION 2Q26: the six-month table text after the quote is not the
+        # value's clause.
+        text = ("<p>we’re proud of our ongoing solid credit results, with "
+                "annualized net charge-offs of 0.06%.” OPERATING PERFORMANCE "
+                "Three Months Ended Six Months Ended</p>")
+        self.assertEqual(rm.extract_release_metrics(text)["nco_ratio"], 0.06)
+
+
+class TestTwoDigitYearDates(unittest.TestCase):
+    """E — CBFV "6/30/26 | 3/31/26 | …" ratio table."""
+
+    def test_period_qend(self):
+        self.assertEqual(rm._period_qend("6/30/26"), Q)
+        self.assertEqual(rm._period_qend("12/31/25"), "2025-12-31")
+
+    def test_cbfv_plain_prior_and_year_ago(self):
+        # "Net Interest Margin 3.68 % 3.83 % … 3.54 %" over "6/30/26 |
+        # 3/31/26 | …"; prose "Net Interest Margin (NIM) (GAAP) increased to
+        # 3.68% … compared to 3.54% for the three months ended June 30,
+        # 2025"; the FTE rows (3.73 / 3.88 / 3.55) step aside.
+        html = _fx("CBFV_full.html")
+        self.assertEqual(rm.extract_release_metrics(html, Q)["nim"], 3.68)
+        self.assertEqual(_cols(html, "nim"), (3.68, 3.83, 3.54))
+        self.assertEqual(_cols(html, "efficiency"), (67.01, 67.49, 64.94))
 
 
 if __name__ == "__main__":

@@ -505,8 +505,9 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # and v36 (2026-10-13 — prose basic/diluted EPS pairs by stated order,
     # period pairs never basic/diluted)
     # and v37 (2026-10-13 — plain-vs-FTE efficiency, GAAP-prose NIM basis,
-    # TE-titled tables, printed precision, YTD / LTM rows, exact split-
-    # header pairing, in-body period rows, "division" segment headings).
+    # TE-titled tables, printed precision, YTD / LTM rows, colspan-proven
+    # split headers, in-body period rows, "division" segment headings,
+    # "$X or N%" changes, sentence-scoped periods, "6/30/26" dates).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
