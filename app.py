@@ -12,7 +12,7 @@ import pandas as pd
 
 from config import (PRICE_REFRESH_SECONDS, TABS, METRICS, METRICS_BY_KEY,
                     TAB_META, THEME_ORDER)
-from data.bank_mapping import get_fdic_cert, get_cik, get_name
+from data.bank_mapping import get_fdic_cert, get_cik, get_data_cik, get_name
 from data.bank_universe import get_universe_tickers
 from data import sec_client, cache
 from data.ibkr_client import get_ibkr_client, get_empty_price
@@ -656,7 +656,10 @@ def load_sec_data(tickers: tuple) -> dict:
         if cached:
             results[ticker] = cached
             continue
-        cik = get_cik(ticker)
+        # The DATA cik (data/sec_filer_status): a deregistered / Regulation A
+        # issuer is never fetched here — a render used to re-create its stale
+        # sec: row, which then kept it out of the wire-release warm (FOTB).
+        cik = get_data_cik(ticker)
         if cik:
             uncached_ciks[ticker] = cik
 

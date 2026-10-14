@@ -530,7 +530,12 @@ def _render_snapshot(ticker, info, name, row, fdic_rec=None, quote=None):
             except Exception:
                 fdic_rec = {}
     fund = {}
-    if cik:
+    # HoldCo fundamentals only for a CIK that is a source of current XBRL
+    # (data/bank_mapping.get_data_cik): a deregistered filer's 2012 cover
+    # count must not stand as today's share count (FOTB, 2026-10-14). The
+    # identity CIK still drives the filings chips above.
+    from data.bank_mapping import get_data_cik
+    if cik and get_data_cik(ticker):
         try:
             fund = sec_client.get_latest_fundamentals(cik) or {}
         except Exception:
