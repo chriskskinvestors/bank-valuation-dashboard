@@ -156,5 +156,22 @@ class TestNightlyJobRouting(_IsolatedCache):
         self.assertEqual([c for c, _ in calls], ["invalidate", "fetch"])
 
 
+class TestRenderPathsUseTheDataCik(unittest.TestCase):
+    """A Company-page render of a deregistered bank re-created its stale
+    sec: row through app.load_sec_data and read 2012 fundamentals for the
+    card's share count (FOTB, 2026-10-14); the warm then saw the bank "in
+    sec" and skipped its wire release. Both paths route on the data cik."""
+
+    def test_app_loader_and_card_fundamentals(self):
+        app_src = (REPO / "app.py").read_text(encoding="utf-8")
+        loader = app_src[app_src.index("def load_sec_data"):]
+        loader = loader[:loader.index("return results")]
+        self.assertIn("get_data_cik(ticker)", loader)
+        self.assertNotIn("= get_cik(ticker)", loader)
+        bd = (REPO / "ui/bank_detail.py").read_text(encoding="utf-8")
+        i = bd.index("fund = sec_client.get_latest_fundamentals(cik)")
+        self.assertIn("get_data_cik(ticker)", bd[i - 400:i])
+
+
 if __name__ == "__main__":
     unittest.main()
