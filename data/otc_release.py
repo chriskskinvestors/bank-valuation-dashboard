@@ -510,7 +510,8 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # "$X or N%" changes, sentence-scoped periods, "6/30/26" dates)
     # and v38 (2026-10-13 — firmwide supplement pages keep their headings)
     # and v39 (2026-10-13 — point-in-time "At" columns, current-vs-table
-    # basis guard).
+    # basis guard) and v40 (2026-10-14 — breakdown sub-rows, roll-forward-
+    # proven NCO ratio sign).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)

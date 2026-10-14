@@ -2207,6 +2207,67 @@ _VARIANT_BLOCK = re.compile(
     r"(?=.*\b(?:ratios|measures|metrics|data)\b)")
 _BPS_ROW = re.compile(r"(?i)\bbps\b|\bbasis points?\b")
 _RECOVERY_LABEL = re.compile(r"(?i)\brecover")
+# The allowance roll-forward's dollar rows (whole label, footnotes allowed):
+# gross charge-offs, recoveries, net charge-offs. One of each in a table
+# proves the sign of a parenthesized NCO ratio there (_nco_sign).
+_FLOW_NOTE = r"(?:\s*(?:\(\w\)|\*))*\s*$"
+_NCO_FLOWS = {
+    "co": re.compile(r"(?i)(?:(?:total )?(?:gross )?(?:loans? )?charge-?offs?"
+                     r"|(?:total )?loans charged[- ]off)" + _FLOW_NOTE),
+    "rec": re.compile(r"(?i)(?:total )?recoveries(?: (?:of|on) loans)?"
+                      r"(?: previously charged[- ]off)?" + _FLOW_NOTE),
+    "net": re.compile(r"(?i)(?:total )?net (?:loan )?\(?charge-?offs?\)?"
+                      r"(?: \(?recoveries\)?)?" + _FLOW_NOTE),
+}
+# A BREAKDOWN sub-row: "<label of a row printed above it in the same table>
+# – <qualifier>". NBBK 2Q26 prints "Annualized net charge-offs to average
+# loans outstanding during the period – PCD loans (1) | 0.00% | (0.82)%"
+# under the firmwide row — a slice of the population, never the firmwide
+# metric (its 0.00 was served as the quarter's NCO rate). A BASIS qualifier
+# restates the same population (AROW "Net Interest Margin - FTE", CTBI
+# "Earnings per share - diluted", SYBT "… - GAAP") and stays readable.
+_SUBROW_DASH = re.compile(r"\s+[-–—]\s+")
+_BASIS_QUALIFIER = re.compile(
+    r"(?i)\(?(?:diluted|basic|(?:non-?)?gaap|fte|te|(?:fully )?tax(?:able)?"
+    r"[- ]equivalent|(?:as )?adjusted|operating|core|(?:as )?reported"
+    r"|annualized|qtd|ytd)\b")
+
+
+def _label_key(label: str) -> str:
+    """A row label compared for parenthood: case, spacing and footnote
+    markers ("(1)", "*") ignored."""
+    return " ".join(re.sub(r"\(\w\)|\*", " ", label).lower().split())
+
+
+def _breakdown_row(label: str, parents: set) -> bool:
+    """True when `label` is a breakdown of a row above it (_SUBROW_DASH)."""
+    for m in _SUBROW_DASH.finditer(label):
+        if _label_key(label[:m.start()]) in parents:
+            return not _BASIS_QUALIFIER.match(label[m.end():])
+    return False
+
+
+def _nco_sign(flows: dict, col: int, k: int) -> int | None:
+    """+1 (net charge-off) / −1 (net recovery) at period column `col` of a
+    `k`-period layout, PROVEN by the table's own roll-forward: exactly one
+    gross charge-off, recoveries and net row, and |net| = | |gross| −
+    |recoveries| | within one printed unit. Absolute values make it immune
+    to each bank's sign presentation (NBBK prints charge-offs and the net
+    negative; HBT prints the gross negative but a net RECOVERY as
+    "(100)" under "Net charge-offs (recoveries)"). Anything less → None."""
+    got = []
+    for role in ("co", "rec", "net"):
+        rs = flows.get(role, [])
+        if len(rs) != 1 or rs[0][1:] != (col, k) or rs[0][0][col] is None:
+            return None
+        got.append(rs[0][0][col])
+    co, rec, net = (abs(x) for x in got)
+    if co == rec or abs(abs(co - rec) - net) > 10.0 ** -min(
+            _dec(x) for x in got) + 1e-9:
+        return None
+    return 1 if co > rec else -1
+
+
 # A row with no all-numeric cell (a banner / sub-header inside the table).
 _NUMERIC_CELL = re.compile(r"^[\s$%(),.\d*\-]+$")
 
@@ -2479,7 +2540,14 @@ def extract_table_metrics(html: str, expected_qend: str,
                     # the label says recoveries: BANR's allowance roll-
                     # forward prints charge-offs negative ("Net charge-offs
                     # (101)" … "/ average loans receivable (0.001)%") — the
-                    # sign is presentation, the real ratio +0.001%.
+                    # sign is presentation, the real ratio +0.001%. Else
+                    # the sign must be PROVEN by this table's roll-forward
+                    # (_nco_sign, once all its rows are read — EFSI prints
+                    # the ratio above its roll-forward). A bare sign is
+                    # never flipped: AVBH "(0.01)%" under "Net charge-offs
+                    # to average loans" (charge-offs –, recoveries 37) is a
+                    # genuine recovery. Unproven → refused, as before.
+                    neg.append((v, scope, col, k))
                     continue
                 if band[0] <= v <= band[1]:
                     cands[key].append((v, scope, key in _BASIS_KEYS
@@ -2490,6 +2558,7 @@ def extract_table_metrics(html: str, expected_qend: str,
         section, prev_label = frozenset(), ""
         st = {"ytd": False, "seg": False, "var": False, "section": "",
               "outer": "", "qends": qends}
+        neg, flows, parents = [], {}, set()   # see _nco_sign / _breakdown_row
         for r_i, cells in enumerate(rows[hdr_i + 1:], hdr_i + 1):
             # Label = the first NON-EMPTY cell (WFC/JPM indent data rows with
             # a leading empty cell — cells[0] as label skipped every row,
@@ -2508,6 +2577,10 @@ def extract_table_metrics(html: str, expected_qend: str,
             label, prev_label = (_compose_label(label, prev_label,
                                                 section_label, outer_label),
                                  label)
+            if _breakdown_row(label, parents):
+                continue                  # "<row above> – PCD loans"
+            if sum(1 for c in cells if c) > 1:
+                parents.add(_label_key(label))
             if _YTD_HDR.search(label) and not _QTR_HDR.search(label):
                 # A year-to-date ROW: WSBF 2Q26 "Net interest margin - YTD
                 # | 3.00 | 2.97 | …" (six months) under the same quarter
@@ -2571,6 +2644,9 @@ def extract_table_metrics(html: str, expected_qend: str,
                     vals = vals[:k]       # "$ chg | % chg" per comparison
                 else:
                     continue              # colspan drift → alignment unproven
+            for role, flow_re in _NCO_FLOWS.items():
+                if flow_re.match(prev_label):     # the row's own label
+                    flows.setdefault(role, []).append((vals, col, k))
             if (_CONNECTOR_EXCLUDE.search(label) or _ROW_VARIANT.search(label)
                     or st["var"]):
                 # adjusted/core variant row — only the opt-in specs may read it
@@ -2579,6 +2655,13 @@ def extract_table_metrics(html: str, expected_qend: str,
                 continue
             _try(specs, label, row_text, vals, scope,
                  f"{section_label} | {outer_label}")
+        for v, scope, c, n in neg:
+            s = _nco_sign(flows, c, n)    # |printed ratio| × proven sign
+            if s:
+                v = _Num(-s * v + 0.0, _dec(v))
+                lo, hi = all_specs["nco_ratio"][2]
+                if lo <= v <= hi:
+                    cands["nco_ratio"].append((v, scope, False))
     for alias, (target, sign) in _ALIASES.items():
         if alias in cands and target in cands:
             cands[target] += [(_Num(sign * v + 0.0, _dec(v)), sc, pl)
@@ -2975,7 +3058,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v39:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v40:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -3002,6 +3085,11 @@ def release_metrics(cik) -> dict | None:
     # basic EPS served as diluted); consolidated beats continuing-operations
     # rows (KEY ROTCE); plain NIM rows beat TE rows release-wide (SBSI).
     # (Re-bumped past v26, which a parallel PR used for the prose guard below.)
+    # v40 (2026-10-14): breakdown sub-rows ("<row above> – PCD loans")
+    # never serve the firmwide metric (NBBK's PCD-only 0.00 NCO rate);
+    # a parenthesized NCO ratio is read only with its sign proven by the
+    # table's own roll-forward (|net| = |gross| − |recoveries|) — NBBK
+    # "(0.07)%" is a 0.07% net charge-off.
     # v39 (2026-10-13): point-in-time rows printed only under an "At or
     # For the Six Months Ended" group serve the same-dated quarter
     # (PBFS capital / ACL); the release's own table value for the current
@@ -3127,7 +3215,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v39:{int(cik)}"
+    key = f"release_metrics:v40:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
