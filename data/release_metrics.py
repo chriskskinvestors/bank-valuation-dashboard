@@ -758,10 +758,46 @@ def adjusted_eps_stated(html: str) -> bool:
     return bool(_ADJ_EPS_MARK.search(_flat_text(html)))
 
 
-def _dollar_metric(text: str, pats, band) -> float | None:
+# VALUE-FIRST per-share layout (2026-10-14): investor decks print the figure
+# BEFORE its label — FOTB 2Q26 (acbandt.com earnings presentation PDF):
+# "Per Share Metrics:$158.69 Book Value per Share$151.89Tangible Book Value
+# per ShareMarket Data:$205.00Appraised Stock Price (6/30/2026)". The
+# after-label colon form read "Tangible Book Value per Share Market Data:
+# $205.00" and served the APPRAISED STOCK PRICE as tangible book (P/TBV
+# 1.17x on a $239 quote; the bank's own figure is $151.89, 1.57x). A dollar
+# amount with nothing but whitespace between it and the label is that
+# label's value and OWNS the label: no after-label pattern may bind it.
+# Refused when ANOTHER amount sits right before it — a flattened table row
+# ("$ 37.90 $ 36.98 Tangible book value per share $ 32.01": the 36.98 is
+# the prior column of the row above, never this label's value).
+_VALUE_FIRST_AMOUNT = re.compile(r"\$\s?(\d{1,3}\.\d{2})\s*$")
+_ROW_AMOUNT_BEFORE = re.compile(r"\d[\d,]*\.\d{2}\s*%?\s*$")
+
+
+def _value_first(text: str, label: str):
+    """(value_start, value_str, label_start) for every '$V <label>' run."""
+    for m in re.finditer(label, text, re.I):
+        head = text[max(0, m.start() - 12):m.start()]
+        v = _VALUE_FIRST_AMOUNT.search(head)
+        if not v:
+            continue
+        vstart = m.start() - (len(head) - v.start())
+        if _ROW_AMOUNT_BEFORE.search(text[max(0, vstart - 16):vstart]):
+            continue                      # a number row, not a value-label pair
+        yield vstart, v.group(1), m.start()
+
+
+def _dollar_metric(text: str, pats, band, label: str | None = None) -> float | None:
     def _gen():
+        owned = set()
+        if label:
+            for vstart, vs, lstart in _value_first(text, label):
+                owned.add(lstart)
+                yield vstart, vs, lstart
         for pat in pats:
             for m in pat.finditer(text):
+                if m.start() in owned:
+                    continue              # the value-first form owns this label
                 if _RESP_TAIL_USD.match(text[m.end():m.end() + 40]):
                     continue              # the pair patterns own this value
                 yield m.start(), m.group(1), m.end()
@@ -797,9 +833,10 @@ def extract_release_metrics(html: str, expected_qend: str | None = None) -> dict
             out[key] = None
     for key, (label, denom, band) in _PINNED_SPECS.items():
         out[key] = _pinned_metric(text, label, denom, band)
-    out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND)
-    out["bv_ps"] = _dollar_metric(text, _BV_PATS, _BV_BAND)
-    out["bv_ps_common"] = _dollar_metric(text, _BV_COMMON_PATS, _BV_BAND)
+    out["tbv_ps"] = _dollar_metric(text, _TBV_PATS, _TBV_BAND, label=_TBV_LABEL)
+    out["bv_ps"] = _dollar_metric(text, _BV_PATS, _BV_BAND, label=_BV_LABEL)
+    out["bv_ps_common"] = _dollar_metric(text, _BV_COMMON_PATS, _BV_BAND,
+                                         label=_BV_COMMON_LABEL)
     out["div_ps"] = _dollar_metric(text, _DIV_PATS, _DIV_BAND)
     out["eps_diluted"] = _eps_metric(text)
     out["eps_adj"] = _adj_eps_metric(text)
@@ -3058,7 +3095,7 @@ def cached_release_metrics(cik) -> dict | None:
         return None
     from data import cache as _cache
     try:
-        cached = _cache.get(f"release_metrics:v40:{int(cik)}", max_age_s=None)
+        cached = _cache.get(f"release_metrics:v41:{int(cik)}", max_age_s=None)
     except Exception:
         return None
     return (cached or {}).get("value") or None
@@ -3215,7 +3252,7 @@ def release_metrics(cik) -> dict | None:
     # fill (data/release_ai). Extractions are immutable per accession, so
     # spec improvements MUST bump this version or cached releases never
     # re-extract.
-    key = f"release_metrics:v40:{int(cik)}"
+    key = f"release_metrics:v41:{int(cik)}"
     try:
         # Freshness is judged below (15-min is_fresh + accession-match
         # re-stamp); the 24h read ceiling dropped `prev` daily, forcing a
