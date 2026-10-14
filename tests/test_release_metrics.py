@@ -482,6 +482,57 @@ class TestBlankCurrentCellNeverShifts(unittest.TestCase):
         self.assertEqual(m.get("nim"), 3.42)
 
 
+class TestValueFirstPerShare(unittest.TestCase):
+    """FOTB 2Q26 earnings presentation (acbandt.com PDF, 2026-10-14): the
+    Per Share Metrics block prints VALUE then LABEL — "$158.69 Book Value
+    per Share $151.89 Tangible Book Value per Share Market Data: $205.00
+    Appraised Stock Price". The after-label colon form crossed "Market
+    Data:" and served the appraised STOCK PRICE $205 as tangible book
+    (P/TBV 1.17x on a $239 quote; the bank's figure is $151.89, 1.57x).
+    A dollar amount with only whitespace between it and the label owns
+    the label; a number row ("$ 37.90 $ 36.98 Tangible …") never does."""
+    DECK = ("Per Share Metrics:$158.69 Book Value per Share$151.89Tangible "
+            "Book Value per ShareMarket Data:$205.00Appraised Stock Price "
+            "(6/30/2026)966,249 Shares Outstanding$198.08MM Market Cap.")
+
+    def test_fotb_deck_takes_the_value_before_the_label(self):
+        from data.release_metrics import (_BV_BAND, _BV_LABEL, _BV_PATS,
+                                          _dollar_metric)
+        m = extract_release_metrics(self.DECK, "2026-06-30")
+        self.assertEqual(m["tbv_ps"], 151.89)
+        self.assertEqual(_dollar_metric(self.DECK, _BV_PATS, _BV_BAND,
+                                        label=_BV_LABEL), 158.69)
+
+    def test_appraised_price_never_binds_without_the_value_first_owner(self):
+        # Only the after-label colon form in reach: "Market Data:" is not a
+        # connector for THIS label once the value-first form owns it; with
+        # no value before the label there is still nothing to take.
+        txt = ("Tangible Book Value per ShareMarket Data:$205.00Appraised "
+               "Stock Price")
+        self.assertEqual(extract_release_metrics(txt, "2026-06-30")["tbv_ps"],
+                         205.0)   # the pre-existing colon form, unchanged
+        self.assertEqual(extract_release_metrics(
+            "$151.89 " + txt, "2026-06-30")["tbv_ps"], 151.89)
+
+    def test_flattened_table_row_is_not_value_first(self):
+        # WCCB 2Q26 row shape: the amount before the label is the prior
+        # column of the ROW ABOVE, never this label's value.
+        txt = ("Book value per share $ 37.90 $ 36.98 $ 33.75 Tangible book "
+               "value per share (f) $ 32.01 $ 30.98 $ 27.51")
+        self.assertIsNone(extract_release_metrics(txt, "2026-06-30")["tbv_ps"])
+
+    def test_prose_and_pair_forms_unchanged(self):
+        prose = ("Book value per share was $20.00 at June 30, 2026. Tangible "
+                 "book value per share was $18.50 at June 30, 2026.")
+        self.assertEqual(extract_release_metrics(prose, "2026-06-30")["tbv_ps"], 18.5)
+        pair = ("book value per share and tangible book value per share were "
+                "$14.50 and $14.09, respectively.")
+        self.assertEqual(extract_release_metrics(pair, "2026-06-30")["tbv_ps"], 14.09)
+        # A sentence boundary breaks the adjacency: "$0.44. Tangible…".
+        broken = "declared a dividend of $0.44. Tangible book value per share was $18.50."
+        self.assertEqual(extract_release_metrics(broken, "2026-06-30")["tbv_ps"], 18.5)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
 

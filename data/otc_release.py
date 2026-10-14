@@ -512,6 +512,8 @@ def _env_record(ticker: str) -> tuple[str, dict | None]:
     # and v39 (2026-10-13 — point-in-time "At" columns, current-vs-table
     # basis guard) and v40 (2026-10-14 — breakdown sub-rows, roll-forward-
     # proven NCO ratio sign).
+    # and v41 (2026-10-14 — value-first per-share labels: FOTB's deck served
+    # its appraised stock price $205 as tangible book $151.89).
     key = f"otc_release:v18:{ticker.upper()}"
     try:
         return key, _cache.get(key, max_age_s=None)
