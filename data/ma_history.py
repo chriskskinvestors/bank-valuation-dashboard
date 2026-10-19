@@ -75,17 +75,55 @@ _BRANCH_FIELDS = ",".join([
 _LOG = "ma_history"
 
 
-def history_is_cached(cert, cik=None) -> bool:
+def _history_key(cert, cik=None) -> str:
+    # v9: pending rows gated by open-status verification (2026-07-15 rebuild
+    # — v8 shipped closed deals as pending). v10 (2026-10-05): structured
+    # deal ``terms`` + pending ``milestones`` on every whole-company row (the
+    # Recent Deals tab). The key carries the holdco CIK because the
+    # pending/terminated legs only run when one is supplied.
+    # v11 (2026-10-05 hotfix): per-share cash needs per-share context, fee
+    # typo guard, ratio-side direction arbitration — the v10 rows carried
+    # aggregate cash as per-share.
+    # v12: cash-leg counterparty sanity + acquire-object direction (the v11
+    # board still carried a dateline self-deal and a flipped cash deal).
+    # v13: announcement resolver party/context gates + whole-accession
+    # re-gating (third-party lender filings anchored several large deals).
+    # v14: 425 "Filed by:" self identity (TYFG/HBT flip survived v12/v13).
+    # v15: wire-feed announcements + wire pending leg (acquirers EDGAR cannot
+    # reach), internal charter consolidations flagged, ticker-aware terms.
+    # A bump empties every bank at once and a cold universe walk (~2h) does
+    # not fit the job's 7200s timeout: refresh-deal-comps re-walks only
+    # ceil(banks/5) per run and keeps the served snapshot until all are
+    # cached — let ~5 nightlies drain it, or dispatch extra runs
+    # (gh workflow run run-job.yml -f job=refresh-deal-comps), one at a time.
+    return f"ma_history:v15:{int(cert)}:{int(cik) if cik else 0}"
+
+
+def history_is_cached(cert, cik=None, allow_stale: bool = False) -> bool:
     """True when the bank's history is a fresh CACHED result — an empty list
-    from get_ma_history is then a genuine "no deals", not a failed fetch."""
+    from get_ma_history is then a genuine "no deals", not a failed fetch.
+    ``allow_stale``: any cached age counts (what get_ma_history(allow_stale=
+    True) served)."""
     from data import cache
-    # Same key as get_ma_history (pinned by tests/test_deal_comps_runtime).
-    key = f"ma_history:v15:{int(cert)}:{int(cik) if cik else 0}"
     try:
-        cached = cache.get(key, max_age_s=None)
+        cached = cache.get(_history_key(cert, cik), max_age_s=None)
     except Exception:
         return False
-    return _is_fresh(cached) and isinstance((cached or {}).get("deals"), list)
+    return ((allow_stale or _is_fresh(cached))
+            and isinstance((cached or {}).get("deals"), list))
+
+
+def history_cached_at(cert, cik=None) -> datetime | None:
+    """When the bank's history was last cached (any age); None when absent.
+    The nightly warm pass re-walks oldest-first by this."""
+    from data import cache
+    try:
+        cached = cache.get(_history_key(cert, cik), max_age_s=None)
+        if isinstance((cached or {}).get("deals"), list):
+            return datetime.fromisoformat(cached["cached_at"])
+    except Exception:
+        pass
+    return None
 
 
 def _is_fresh(cached: dict | None) -> bool:
@@ -318,7 +356,8 @@ def pending_deal_rows(cik: int | None, ticker: str | None,
 
 def get_ma_history(cert: int, cik: int | None = None,
                    name: str | None = None,
-                   ticker: str | None = None) -> list[dict]:
+                   ticker: str | None = None,
+                   allow_stale: bool = False) -> list[dict]:
     """
     All completed structure deals for an FDIC cert, newest-first.
 
@@ -347,31 +386,20 @@ def get_ma_history(cert: int, cik: int | None = None,
     [] on any history-fetch failure (never a partial deal list); a failed
     assets or announcement lookup renders that deal's fields n/a and skips
     the cache put.
+
+    ``allow_stale``: serve a cached history of any age instead of re-walking
+    it (the nightly compile — its budgeted warm pass decides what re-walks).
     """
     if not cert:
         return []
     cert = int(cert)
     from data import cache
 
-    # v9: pending rows gated by open-status verification (2026-07-15 rebuild
-    # — v8 shipped closed deals as pending). v10 (2026-10-05): structured
-    # deal ``terms`` + pending ``milestones`` on every whole-company row (the
-    # Recent Deals tab). The key carries the holdco CIK because the
-    # pending/terminated legs only run when one is supplied.
-    # v11 (2026-10-05 hotfix): per-share cash needs per-share context, fee
-    # typo guard, ratio-side direction arbitration — the v10 rows carried
-    # aggregate cash as per-share.
-    # v12: cash-leg counterparty sanity + acquire-object direction (the v11
-    # board still carried a dateline self-deal and a flipped cash deal).
-    # v13: announcement resolver party/context gates + whole-accession
-    # re-gating (third-party lender filings anchored several large deals).
-    # v14: 425 "Filed by:" self identity (TYFG/HBT flip survived v12/v13).
-    # v15: wire-feed announcements + wire pending leg (acquirers EDGAR cannot
-    # reach), internal charter consolidations flagged, ticker-aware terms.
-    key = f"ma_history:v15:{cert}:{int(cik) if cik else 0}"
+    key = _history_key(cert, cik)
     # Freshness judged by _is_fresh below (7d design TTL) — no 24h read ceiling.
     cached = cache.get(key, max_age_s=None)
-    if _is_fresh(cached) and isinstance(cached.get("deals"), list):
+    if ((allow_stale or _is_fresh(cached))
+            and isinstance((cached or {}).get("deals"), list)):
         return cached["deals"]
 
     structure = fetch_history_rows(f"CERT:{cert} AND {STRUCTURE_CODES_FILTER}",

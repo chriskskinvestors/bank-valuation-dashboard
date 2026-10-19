@@ -330,7 +330,8 @@ def _dedupe_key(deal: dict, buyer_cert) -> tuple:
 
 
 def build_comps_snapshot(banks: list[dict],
-                         min_deals: int | None = None) -> dict | None:
+                         min_deals: int | None = None,
+                         allow_stale: bool = False) -> dict | None:
     """
     Compile the universe deal-comps snapshot from each bank's (cached)
     ma_history. ``banks``: [{ticker, cert, cik}]. Returns the snapshot dict
@@ -348,6 +349,10 @@ def build_comps_snapshot(banks: list[dict],
     (AUDIT-2026-07-27 P2). Left None for small/targeted builds (self-test, unit
     tests) where a low deal count is expected, so only the universe caller
     imposes the universe-scale floor.
+
+    ``allow_stale``: serve each bank's cached history at any age (the nightly
+    job, whose budgeted warm pass already re-walked the oldest entries) — an
+    expired entry never re-walks here, so compile time stays bounded.
     """
     from data import cache
     from data.ma_history import get_ma_history, history_is_cached
@@ -366,8 +371,10 @@ def build_comps_snapshot(banks: list[dict],
         # snapshot (an un-guarded call here crashed refresh-deal-comps).
         try:
             deals = get_ma_history(cert, cik=cik, name=b.get("name"),
-                                   ticker=b.get("ticker"))
-            if not deals and not history_is_cached(cert, cik):
+                                   ticker=b.get("ticker"),
+                                   allow_stale=allow_stale)
+            if not deals and not history_is_cached(cert, cik,
+                                                   allow_stale=allow_stale):
                 # get_ma_history returns [] BOTH for "no deals" and for a
                 # failed FDIC history fetch (never cached), so a 429 during
                 # the walk silently erased a bank's deals from the board
@@ -379,7 +386,8 @@ def build_comps_snapshot(banks: list[dict],
                 for wait in _EMPTY_HISTORY_RETRY_WAITS:
                     _time.sleep(wait)
                     deals = get_ma_history(cert, cik=cik, name=b.get("name"),
-                                           ticker=b.get("ticker"))
+                                           ticker=b.get("ticker"),
+                                           allow_stale=allow_stale)
                     if deals:
                         break
         except Exception as e:

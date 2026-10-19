@@ -1,17 +1,27 @@
 """Warm the universe M&A deal caches and compile the Comparable Deal
 Analysis snapshot (docs/SNL-BUILD-PLAN.md §14; owner-decided 2026-07-13).
 
-Walks every universe bank building its ma_history (FDIC structure + EDGAR
-announcements + termination sweep — all cached 7d in the shared store, so
-re-runs and the per-bank Transactions tabs reuse the same entries), then
-compiles ONE deal-comps snapshot (data/deal_comps.build_comps_snapshot)
-that the Comparable Deal Analysis tab reads instantly.
+Re-walks the universe banks whose ma_history (FDIC structure + EDGAR
+announcements + termination sweep — cached 7d in the shared store, which
+the per-bank Transactions tabs reuse) is missing or expired, OLDEST FIRST
+and at most ceil(banks/5) / 40 min per run, then compiles ONE deal-comps
+snapshot (data/deal_comps.build_comps_snapshot) from every bank's cached
+history at any age — the Comparable Deal Analysis tab reads it instantly.
 
-EDGAR-paced (the data modules sleep between requests); a full cold walk
-takes on the order of an hour or two, warm re-runs minutes. A per-bank
-failure logs and continues — the snapshot compiles from whatever warmed;
-the job fails (rc 1) only when the final snapshot build itself refuses to
-cache (lookup failures mid-compile) or coverage is implausibly thin.
+Why the budget (2026-10-19): a cold walk is ~12s/bank (~2h for the
+universe). The v15 bump cached every bank within a day, so all of them
+expired together a week later and the 10-14 run hit the 7200s task
+timeout mid-walk — and that re-walk re-synchronized them. Capping the
+re-walk spreads the entries over ~5 daily cohorts that never re-merge; an
+expired entry keeps serving until its turn (a bank's deals never drop off
+to stay under budget). While banks with NO cached history at all remain
+unreached (a key bump, see data/ma_history._history_key) the snapshot is
+not recompiled — the served one holds and only the pending pass runs —
+until the backlog drains over the following runs.
+
+A per-bank failure logs and continues; the job fails (rc 1) only when the
+final snapshot build itself refuses to cache (lookup failures mid-compile)
+or coverage is implausibly thin.
 
 ``python -m jobs.refresh_deal_comps pending`` runs the PENDING fast pass
 instead (owner 2026-10-06): only the pending leg per bank, spliced into
@@ -29,6 +39,11 @@ import time
 # A full-universe walk yielding fewer deals than this means most banks failed
 # in a way no single lookup reported — treated as a failed run, never cached.
 _MIN_UNIVERSE_DEALS = 100
+
+# Per-run re-walk budget: at most ceil(banks / _WARM_SHARE) banks and
+# _WARM_BUDGET_S of walking (~12s/bank cold: ~25 min for 595 banks / 5).
+_WARM_SHARE = 5
+_WARM_BUDGET_S = 40 * 60
 
 
 def _universe_banks() -> list[dict]:
@@ -57,9 +72,9 @@ def _refresh_spreads(snap: dict) -> None:
         print(f"✗ spread tracker build failed: {type(e).__name__}: {e}", flush=True)
 
 
-def main_pending() -> int:
+def main_pending(banks: list[dict] | None = None) -> int:
     from data.deal_comps import refresh_pending_snapshot
-    banks = _universe_banks()
+    banks = banks or _universe_banks()
     print(f"▶ Pending fast pass over {len(banks)} banks", flush=True)
     t0 = time.time()
     snap = refresh_pending_snapshot(banks)
@@ -76,35 +91,71 @@ def main_pending() -> int:
     return 0
 
 
+def _due_oldest_first(banks: list[dict]) -> list[tuple]:
+    """[(cached_at | None, bank)] for every bank whose history is missing or
+    past the TTL — missing first, then oldest cached first."""
+    from datetime import datetime, timedelta
+    from data.ma_history import CACHE_TTL_SECONDS, history_cached_at
+    expired = datetime.now() - timedelta(seconds=CACHE_TTL_SECONDS)
+    due = []
+    for b in banks:
+        at = history_cached_at(b["cert"], b["cik"])
+        if at is None or at <= expired:
+            due.append((at, b))
+    return sorted(due, key=lambda d: d[0] or datetime.min)
+
+
 def main() -> int:
     from data.deal_comps import build_comps_snapshot
     from data.ma_history import get_ma_history
 
     banks = _universe_banks()
-    print(f"▶ Warming deal history for {len(banks)} banks", flush=True)
+    due = _due_oldest_first(banks)
+    cap = -(-len(banks) // _WARM_SHARE)
+    cold = sum(1 for at, _ in due if at is None)
+    print(f"▶ Re-walking deal history: {len(due)} of {len(banks)} banks due "
+          f"({cold} never cached); this run walks up to {cap} oldest-first "
+          f"within {_WARM_BUDGET_S}s", flush=True)
 
     t0 = time.time()
-    warmed = failed = 0
-    for i, b in enumerate(banks, 1):
+    walked = failed = 0
+    for at, b in due[:cap]:
+        if time.time() - t0 >= _WARM_BUDGET_S:
+            print(f"  ⏱ warm budget spent after {walked} banks", flush=True)
+            break
+        walked += 1
         try:
-            deals = get_ma_history(b["cert"], cik=b["cik"], name=b["name"],
-                                   ticker=b["ticker"])
-            warmed += 1 if deals is not None else 0
+            get_ma_history(b["cert"], cik=b["cik"], name=b["name"],
+                           ticker=b["ticker"])
         except Exception as e:
             failed += 1
             print(f"  ✗ {b['ticker']}: {type(e).__name__}: {e}", flush=True)
-        if i % 25 == 0:
-            print(f"  … {i}/{len(banks)} banks ({time.time() - t0:.0f}s)",
-                  flush=True)
+        if walked % 25 == 0:
+            print(f"  … {walked}/{min(cap, len(due))} banks "
+                  f"({time.time() - t0:.0f}s)", flush=True)
 
-    print(f"▶ Compiling comps snapshot ({warmed} warmed, {failed} errored, "
-          f"{time.time() - t0:.0f}s)", flush=True)
+    unreached = due[walked:]
+    cold_left = [b["ticker"] for at, b in unreached if at is None]
+    print(f"▶ Re-walked {walked} ({failed} errored) in {time.time() - t0:.0f}s; "
+          f"{len(unreached)} still due serve their cached history "
+          f"({len(cold_left)} have none)", flush=True)
+    if cold_left:
+        # Compiling now would drop these banks' deals from the board; the
+        # served snapshot holds until the backlog drains (a key bump).
+        print(f"▶ {len(cold_left)} banks never cached yet "
+              f"({', '.join(cold_left[:10])}{' …' if len(cold_left) > 10 else ''})"
+              " — snapshot NOT recompiled this run; previous snapshot serves, "
+              "pending rows refreshed", flush=True)
+        return main_pending(banks)
+
+    print(f"▶ Compiling comps snapshot ({time.time() - t0:.0f}s)", flush=True)
     # The <100-deal plausibility floor is passed INTO the build so it gates the
     # cache.put. It used to be checked here, after the fact — by which point the
     # hollow snapshot had already replaced the last good one and the UI served
     # it (AUDIT-2026-07-27 P2), making the "previous snapshot still serves"
     # message below untrue for exactly the case it was describing.
-    snap = build_comps_snapshot(banks, min_deals=_MIN_UNIVERSE_DEALS)
+    snap = build_comps_snapshot(banks, min_deals=_MIN_UNIVERSE_DEALS,
+                                allow_stale=True)
     if not snap:
         print("✗ snapshot build refused to cache (lookup failures, or a walk "
               f"yielding <{_MIN_UNIVERSE_DEALS} deals) — the previous snapshot "
