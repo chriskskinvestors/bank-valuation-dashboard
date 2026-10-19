@@ -12,6 +12,13 @@ on:
         required: false
         type: string
         default: "12"
+      job:
+        description: >-
+          Optional: list this one job's executions (name, start/end, duration,
+          verdict) instead of running the audit — to locate a flagged run.
+        required: false
+        type: string
+        default: ""
   schedule:
     - cron: "0 12 * * 1"   # Mondays 08:00 ET
 
@@ -43,4 +50,4 @@ jobs:
         run: |
           python tools/job_timeout_audit.py \
             --region="${{ env.REGION }}" \
-            --limit="${{ inputs.limit || '12' }}"
+            --limit="${{ inputs.limit || '12' }}"             ${{ inputs.job && format('--job={0}', inputs.job) || '' }}

@@ -53,6 +53,13 @@ on:
         required: false
         type: boolean
         default: false
+      logs_since:
+        description: >-
+          Optional, with logs_only: read logs from this UTC time instead of the
+          last 12 hours (e.g. 2026-10-14T11:00:00Z) — for an older execution.
+        required: false
+        type: string
+        default: ""
 
 env:
   PROJECT_ID: ace-beanbag-486220-a8
@@ -112,7 +119,8 @@ jobs:
       - name: Print the job's container output (Cloud Logging)
         if: ${{ always() }}
         run: |
-          SINCE="${RUN_START:-$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)}"
+          SINCE="${RUN_START:-${{ inputs.logs_since }}}"
+          SINCE="${SINCE:-$(date -u -d '-12 hours' +%Y-%m-%dT%H:%M:%SZ)}"
           for attempt in 1 2 3 4 5 6 7 8; do
             gcloud logging read \
               "resource.type=cloud_run_job AND resource.labels.job_name=${{ inputs.job }} AND timestamp>=\"${SINCE}\"" \
