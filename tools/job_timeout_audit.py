@@ -124,11 +124,33 @@ def audit(region: str, limit: int) -> int:
     return 0
 
 
+def list_executions(region: str, job: str, limit: int) -> int:
+    """One line per recent execution of `job` — name, start/end (UTC),
+    duration, verdict — so a flagged run can be located and its logs read
+    (run-job.yml logs_only with logs_since). Read-only; always exits 0."""
+    execs = _gcloud("run", "jobs", "executions", "list", f"--job={job}",
+                    f"--region={region}", f"--limit={limit}")
+    print(f"{'execution':<34} {'start (UTC)':<17} {'end (UTC)':<17} {'secs':>6}  verdict")
+    for e in execs:
+        st = e.get("status", {})
+        start, end = _ts(st.get("startTime")), _ts(st.get("completionTime"))
+        secs = f"{(end - start).total_seconds():.0f}" if (start and end) else "-"
+        verdict = ("running" if not end else "ok" if st.get("succeededCount")
+                   else "FAIL")
+        fmt = lambda d: d.strftime("%Y-%m-%d %H:%M") if d else "-"
+        print(f"{e['metadata']['name']:<34} {fmt(start):<17} {fmt(end):<17} "
+              f"{secs:>6}  {verdict}")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--region", default="us-central1")
     ap.add_argument("--limit", type=int, default=12)
+    ap.add_argument("--job", help="list this job's executions instead of the audit")
     a = ap.parse_args()
+    if a.job:
+        return list_executions(a.region, a.job, a.limit)
     return audit(a.region, a.limit)
 
 
