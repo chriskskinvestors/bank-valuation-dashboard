@@ -18,7 +18,12 @@ Checks per bank:
   • FDIC dollar fields       — total_assets/deposits/equity/loans
       → dashboard value must equal raw FDIC field × 1000 (thousands→USD)
   • Computed (price/SEC)     — market_cap, pe, ptbv, dividend_yield, roatce_holdco
-      → re-derived from price + raw SEC fields
+      → re-derived from price + raw SEC fields; ROATCE over AVERAGE common
+        TCE rebuilt from raw companyfacts quarter-end facts, market cap on
+        the dei cover-page count when it post-dates the balance sheet
+  • Non-SEC filers           — P/E and market cap come only from the bank's
+      own releases → checked as price ÷ displayed EPS / price × displayed
+      shares (_split_release_basis)
 
 Usage:
   PYTHONIOENCODING=utf-8 python -X utf8 tools/verify_metrics.py            # watchlist sample
@@ -89,8 +94,282 @@ def _abs_close(a: float, b: float) -> bool:
     return abs(a - b) <= ABS_TOL_RATIO
 
 
-def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
-    """Minimal, independent re-derivation of each metric from primary fields."""
+# ── Raw companyfacts readers (the oracle's own — no sec_client resolvers) ──
+_SE = "StockholdersEquity"
+_SE_NCI = "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"
+_PREFERRED_CONCEPTS = (
+    "PreferredStockValue",
+    "PreferredStockIncludingAdditionalPaidInCapital",
+    "PreferredStockIncludingAdditionalPaidInCapitalNetOfDiscount",
+    "PreferredStockValueOutstanding",
+)
+_PREFERRED_SHARE_CONCEPTS = ("PreferredStockSharesOutstanding",
+                             "PreferredStockSharesIssued")
+# TCE growth inside the TTM window beyond this share of the lowest earlier
+# point, after crediting the window's whole earnings = a merger / capital
+# raise: the house convention (REVIEW 2026-10-06 P1-1) renders ROATCE n/a.
+_TCE_STEP_UP = 0.25
+
+
+def _rows(facts: dict, concept: str, unit: str = "USD") -> list:
+    return [e for e in facts.get("facts", {}).get("us-gaap", {}).get(concept, {})
+            .get("units", {}).get(unit, [])
+            if e.get("form") in ("10-K", "10-Q") and e.get("end")
+            and e.get("val") is not None]
+
+
+def _usd_on(facts: dict, concept: str, end: str, unit: str = "USD") -> float | None:
+    """Latest-filed 10-K/10-Q value of `concept` dated exactly `end`."""
+    rows = [e for e in _rows(facts, concept, unit) if e["end"] == end]
+    return float(max(rows, key=lambda e: e.get("filed", ""))["val"]) if rows else None
+
+
+def _usd_on_or_carried(facts: dict, concept: str, end: str) -> float | None:
+    """`concept` at `end`, else its newest value within the prior year
+    (goodwill / intangibles tagged only at fiscal year-end)."""
+    v = _usd_on(facts, concept, end)
+    if v is not None:
+        return v
+    floor = f"{int(end[:4]) - 1}{end[4:]}"
+    rows = [e for e in _rows(facts, concept) if floor <= e["end"] < end]
+    if not rows:
+        return None
+    return float(max(rows, key=lambda e: (e["end"], e.get("filed", "")))["val"])
+
+
+def _carried_other(facts: dict, end: str) -> float | None:
+    """Other intangibles from the newest earlier sheet within a year (CDI
+    tagged only at year-end), across both tags; an
+    IntangibleAssetsNetExcludingGoodwill rollup is netted of the MSR tagged
+    at ITS date (FULT's 2024 10-K rollup holds $54M of MSRs)."""
+    floor = f"{int(end[:4]) - 1}{end[4:]}"
+    rows = [(e["end"], -i, e.get("filed", ""), float(e["val"]))
+            for i, c in enumerate(("IntangibleAssetsNetExcludingGoodwill",
+                                   "FiniteLivedIntangibleAssetsNet"))
+            for e in _rows(facts, c) if floor <= e["end"] < end]
+    if not rows:
+        return None
+    d, neg_i, _, v = max(rows)
+    if neg_i == 0:
+        msr = _usd_on(facts, "ServicingAssetAtFairValueAmount", d)
+        if msr and 0 < msr < v:
+            v -= msr
+    return v
+
+
+def _bs_date(facts: dict) -> str | None:
+    """Newest 10-K/10-Q balance-sheet date (assets or either equity tag)."""
+    ends = [e["end"] for c in ("Assets", _SE, _SE_NCI) for e in _rows(facts, c)]
+    return max(ends) if ends else None
+
+
+def _preferred_at(facts: dict, end: str, present_now: bool,
+                  equity: float | None = None) -> float | None:
+    """Preferred carrying value at `end`: a positive carrying tag there,
+    else a positive liquidation preference there (par-zero filers tag 0 as
+    the value — BUSE), else the newest carrying tag within the prior year
+    when positive. A positive preferred SHARE count with neither → None
+    (present, unresolved). Nothing tagged: 0 when the filer has no preferred
+    now, or when its preferred evidence resumes after `end` with none in
+    the prior year (PGC's 2025-12 issue; its 2010-12 TARP is long gone);
+    else None (outstanding but untagged — LOB after its 2025-08 issue).
+    An explicit 0 with no share count is 0 (CUBI after its redemption). A
+    filer with no preferred now but a material preferred dividend / issue
+    flow within the prior year is None there (OPHC's 2024 issue)."""
+    vals = [_usd_on(facts, c, end) for c in _PREFERRED_CONCEPTS]
+    v = next((x for x in vals if x), None) or _usd_on(
+        facts, "PreferredStockLiquidationPreferenceValue", end)
+    if v:
+        return v
+    floor = f"{int(end[:4]) - 1}{end[4:]}"
+    prior = [e for c in _PREFERRED_CONCEPTS for e in _rows(facts, c)
+             if floor <= e["end"] < end]
+    if prior and all(x is None for x in vals):   # untagged here (BAC: year-end only)
+        top = max(prior, key=lambda e: (e["end"], e.get("filed", "")))
+        if top["val"]:            # off the face (NEWT/WSBC): newest within a year
+            return float(top["val"])
+    if any(_usd_on(facts, c, end, "shares") for c in _PREFERRED_SHARE_CONCEPTS):
+        return None
+    if any(x is not None for x in vals):
+        return 0.0
+    if not present_now:
+        return None if _preferred_flow_at(facts, end, equity) else 0.0
+    evid = [e["end"] for c in _PREFERRED_CONCEPTS for e in _rows(facts, c) if e["val"]]
+    evid += [e["end"] for c in _PREFERRED_SHARE_CONCEPTS
+             for e in _rows(facts, c, "shares") if e["val"]]
+    issued_later = any(d > end for d in evid)
+    held_before = any(floor <= d < end for d in evid)
+    return 0.0 if issued_later and not held_before else None
+
+
+_PREFERRED_FLOWS = ("PreferredStockDividendsIncomeStatementImpact",
+                    "DividendsPreferredStock",
+                    "PaymentsOfDividendsPreferredStockAndPreferenceStock",
+                    "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock")
+
+
+def _preferred_flow_at(facts: dict, end: str, equity: float | None) -> bool:
+    """A preferred dividend or issuance in the newest period ending within
+    the year up to `end` proves preferred outstanding — when material: the
+    implied carrying value (proceeds, or dividends annualized ÷ a 4% coupon)
+    is at least 0.2% of equity (LKFN's constant $13K dividend tag is not)."""
+    from datetime import date
+    floor = f"{int(end[:4]) - 1}{end[4:]}"
+    # A flow must post-date the newest explicit zero (CUBI's redemption).
+    zeros = [e["end"] for c in _PREFERRED_CONCEPTS for e in _rows(facts, c)
+             if e["val"] == 0 and e["end"] <= end]
+    zeros += [e["end"] for c in _PREFERRED_SHARE_CONCEPTS
+              for e in _rows(facts, c, "shares") if e["val"] == 0 and e["end"] <= end]
+    last_zero = max(zeros, default="")
+    for c in _PREFERRED_FLOWS:
+        rows = [e for e in _rows(facts, c)
+                if floor <= e["end"] <= end and e["end"] > last_zero]
+        if not rows:
+            continue
+        top = max(rows, key=lambda e: (e["end"], e.get("filed", "")))
+        val = top["val"]
+        if not val or val <= 0:
+            continue
+        implied = val
+        if c != "ProceedsFromIssuanceOfPreferredStockAndPreferenceStock":
+            try:
+                days = (date.fromisoformat(top["end"])
+                        - date.fromisoformat(top["start"])).days
+            except (KeyError, TypeError, ValueError):
+                days = 365
+            implied = val * 365 / max(days, 1) / 0.04
+        if not equity or equity <= 0 or implied >= 0.002 * equity:
+            return True
+    return False
+
+
+def _tce_at(facts: dict, end: str, preferred_now: bool) -> float | None:
+    """Common TCE at one quarter-end from raw facts: parent equity
+    (StockholdersEquity; else the NCI-inclusive total less a same-date
+    MinorityInterest) − preferred (_preferred_at) − intangibles. Same-date
+    facts first: with a goodwill-inclusive rollup tagged there, the larger
+    of it and same-date goodwill + other intangibles (a filer tagging
+    goodwill only at year-end still tags the rollup quarterly — PFS, ZION);
+    a goodwill tag >5% above the rollup is stale/dimensional, so the rollup
+    serves. Year-end-only other intangibles carry for a year beside a
+    same-date goodwill (CCNE's rollup ≈ goodwill alone); without a rollup,
+    goodwill carries too (MCHB's goodwill beside dated CDI). An MSR inside
+    a rollup stays in TCE (FULT). None when equity or a present preferred
+    is unresolvable there."""
+    eq = _usd_on(facts, _SE, end)
+    if eq is None:
+        tot = _usd_on(facts, _SE_NCI, end)
+        if tot is None:
+            return None
+        eq = tot - (_usd_on(facts, "MinorityInterest", end) or 0.0)
+    pref = _preferred_at(facts, end, preferred_now, eq)
+    if pref is None:
+        return None
+    msr = _usd_on(facts, "ServicingAssetAtFairValueAmount", end)
+
+    def _no_msr(v):
+        return v - msr if (v is not None and msr and 0 < msr < v) else v
+
+    gw = _usd_on(facts, "Goodwill", end)
+    other = _no_msr(_usd_on(facts, "IntangibleAssetsNetExcludingGoodwill", end))
+    if other is None:
+        other = _usd_on(facts, "FiniteLivedIntangibleAssetsNet", end)
+    if gw is not None and other is None:   # CDI tagged only at year-end (CCNE)
+        other = _carried_other(facts, end)
+    incl_raw = _usd_on(facts, "IntangibleAssetsNetIncludingGoodwill", end)
+    incl = _no_msr(incl_raw)
+    if incl is not None:
+        if gw is not None and gw > incl_raw * 1.05:      # judged on the raw rollup
+            return eq - pref - incl
+        intang = max((gw or 0.0) + (other or 0.0), incl)
+    else:
+        if gw is None:
+            gw = _usd_on_or_carried(facts, "Goodwill", end)
+        if other is None:
+            other = _carried_other(facts, end)
+        if gw is None and other is None:
+            other = _usd_on_or_carried(facts, "IntangibleAssetsNetIncludingGoodwill", end)
+        intang = (gw or 0.0) + (other or 0.0)
+    return eq - pref - intang
+
+
+def _quarter_ends(as_of: str) -> list[str]:
+    """The TTM window's five quarter-end month-ends, newest first."""
+    import calendar
+    y, m = int(as_of[:4]), int(as_of[5:7])
+    out = []
+    for k in range(5):
+        yy, mm = divmod((y * 12 + m - 1) - 3 * k, 12)
+        mm += 1
+        out.append(f"{yy:04d}-{mm:02d}-{calendar.monthrange(yy, mm)[1]:02d}")
+    return out
+
+
+def _oracle_avg_tce(facts: dict | None, sec: dict, tce_end: float | None,
+                    ni: float | None, bank_goodwill_k) -> float | None:
+    """AVERAGE common TCE over the TTM window — the "A" in ROATCE, as the
+    dashboard serves it since REVIEW 2026-10-06 P1-1 (commit 45a5c88; the
+    period-end oracle diverged on 308 banks by convention alone). Points at
+    the five quarter-ends ending at sec_as_of; the end point is this
+    oracle's own period-end TCE. Mirrored house conventions, each → None:
+    window begin or end unresolvable; any point ≤ 0; a step-up > 25% of the
+    lowest earlier point beyond the year's earnings (merger / capital
+    raise); holdco intangibles 0 beside material (>1% of TCE) bank-sub
+    goodwill (untagged holdco goodwill)."""
+    as_of = sec.get("sec_as_of")
+    if not facts or not as_of or tce_end is None:
+        return None
+    if (bank_goodwill_k is not None and not _absent(bank_goodwill_k)
+            and bank_goodwill_k > 0
+            and "intangible_adjustment" in sec and not sec.get("intangible_adjustment")
+            and bank_goodwill_k * 1000 > 0.01 * abs(tce_end)):
+        return None
+    has_pref = bool(sec.get("preferred_present"))  # preferred outstanding now
+    dates = _quarter_ends(as_of)
+    pts = [tce_end] + [_tce_at(facts, d, has_pref) for d in dates[1:]]
+    if pts[-1] is None:
+        return None
+    vals = [v for v in reversed(pts) if v is not None]     # oldest → newest
+    if any(v <= 0 for v in vals):
+        return None
+    earned = max(ni or 0.0, 0.0)
+    lowest = vals[0]
+    for v in vals[1:]:
+        if v - lowest > lowest * _TCE_STEP_UP + earned:
+            return None
+        lowest = min(lowest, v)
+    return sum(vals) / len(vals)
+
+
+def _oracle_mcap_shares(facts: dict | None, sec: dict) -> float | None:
+    """Market-cap share count: the dei cover-page count when it is dated
+    after the balance sheet (post-quarter issuance / conversion — AROW's
+    July-1 Adirondack merger, BAFN's preferred conversion), else the
+    balance-sheet count. A multi-class filer's undimensioned cover count
+    is one class only, so it never substitutes for the all-class total."""
+    shares = sec.get("shares_outstanding")
+    if not facts:
+        return shares
+    node = facts.get("facts", {}).get("dei", {}).get(
+        "EntityCommonStockSharesOutstanding", {})
+    rows = [r for u in node.get("units", {}).values() for r in u if r.get("end")]
+    if not rows:
+        return shares
+    top = max(rows, key=lambda r: (r["end"], r.get("filed", "")))
+    bs = _bs_date(facts)
+    cls = facts.get("_class_shares") or {}
+    multi_class = bool(cls) and cls.get("end") == bs
+    cov = top.get("val")
+    if cov and cov > 0 and bs and top["end"] > bs and not multi_class:
+        return float(cov)
+    return shares
+
+
+def _oracle(fdic: dict, sec: dict, price: float | None,
+            facts: dict | None = None) -> dict:
+    """Minimal, independent re-derivation of each metric from primary fields.
+    ``facts``: the bank's raw SEC companyfacts blob (average-TCE window,
+    cover-page share count); None leaves those checks on n/a."""
     out: dict[str, float | None] = {}
 
     # FDIC passthrough ratios — value should equal the raw field as-is.
@@ -106,7 +385,6 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     equity = sec.get("book_value_total")
     gw = sec.get("goodwill") or 0
     intang = sec.get("intangibles") or 0
-    shares = sec.get("shares_outstanding")
     ni = sec.get("net_income")
     eps = sec.get("eps")
     dps = sec.get("dividends_per_share")
@@ -120,7 +398,8 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     tce = (equity - adj) if (equity is not None and adj is not None) else None
 
     # Computed metrics.
-    out["market_cap"] = price * shares if (price and shares) else None
+    mc_shares = _oracle_mcap_shares(facts, sec)
+    out["market_cap"] = price * mc_shares if (price and mc_shares) else None
     out["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
     # dps is None-checked, NOT truthiness-checked: a bank that DECLARES $0
     # dividends (KFFB tags 0 in every 10-Q) has a real 0.0% yield — `dps and`
@@ -136,7 +415,9 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
     # SAME convention the dashboard displays — the old total-NI ÷ total-equity
     # oracle diverged on 116 banks purely by convention after the fix.
     # Preferred present but unresolved → None (the dashboard renders n/a;
-    # _rel_close treats None==None as OK).
+    # _rel_close treats None==None as OK). The denominator is the AVERAGE
+    # common TCE over the TTM window (_oracle_avg_tce) — None wherever the
+    # oracle cannot form that window, which the dashboard must match.
     pref_present = sec.get("preferred_present")
     pref = sec.get("preferred_stock")
     ni_common = sec.get("net_income_to_common_ttm")
@@ -146,8 +427,9 @@ def _oracle(fdic: dict, sec: dict, price: float | None) -> dict:
         num = ni_common if ni_common is not None else (None if pref_present else ni)
         common_eq = (equity - (pref or 0)) if equity is not None else None
         tce_common = (common_eq - adj) if (common_eq is not None and adj is not None) else None
-        out["roatce_holdco"] = (num / tce_common * 100) if (
-            num is not None and tce_common and tce_common > 0) else None
+        avg_tce = _oracle_avg_tce(facts, sec, tce_common, num, fdic.get("INTANGW"))
+        out["roatce_holdco"] = (num / avg_tce * 100) if (
+            num is not None and avg_tce) else None
 
     # P/TBV moves to the WARN tier in verify_ticker: the dashboard prefers the
     # bank's own REPORTED TBVPS (Company-Reported principle) while this oracle
@@ -181,20 +463,39 @@ def _split_pe_basis(dash: dict, oracle: dict, oracle_warn: dict, price) -> None:
     oracle["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
 
 
+def _split_release_basis(dash: dict, oracle: dict, price) -> None:
+    """A NON-SEC filer's P/E and market cap come only from its own earnings
+    releases (owner spec 2026-10-06): EPS = four discrete release quarters
+    (eps_source "release_ttm_otc"), shares = the release count tied out
+    against the release's equity (market_cap_source "company_release",
+    data/release_shares). No XBRL exists for the oracle to rebuild either
+    from, so — the #127 pattern — the HARD check is the identity it can
+    verify: P/E == price ÷ the displayed EPS and market cap == price × the
+    displayed share count (catches price / share / EPS wiring bugs)."""
+    if dash.get("eps_source") == "release_ttm_otc":
+        eps = dash.get("eps")
+        oracle["pe_ratio"] = (price / eps) if (price and eps and eps > 0) else None
+    if dash.get("market_cap_source") == "company_release":
+        sh = dash.get("shares_outstanding")
+        oracle["market_cap"] = price * sh if (price and sh) else None
+
+
 def verify_ticker(ticker: str) -> dict:
     """Build dashboard metrics + independent oracle, return list of divergences."""
-    from data.bank_mapping import get_cik, get_fdic_cert
+    from data.bank_mapping import get_cik, get_data_cik, get_fdic_cert
     from data import sec_client, fdic_client, fmp_client
     from analysis.metrics import build_bank_metrics
 
     row = {"ticker": ticker, "status": "OK", "divergences": [], "note": ""}
-    cik = get_cik(ticker)
     cert = get_fdic_cert(ticker)
-    if not cik and not cert:
+    if not get_cik(ticker) and not cert:
         row["status"] = "NO_MAPPING"
         return row
+    # The DATA cik, as the screen loads SEC data (app.py): a deregistered /
+    # Reg-A issuer renders on its release figures, so verify those.
+    cik = get_data_cik(ticker)
 
-    fdic, fdic_hist, sec = {}, [], {}
+    fdic, fdic_hist, sec, facts = {}, [], {}, None
     try:
         if cert:
             df = fdic_client.fetch_financials(cert, limit=8)
@@ -203,6 +504,7 @@ def verify_ticker(ticker: str) -> dict:
                 fdic = fdic_hist[0]
         if cik:
             sec = sec_client.get_latest_fundamentals(cik) or {}
+            facts = sec_client.fetch_company_facts(cik) if sec else None
     except Exception as e:
         row["status"] = "FETCH_ERROR"
         row["note"] = f"{type(e).__name__}: {str(e)[:80]}"
@@ -226,8 +528,9 @@ def verify_ticker(ticker: str) -> dict:
         row["note"] = f"{type(e).__name__}: {str(e)[:80]}"
         return row
 
-    oracle, oracle_warn = _oracle(fdic, sec, price)
+    oracle, oracle_warn = _oracle(fdic, sec, price, facts)
     _split_pe_basis(dash, oracle, oracle_warn, price)
+    _split_release_basis(dash, oracle, price)
 
     for key, oref in oracle.items():
         dval = dash.get(key)
@@ -330,16 +633,16 @@ def run(tickers: list[str]) -> int:
         print("\nMetrics diverging (count):")
         for metric, n in metric_counts.most_common():
             print(f"  {metric:<22} {n:>4}")
-        print("\nSample divergences (first 15):")
+        print("\nDivergences (first 200 — the job log is the only report):")
         shown = 0
         for r in diverged:
             for d in r["divergences"]:
                 print(f"  {r['ticker']:<6} {d['metric']:<20} "
                       f"dashboard={d['dashboard']!r}  oracle={d['oracle']!r}")
                 shown += 1
-                if shown >= 15:
+                if shown >= 200:
                     break
-            if shown >= 15:
+            if shown >= 200:
                 break
 
     if warned:
