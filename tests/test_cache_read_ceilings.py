@@ -212,7 +212,9 @@ class TestCallSitesReadWithoutCeiling(unittest.TestCase):
         # over a year, read at any age by the serve-only composite.
         ("data/otc_release.py", r'key = _hist_key\(ticker\)'),
         ("data/release_metrics.py", r'key = f"release_metrics:v\d+:'),
-        ("data/ma_history.py", r'key = f"ma_history:v\d+:'),
+        # The key moved into _history_key (2026-10-19), shared with the
+        # warm pass's history_cached_at / history_is_cached reads.
+        ("data/ma_history.py", r'key = _history_key\(cert, cik\)'),
         ("data/ma_summary.py", r'key = f"ma_summary:v\d+:'),
         ("data/offerings.py", r'key = f"offerings:v\d+:'),
         ("data/stake_filings.py", r'key = f"stake_filings:v\d+:'),
