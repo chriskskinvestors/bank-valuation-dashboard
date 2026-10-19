@@ -69,14 +69,33 @@ class TestAudit(unittest.TestCase):
         self.assertIn("  1   1    0", lines["roomy"])        # running one ignored
         self.assertIn("09-22 FAIL", lines["sod"])             # newest completed verdict
         self.assertIn("09-24 ok", lines["roomy"])
-        self.assertIn("FLAGGED (2): sod, tight", out)
+        self.assertIn("FLAGGED (1): sod", out)                # red: killed at limit
+        self.assertIn("WARNING (1, run still passes): tight", out)
+        self.assertIn("::error::sod: TIMED OUT x1", out)
+        self.assertIn("::warning::tight: headroom 1.2x", out)
 
     def test_clean_when_nothing_flagged(self):
         clean = {**_EXECS, "sod": [_EXECS["sod"][1]], "tight": []}
         with patch.dict(_EXECS, clean):
             rc, out = self._run()
         self.assertEqual(rc, 0)
-        self.assertIn("All jobs have >= 1.5x headroom", out)
+        self.assertIn("every job's latest run succeeded", out)
+
+    def test_thin_headroom_alone_passes_with_a_warning(self):
+        only_tight = {**_EXECS, "sod": [_EXECS["sod"][1]]}
+        with patch.dict(_EXECS, only_tight):
+            rc, out = self._run()
+        self.assertEqual(rc, 0)
+        self.assertIn("::warning::tight: headroom 1.2x", out)
+        self.assertNotIn("::error::", out)
+
+    def test_latest_run_failed_is_red_even_without_a_timeout(self):
+        broken = {**_EXECS, "sod": [_exec("2026-09-23T10:00:00Z", "2026-09-23T10:02:00Z", False),
+                                    _EXECS["sod"][1]], "tight": []}
+        with patch.dict(_EXECS, broken):
+            rc, out = self._run()
+        self.assertEqual(rc, 1)
+        self.assertIn("::error::sod: LATEST RUN FAILED", out)
 
     def test_timeout_parsing(self):
         self.assertEqual(jta._timeout_s(_job("x")), 600)

@@ -20,8 +20,9 @@ Runs wherever gcloud is authenticated (the "Job timeout audit" GitHub
 workflow uses the deployer's WIF credentials). Read-only.
 
 Usage: python tools/job_timeout_audit.py [--region us-central1] [--limit 12]
-Exit 1 when any job is flagged, so the workflow run is red when there is
-something to look at.
+Exit 1 only on a RED flag (killed at its limit, or the latest run failed);
+thin headroom on a succeeding job is a ::warning:: annotation and the run
+passes.
 """
 from __future__ import annotations
 import argparse
@@ -58,7 +59,7 @@ def _timeout_s(job: dict) -> int:
 
 def audit(region: str, limit: int) -> int:
     jobs = _gcloud("run", "jobs", "list", f"--region={region}")
-    rows, flagged = [], []
+    rows, flagged, warned, notes = [], [], [], []
     for job in sorted(jobs, key=lambda j: j["metadata"]["name"]):
         name = job["metadata"]["name"]
         timeout = _timeout_s(job)
@@ -85,13 +86,25 @@ def audit(region: str, limit: int) -> int:
         mx = max(durations) if durations else 0.0
         p50 = statistics.median(durations) if durations else 0.0
         headroom = (timeout / mx) if mx else float("inf")
-        flag = ""
+        # RED (run fails, email) only for a real problem: a run killed at
+        # its limit, or the job's latest run failed. Thin headroom on a job
+        # that is succeeding is a WARNING (yellow annotation, run passes) —
+        # the 2026-10-19 "All jobs have failed" email for two warnings read
+        # as "the dashboard is down" (owner).
+        flag, severity = "", ""
         if timed_out:
-            flag = f"TIMED OUT x{timed_out}"
+            flag, severity = f"TIMED OUT x{timed_out}", "error"
+        elif last.endswith("FAIL"):
+            flag, severity = "LATEST RUN FAILED", "error"
         elif mx and headroom < MIN_HEADROOM:
-            flag = f"headroom {headroom:.1f}x"
-        if flag:
+            flag, severity = f"headroom {headroom:.1f}x", "warning"
+        if severity == "error":
             flagged.append(name)
+        elif severity == "warning":
+            warned.append(name)
+        if severity:
+            notes.append((severity, f"{name}: {flag} (timeout {timeout}s, "
+                                    f"max {mx:.0f}s, latest {last})"))
         rows.append((name, timeout, len(durations), ok, fail, mx, p50, last, flag))
 
     print(f"{'job':<28} {'timeout':>8} {'n':>3} {'ok':>3} {'fail':>4} "
@@ -99,10 +112,15 @@ def audit(region: str, limit: int) -> int:
     for name, timeout, n, ok, fail, mx, p50, last, flag in rows:
         print(f"{name:<28} {timeout:>7}s {n:>3} {ok:>3} {fail:>4} "
               f"{mx:>7.0f}s {p50:>7.0f}s  {last:<11} {flag}")
+    # GitHub annotations: the reason shows on the run page, not just "failed".
+    for severity, text in notes:
+        print(f"::{severity}::{text}")
+    if warned:
+        print(f"\nWARNING ({len(warned)}, run still passes): {', '.join(warned)}")
     if flagged:
         print(f"\nFLAGGED ({len(flagged)}): {', '.join(flagged)}")
         return 1
-    print("\nAll jobs have >= 1.5x headroom and no timeout kills in the window.")
+    print("\nNo job was killed at its limit and every job's latest run succeeded.")
     return 0
 
 
