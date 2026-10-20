@@ -191,6 +191,39 @@ class TestP1HoldcoRoatceAverageTce(unittest.TestCase):
         # Goodwill tagged only at FY-end → carried (snapshot convention).
         self.assertEqual(val._holdco_tce_at(facts, "2026-03-31"), 1_000.0 - 170.0)
 
+    @staticmethod
+    def _usd(*pairs):
+        return {"units": {"USD": [{"end": e, "val": v, "form": f, "filed": e}
+                                  for e, v, f in pairs]}}
+
+    def test_holdco_tce_at_carries_goodwill_beside_same_date_cdi(self):
+        # MCHB companyfacts (captured 2026-10-20): at 2025-06-30 only the CDI
+        # is tagged; goodwill sits at 2024-12-31 and 2025-09-30. The point
+        # used to deduct the $33.3M CDI alone (2,383.3M) — verify-metrics
+        # red, ROATCE 14.49% vs 15.87%.
+        u = self._usd
+        facts = {"facts": {"us-gaap": {
+            "StockholdersEquity": u(("2025-06-30", 2_416_617_000.0, "10-Q")),
+            "Goodwill": u(("2024-12-31", 843_305_000.0, "10-K"),
+                          ("2025-09-30", 843_305_000.0, "10-Q")),
+            "IntangibleAssetsNetExcludingGoodwill": u(
+                ("2024-12-31", 38_744_000.0, "10-K"),
+                ("2025-06-30", 33_308_000.0, "10-Q")),
+        }}}
+        self.assertEqual(val._holdco_tce_at(facts, "2025-06-30"), 1_540_004_000.0)
+
+    def test_holdco_tce_at_same_date_rollup_carries_nothing(self):
+        # PFS/ZION shape: goodwill only at FY-end, the goodwill-inclusive
+        # rollup quarterly — the rollup already holds the goodwill.
+        u = self._usd
+        facts = {"facts": {"us-gaap": {
+            "StockholdersEquity": u(("2026-03-31", 1_000.0, "10-Q")),
+            "Goodwill": u(("2025-12-31", 150.0, "10-K")),
+            "IntangibleAssetsNetIncludingGoodwill": u(("2026-03-31", 165.0, "10-Q")),
+            "IntangibleAssetsNetExcludingGoodwill": u(("2026-03-31", 15.0, "10-Q")),
+        }}}
+        self.assertEqual(val._holdco_tce_at(facts, "2026-03-31"), 1_000.0 - 165.0)
+
 
 def _hist_with_netinc():
     """Four consecutive quarters + a fifth (ONB ROA/ROAQ/NIMY/NIMYQ)."""

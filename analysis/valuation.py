@@ -374,7 +374,11 @@ def _holdco_tce_at(facts: dict, as_of: str) -> float | None:
     (data/sec_client): parent equity − preferred carrying value − goodwill
     and other intangibles (MSRs kept). Goodwill tagged only at fiscal
     year-end is carried from its latest value within a year (the snapshot's
-    tce_goodwill_prior convention); nothing tagged within a year means no
+    tce_goodwill_prior convention) — also beside other intangibles tagged
+    at the date (MCHB 2025-06-30: $33.3M CDI there, its $843.3M goodwill
+    only at 2024-12-31 and 2025-09-30). A same-date goodwill-inclusive
+    rollup already holds the goodwill (PFS/ZION tag it quarterly), so
+    nothing is carried beside one. Nothing tagged within a year means no
     intangibles. Any unresolvable leg → None (that point is unavailable)."""
     from data import sec_client as sc
     eq_tup, _, _ = sc._parent_equity_at(facts, as_of)
@@ -384,15 +388,19 @@ def _holdco_tce_at(facts: dict, as_of: str) -> float | None:
     if present and pfd is None:
         return None
     adj, _ = sc._intangible_adjustment_at(facts, as_of)
-    if adj is None:
+    if (sc._usd_at(facts, "Goodwill", as_of) is None
+            and sc._usd_at(facts, "IntangibleAssetsNetIncludingGoodwill", as_of) is None):
         gw = sc._usd_latest_before(facts, as_of, "Goodwill")[0]
-        incl = sc._usd_latest_before(facts, as_of,
-                                     "IntangibleAssetsNetIncludingGoodwill")[0]
-        oth = sc._usd_latest_before(facts, as_of,
-                                    "IntangibleAssetsNetExcludingGoodwill",
-                                    "FiniteLivedIntangibleAssetsNet")[0]
-        adj = (gw + (oth or 0) if gw is not None else
-               incl if incl is not None else oth if oth is not None else 0.0)
+        if adj is None:
+            incl = sc._usd_latest_before(facts, as_of,
+                                         "IntangibleAssetsNetIncludingGoodwill")[0]
+            oth = sc._usd_latest_before(facts, as_of,
+                                        "IntangibleAssetsNetExcludingGoodwill",
+                                        "FiniteLivedIntangibleAssetsNet")[0]
+            adj = (gw + (oth or 0) if gw is not None else
+                   incl if incl is not None else oth if oth is not None else 0.0)
+        elif gw is not None:
+            adj += gw
     return float(eq_tup[0]) - (pfd or 0) - adj
 
 
