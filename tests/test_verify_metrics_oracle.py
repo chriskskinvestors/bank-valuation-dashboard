@@ -543,5 +543,39 @@ class TestAbsentValuesAgree(unittest.TestCase):
             self.assertTrue(_abs_close(v, v), f"{f}: n/a vs n/a is agreement")
 
 
+class TestFdicFetchRetry(unittest.TestCase):
+    """2026-10-21: verify-metrics reported CNBP/HFBK/HRBK/STBI as NO_DATA —
+    FDIC 429s outlasted the shared retry policy under the 8-thread run
+    (each cert returns 103-170 quarters fetched alone). A mapped cert's empty
+    result is a failed fetch: re-fetch, and name it FETCH_ERROR if it stays
+    empty, never NO_DATA."""
+
+    def _run(self, frames):
+        import pandas as pd
+        from unittest.mock import patch
+        import tools.verify_metrics as vm
+        calls = iter(frames)
+        with patch("data.bank_mapping.get_fdic_cert", return_value=57061),              patch("data.bank_mapping.get_cik", return_value=None),              patch("data.bank_mapping.get_data_cik", return_value=None),              patch("data.fdic_client.fetch_financials",
+                   side_effect=lambda c, limit=8: next(calls)) as ff,              patch("data.fmp_client.get_quote", return_value={}),              patch("analysis.metrics.build_bank_metrics", return_value={}),              patch.object(vm.time, "sleep") as sl:
+            row = vm.verify_ticker("CNBP")
+        return row, ff.call_count, sl.call_count
+
+    def test_empty_then_rows_is_verified(self):
+        import pandas as pd
+        rows = pd.DataFrame([{"REPDTE": pd.Timestamp("2026-06-30"), "ASSET": 1_007_582}])
+        row, n, slept = self._run([pd.DataFrame(), rows])
+        self.assertEqual((n, slept), (2, 1))
+        self.assertNotIn(row["status"], ("NO_DATA", "FETCH_ERROR"))
+
+    def test_persistently_empty_is_fetch_error_not_no_data(self):
+        import pandas as pd
+        import tools.verify_metrics as vm
+        row, n, slept = self._run([pd.DataFrame()] * vm._FDIC_ATTEMPTS)
+        self.assertEqual(n, vm._FDIC_ATTEMPTS)
+        self.assertEqual(slept, vm._FDIC_ATTEMPTS - 1)
+        self.assertEqual(row["status"], "FETCH_ERROR")
+        self.assertIn("cert 57061", row["note"])
+
+
 if __name__ == "__main__":
     unittest.main()
