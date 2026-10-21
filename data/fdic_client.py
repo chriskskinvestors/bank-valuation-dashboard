@@ -513,6 +513,7 @@ def fetch_financials(cert: int, limit: int = 20) -> pd.DataFrame:
     try:
         resp = _get_with_retry(FDIC_FINANCIALS_URL, params)
         if resp is None:
+            print(f"[FDIC] cert {cert}: rate-limited (429) on every attempt")
             return pd.DataFrame()
         data = resp.json()
     except Exception as e:

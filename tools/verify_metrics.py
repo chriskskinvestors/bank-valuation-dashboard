@@ -35,6 +35,7 @@ Exit codes: 0 = all within tolerance, 1 = divergences found, 2 = harness error.
 from __future__ import annotations
 import sys
 import csv
+import time
 import warnings
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -50,6 +51,10 @@ ABS_TOL_RATIO = 0.01  # 1 bp on a percentage value
 # restatement timing can legitimately differ from ours by a bit, so only
 # MATERIAL disagreement (a real derivation gap) trips this.
 FMP_REL_TOL = 0.05   # 5%
+
+# Empty-FDIC re-fetches per bank (see verify_ticker) and their linear backoff.
+_FDIC_ATTEMPTS = 3
+_FDIC_BACKOFF_S = 10.0
 
 # FDIC passthrough ratio fields: dashboard metric key → raw FDIC field.
 FDIC_RATIO_PASSTHROUGH = {
@@ -498,10 +503,23 @@ def verify_ticker(ticker: str) -> dict:
     fdic, fdic_hist, sec, facts = {}, [], {}, None
     try:
         if cert:
-            df = fdic_client.fetch_financials(cert, limit=8)
-            if not df.empty:
-                fdic_hist = df.to_dict("records")
-                fdic = fdic_hist[0]
+            # A mapped cert is an ACTIVE charter with recent filings, so an
+            # empty result is a failed fetch — FDIC 429s outlasting the retry
+            # policy under this 8-thread run (CNBP/HFBK/HRBK/STBI 2026-10-21,
+            # all fine fetched alone) — never "no data": back off and retry.
+            for attempt in range(_FDIC_ATTEMPTS):
+                df = fdic_client.fetch_financials(cert, limit=8)
+                if not df.empty:
+                    fdic_hist = df.to_dict("records")
+                    fdic = fdic_hist[0]
+                    break
+                if attempt < _FDIC_ATTEMPTS - 1:
+                    time.sleep(_FDIC_BACKOFF_S * (attempt + 1))
+            else:
+                row["status"] = "FETCH_ERROR"
+                row["note"] = (f"FDIC returned no rows for cert {cert} "
+                               f"after {_FDIC_ATTEMPTS} attempts")
+                return row
         if cik:
             sec = sec_client.get_latest_fundamentals(cik) or {}
             facts = sec_client.fetch_company_facts(cik) if sec else None
@@ -624,6 +642,10 @@ def run(tickers: list[str]) -> int:
     print("=" * 68)
     for status, n in sorted(by_status.items()):
         print(f"  {status:<14} {n:>4}")
+    # Name every bank that was NOT verified — the job log is the only report.
+    for r in sorted(results, key=lambda x: (x["status"], x["ticker"])):
+        if r["status"] not in ("OK", "WARN", "DIVERGENCE"):
+            print(f"  unverified: {r['ticker']:<6} {r['status']:<12} {r.get('note', '')}")
 
     if diverged:
         # Tally which metrics diverge most often.
