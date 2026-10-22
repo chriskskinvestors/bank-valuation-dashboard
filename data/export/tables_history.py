@@ -717,6 +717,7 @@ def build_holdco_quarterly(tickers: list[str]) -> pd.DataFrame:
     """SEC holding-company series per quarter-end (see module doc)."""
     rows: list[dict] = []
     skipped: dict[str, list[str]] = {"no_cik": [], "no_cached_facts": []}
+    breaks: list[tuple[str, str, str]] = []   # (ticker, filed, period) — reviewed per bank
     for ticker in tickers:
         t = ticker.upper()
         cik = _cik_for(t)
@@ -727,11 +728,18 @@ def build_holdco_quarterly(tickers: list[str]) -> pd.DataFrame:
         if not facts:
             skipped["no_cached_facts"].append(t)
             continue
+        brk = _basis_break(facts)
+        if brk:
+            breaks.append((t, *brk))
         rows += _holdco_rows(t, cik, facts, _bank_goodwill_floor(_cert_for(t)))
     df = pd.DataFrame(rows, columns=list(COLUMNS_HOLDCO_QUARTERLY))
     if not df.empty:
         df = df.sort_values(["ticker", "period_end"]).reset_index(drop=True)
     df.attrs["skipped"] = skipped
+    # Every bank the reverse-merger basis-break rule fired on — the rule was
+    # tuned on 37 cached blobs (BANC, MCHB); each prod firing gets reviewed.
+    df.attrs["basis_breaks"] = breaks
+    print(f"[export] holdco_quarterly: basis breaks {breaks}")
     print(f"[export] holdco_quarterly: {len(df)} rows; skipped "
           + ", ".join(f"{k}={len(v)}" for k, v in skipped.items()), flush=True)
     return df

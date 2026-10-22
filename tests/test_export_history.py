@@ -392,6 +392,13 @@ class TestBasisBreak(unittest.TestCase):
         # 2,774,134,000 − 843,305,000 − 143,264,000
         self.assertEqual(r["tce"], 1_787_565_000.0)
 
+    def test_break_recorded_for_review(self):
+        with patch.object(th, "_cik_for", return_value=1518715), \
+                patch.object(th, "_cached_facts", return_value=self._facts()), \
+                patch.object(th, "_cert_for", return_value=None):
+            df = th.build_holdco_quarterly(["MCHB"])
+        self.assertEqual(df.attrs["basis_breaks"], [("MCHB", "2025-11-17", "2025-09-30")])
+
     def test_equity_tag_artifact_alone_is_not_a_break(self):
         # Regions 2020-05-06: the NCI column tagged as the NCI-inclusive total.
         facts = _facts({
