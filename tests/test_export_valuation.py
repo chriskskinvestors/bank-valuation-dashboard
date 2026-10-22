@@ -244,6 +244,43 @@ class TestContract(_Base):
         self.assertEqual(df.attrs["miss_reasons"],
                          {T: "no_cached_price_history", "NOPE": "no_cik"})
 
+    def test_refresh_prices_fetches_through_the_charts_fetcher(self):
+        """refresh_prices=True: each bank's ALL history is refreshed via
+        fmp_client.get_history (which caches) before the series is read; a
+        bank with no cached history then exports. Default reads cache only."""
+        _seed(price=False)
+        calls = []
+
+        def fake_get_history(t, period="1Y", **k):
+            calls.append((t, period))
+            recs = _px().assign(date=lambda d: d["date"].dt.strftime("%Y-%m-%d"))
+            cache.put(f"fmp_history:{t}:{period}",
+                      {"_ts": time.time(), "_v": recs.to_dict("records")})
+            return _px()
+        with patch("data.fmp_client.get_history", fake_get_history), \
+             patch.object(tv, "_PRICE_MIN_INTERVAL_S", 0), \
+             patch("data.bank_mapping.get_bank_info", lambda t: INFO), \
+             patch("data.fdic_history_store.deep_group_history", lambda *a, **k: []):
+            self.assertTrue(tv.build_valuation_history([T]).empty)     # default: no fetch
+            self.assertEqual(calls, [])
+            df = tv.build_valuation_history([T], refresh_prices=True)
+        self.assertEqual(calls, [(T, "ALL")])
+        self.assertFalse(df.empty)
+        self.assertEqual(df.attrs["price_refresh_errors"], 0)
+
+    def test_price_refresh_failure_falls_back_to_cache_and_is_counted(self):
+        _seed()
+
+        def boom(*a, **k):
+            raise TimeoutError("FMP slow")
+        with patch("data.fmp_client.get_history", boom), \
+             patch.object(tv, "_PRICE_MIN_INTERVAL_S", 0), \
+             patch("data.bank_mapping.get_bank_info", lambda t: INFO), \
+             patch("data.fdic_history_store.deep_group_history", lambda *a, **k: []):
+            df = tv.build_valuation_history([T], refresh_prices=True)
+        self.assertFalse(df.empty)                       # cached history served
+        self.assertEqual(df.attrs["price_refresh_errors"], 1)
+
     def test_stale_cache_entries_are_read(self):
         """max_age_s=None: a days-old entry still serves (job reads, never fetches)."""
         _seed()

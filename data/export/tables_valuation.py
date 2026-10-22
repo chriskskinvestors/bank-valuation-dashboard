@@ -186,14 +186,41 @@ def _none_if_nan(s: pd.Series) -> pd.Series:
     return s.astype(object).where(s.notna(), None)
 
 
-def build_valuation_history(tickers: list[str]) -> pd.DataFrame:
+# Price refresh pacing (refresh_prices=True): serial, 0.4s apart — <= 150
+# FMP requests/min, well under the plan's limit, room for other jobs.
+_PRICE_MIN_INTERVAL_S = 0.4
+
+
+def _refresh_price_history(ticker: str) -> None:
+    """Refresh the chart's ALL-history cache entry through the chart's own
+    fetcher (fmp_client.get_history: a fresh entry is a cache hit, a stale
+    one is re-fetched and re-cached). Without this, a bank's history is only
+    as current as the last time someone opened its chart."""
+    import time
+    from data import fmp_client
+    time.sleep(_PRICE_MIN_INTERVAL_S)
+    fmp_client.get_history(ticker, "ALL")
+
+
+def build_valuation_history(tickers: list[str],
+                            refresh_prices: bool = False) -> pd.DataFrame:
     """Rows per (ticker, date) — see COLUMNS_VALUATION_HISTORY. Tickers with
     no CIK / cached price history / cached FDIC quarters / cached facts / no
     series are skipped; df.attrs["misses"] counts them and
-    df.attrs["miss_reasons"] maps ticker → reason."""
+    df.attrs["miss_reasons"] maps ticker → reason. refresh_prices=True (the
+    nightly export) refreshes each bank's ALL price history from FMP first;
+    False reads only what is cached."""
     from data.bank_mapping import get_bank_info
     frames, reasons = [], {}
+    price_errors = 0
     for t in tickers:
+        if refresh_prices:
+            try:
+                _refresh_price_history(t)
+            except Exception as e:     # the cached history (if any) still serves
+                price_errors += 1
+                print(f"[export.valuation] {t}: price refresh failed "
+                      f"({type(e).__name__}: {e})")
         try:
             # The card's own info (ui.bank_detail renders it from get_bank_info).
             val, window, why = _series_for(t, get_bank_info(t) or {})
@@ -229,4 +256,5 @@ def build_valuation_history(tickers: list[str]) -> pd.DataFrame:
           else pd.DataFrame(columns=cols))
     df.attrs["misses"] = len(reasons)
     df.attrs["miss_reasons"] = reasons
+    df.attrs["price_refresh_errors"] = price_errors
     return df

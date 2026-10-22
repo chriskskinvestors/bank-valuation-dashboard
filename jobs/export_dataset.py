@@ -16,9 +16,11 @@ every value the dashboard's own (no second calculation):
   metric_dictionary       every table's column descriptions      replace
   export_runs             this run's per-table outcome           daily partition
 
-Everything but transcripts is READ-ONLY on the dashboard's stores and
-caches (the nightly jobs that build them run first); transcripts fetch new
-calls from FMP under a per-run budget. FMP-derived columns (prices, market
+Everything but transcripts and valuation_history's prices is READ-ONLY on
+the dashboard's stores and caches (the nightly jobs that build them run
+first); transcripts fetch new calls from FMP under a per-run budget, and
+valuation_history refreshes each bank's FMP price history (~600 calls,
+paced) through the chart's own fetcher. FMP-derived columns (prices, market
 cap, the multiples, transcripts) are licensed for internal use only.
 
 Usage:
@@ -149,7 +151,10 @@ def export_table(name: str, tickers: list[str], run_day: date, run_stamp: str,
                 new = {tuple(r) for r in df[list(key)].itertuples(index=False, name=None)}
                 writer.write_keys(name, have | new)
         else:
-            df = build(tickers)
+            # valuation_history refreshes each bank's FMP price history first
+            # (else it is only as current as the last chart view).
+            df = (build(tickers, refresh_prices=True) if name == "valuation_history"
+                  else build(tickers))
             res = writer.write_table(name, df, columns, mode=mode,
                                      description=TABLE_DESCRIPTIONS[name])
         row.update(rows=res.rows, bigquery=res.bq,
