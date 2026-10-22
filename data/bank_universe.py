@@ -1628,6 +1628,77 @@ def run_curated_cik_guard(max_age_days: int = 200) -> list[str]:
         return []
 
 
+_CIK_SUCCESSOR_KEY = "cik_successor:v1"
+
+
+def detect_successions(ours: dict, sec_cik: dict, periodic_of) -> dict:
+    """{ticker: {cik, old, form, report_date}} for every ticker whose SEC
+    ticker-file CIK differs from the one we map AND whose SEC CIK has a
+    10-Q/10-K for a LATER period than ours — the successor registrant of a
+    reorganization. CLBK (2026-10-22): its second-step conversion created
+    Columbia Financial, Inc./MD/ (CIK 2115119, 8-K12B 2026-07-21, Q2 10-Q
+    2026-08-07) while the curated map pinned the predecessor 1723596, whose
+    filings stop at the Q1 10-Q — the card served March figures on 104M
+    shares against a post-conversion price and 269.5M shares. A differing
+    CIK with NO newer periodic filing is not a succession (a listing quirk,
+    a shell, or a filing not yet made) and is only reported. `periodic_of`
+    is data.sec_earnings_8k.latest_periodic_filing (injectable)."""
+    out = {}
+    for t, cik in ours.items():
+        sec = sec_cik.get(t)
+        if not cik or not sec or int(sec) == int(cik):
+            continue
+        new = periodic_of(int(sec)) or {}
+        old = periodic_of(int(cik)) or {}
+        if (new.get("report_date") or "") > (old.get("report_date") or ""):
+            out[t] = {"cik": int(sec), "old": int(cik), "form": new.get("form"),
+                      "report_date": new.get("report_date")}
+    return out
+
+
+def run_cik_succession_guard() -> dict:
+    """Nightly (jobs/refresh_universe): detect_successions over every mapped
+    ticker, persist the result under _CIK_SUCCESSOR_KEY (read by
+    data.bank_mapping.get_cik ahead of the curated map, so the successor
+    serves without a code change) and print [cik-succession] lines; a
+    differing CIK without a newer periodic filing is printed as observe-
+    only. Never raises, never fails the job."""
+    try:
+        from data import cache as _cache
+        from data.bank_mapping import get_cik
+        from data.sec_earnings_8k import latest_periodic_filing
+        sec_cik = {str(r[2]).upper(): int(r[0])
+                   for r in _fetch_sec_companies() if r[0] and r[2]}
+        uni, _ = _load_lastgood()
+        tickers = set((uni or {}).keys())
+        from data.bank_mapping import BANK_MAP, _RESOLVED_FROM_JSON
+        tickers |= set(BANK_MAP) | set(_RESOLVED_FROM_JSON)
+        ours = {}
+        for t in sorted(tickers):
+            try:
+                c = get_cik(t)
+            except Exception:
+                c = None
+            if c:
+                ours[t.upper()] = int(c)
+        found = detect_successions(ours, sec_cik, latest_periodic_filing)
+        for t, rec in sorted(found.items()):
+            print(f"[cik-succession] {t}: SEC lists CIK {rec['cik']} (our map: "
+                  f"{rec['old']}) with a {rec['form']} for {rec['report_date']} "
+                  f"— serving the successor; update the curated map", flush=True)
+        for t, c in sorted(ours.items()):
+            s = sec_cik.get(t)
+            if s and s != c and t not in found:
+                print(f"[cik-succession] {t}: SEC lists CIK {s}, we map {c}, no "
+                      f"newer periodic filing — observe only", flush=True)
+        _cache.put(_CIK_SUCCESSOR_KEY, {"date": __import__("datetime").date.today().isoformat(),
+                                        "successors": found})
+        return found
+    except Exception as e:
+        print(f"[cik-succession] guard skipped: {type(e).__name__}: {e}", flush=True)
+        return {}
+
+
 def run_namehcr_guard(snapshot: dict[str, dict]) -> dict[str, list]:
     """Observe-only wrong-entity guard, run by jobs/refresh_universe after
     every snapshot rebuild. Prints loud [namehcr-guard] lines for anything a
