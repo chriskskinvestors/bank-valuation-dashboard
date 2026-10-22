@@ -230,13 +230,57 @@ jobs:
               || echo "::warning::could not create backfill-fdic-history (deployer lacks run.jobs.create?) — create it by hand with the command above"
           fi
 
+      # export-dataset: the nightly agent dataset (jobs/export_dataset.py →
+      # BigQuery ksk_dashboard; owner call 2026-10-22). Created if absent like
+      # backfill-fdic-history, plus its Cloud Scheduler trigger at 12:15 UTC —
+      # after refresh-cr-quarterly (05:30) and refresh-universe (10:00–~10:45),
+      # so it exports what those just built. 4Gi/2cpu: the history tables walk
+      # every bank's cached SEC companyfacts. FMP key: transcripts only.
+      # Failures warn, never block the service deploy.
+      - name: Ensure export-dataset job + schedule exist
+        run: |
+          if gcloud run jobs describe export-dataset --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
+            echo "  export-dataset exists"
+          else
+            echo "  Creating export-dataset..."
+            gcloud run jobs create export-dataset \
+              --region="${{ env.REGION }}" \
+              --image="${{ env.IMAGE }}" \
+              --command=python \
+              --args="-m,jobs.export_dataset" \
+              --service-account="${{ env.SA_EMAIL }}" \
+              --set-cloudsql-instances="${{ steps.db.outputs.instance_conn }}" \
+              --set-env-vars="GCS_BUCKET=${{ env.GCS_BUCKET }},GCLOUD_PROJECT=${{ env.PROJECT_ID }},DB_USER=${{ env.SQL_USER }},DB_NAME=${{ env.SQL_DB }},INSTANCE_CONNECTION_NAME=${{ steps.db.outputs.instance_conn }}" \
+              --set-secrets="DB_PASSWORD=db-password:latest,FMP_API_KEY=fmp-api-key:latest" \
+              --memory=4Gi \
+              --cpu=2 \
+              --task-timeout=3600 \
+              --max-retries=0 \
+              --quiet \
+              || echo "::warning::could not create export-dataset — create it by hand with the command above"
+          fi
+          if gcloud scheduler jobs describe export-dataset-nightly --location="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
+            echo "  export-dataset-nightly schedule exists"
+          else
+            echo "  Creating export-dataset-nightly schedule..."
+            gcloud scheduler jobs create http export-dataset-nightly \
+              --location="${{ env.REGION }}" \
+              --schedule="15 12 * * *" \
+              --time-zone="Etc/UTC" \
+              --http-method=POST \
+              --uri="https://run.googleapis.com/v2/projects/${{ env.PROJECT_ID }}/locations/${{ env.REGION }}/jobs/export-dataset:run" \
+              --oauth-service-account-email="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com" \
+              --quiet \
+              || echo "::warning::could not create the export-dataset-nightly schedule (deployer lacks cloudscheduler.jobs.create?) — create it by hand with the command above"
+          fi
+
       # Keep every Cloud Run Job pinned to the just-built image so scheduled
       # jobs (refresh-universe, refresh-sod, poll-events) get the same code
       # the web service is serving. Without this, jobs stay on whatever
       # image they were created with — easy to forget, painful to debug.
       - name: Sync Cloud Run Jobs to deployed image
         run: |
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify backfill-fdic-history; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events live-audit refresh-prices refresh-avg-volume refresh-insider refresh-live-yields verify-metrics refresh-capital refresh-company-financials refresh-home-snapshot refresh-macro refresh-premarket refresh-trends refresh-13f refresh-deal-comps refresh-cr-quarterly nic-mirror-verify backfill-fdic-history export-dataset; do
             if DESC=$(gcloud run jobs describe "$job" --region="${{ env.REGION }}" --format=json --quiet 2>/dev/null); then
               echo "  Updating $job..."
               # refresh-universe: 3600s, not the 1800s default. Its 30-min
@@ -325,7 +369,7 @@ jobs:
       - name: Ensure scheduler invoker bindings on scheduled jobs
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps refresh-cr-quarterly; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps refresh-cr-quarterly export-dataset; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               echo "  Ensuring invoker binding on $job..."
               gcloud run jobs add-iam-policy-binding "$job" \
@@ -348,7 +392,7 @@ jobs:
         run: |
           INVOKER="scheduler-invoker@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
           missing=""
-          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps refresh-cr-quarterly; do
+          for job in refresh-universe refresh-sod refresh-ffiec poll-events refresh-prices refresh-home-snapshot verify-metrics refresh-trends refresh-premarket refresh-live-yields refresh-avg-volume refresh-insider refresh-capital refresh-macro refresh-13f refresh-deal-comps refresh-cr-quarterly export-dataset; do
             if gcloud run jobs describe "$job" --region="${{ env.REGION }}" --quiet >/dev/null 2>&1; then
               if ! gcloud run jobs get-iam-policy "$job" --region="${{ env.REGION }}" \
                     --format="value(bindings.members)" 2>/dev/null | grep -q "$INVOKER"; then

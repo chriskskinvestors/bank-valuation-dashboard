@@ -35,6 +35,7 @@ on:
           - refresh-premarket
           - refresh-trends
           - nic-mirror-verify
+          - export-dataset
           - refresh-13f
           - refresh-deal-comps
       args:
