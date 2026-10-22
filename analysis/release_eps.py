@@ -163,9 +163,17 @@ def _xbrl_quarterly_eps(cik_i: int) -> dict[str, float]:
     return quarters
 
 
-def composite_ttm_eps(cik) -> tuple[float | None, str | None, dict | None]:
+def composite_ttm_eps(cik, prior_scale: float = 1.0
+                      ) -> tuple[float | None, str | None, dict | None]:
     """(composite TTM diluted EPS, quarter-end it runs through, components)
     or (None, None, None) whenever any of the four quarters is missing.
+
+    prior_scale: a stock split declared after the latest filed balance
+    sheet (sec_data["stock_split"]) leaves the three filed prior quarters
+    on the PRE-split basis while a release filed after it is post-split
+    (SFBS 3Q26: release $0.80 + 1.55 + 1.59 + 1.53 read 5.47); each prior
+    quarter is ÷ prior_scale (the ratio) so all four share the release's
+    basis. 1.0 = no split.
 
     components = {"release": {"qend", "eps", "ni_common", "dil_shares",
                               "accession", "url"},
@@ -185,17 +193,18 @@ def composite_ttm_eps(cik) -> tuple[float | None, str | None, dict | None]:
         return None, None, None
 
     expected = _expected_release_qend()
-    memo_key = (rm.get("accession"), expected)
+    memo_key = (rm.get("accession"), expected, prior_scale)
     hit = _MEMO.get(cik_i)
     if hit and hit[0] == memo_key:
         return hit[1]
 
-    result = _assemble(cik_i, rm, expected)
+    result = _assemble(cik_i, rm, expected, prior_scale)
     _MEMO[cik_i] = (memo_key, result)
     return result
 
 
-def _assemble(cik_i: int, rm: dict, expected: str | None):
+def _assemble(cik_i: int, rm: dict, expected: str | None,
+              prior_scale: float = 1.0):
     qend = rm.get("qend")
     rel_metrics = rm.get("metrics") or {}
     rel_eps = rel_metrics.get("eps_diluted")
@@ -253,6 +262,8 @@ def _assemble(cik_i: int, rm: dict, expected: str | None):
         # A21 discipline: fewer than four quarters is NOT a TTM — n/a, never
         # a partial sum.
         return None, None, None
+    if prior_scale and prior_scale != 1.0:
+        quarters = {k: v / prior_scale for k, v in quarters.items()}
 
     value = rel_eps + sum(quarters.values())
     components = {

@@ -126,10 +126,15 @@ def _cached_quarter_ends(ticker: str, quarters: int) -> list:
 
 
 def _cached_facts(cik) -> dict | None:
-    """The persisted slim companyfacts blob (no lag overlay — see module
-    docstring)."""
+    """The persisted slim companyfacts blob WITH the dashboard's read-time
+    overlays (sec_client._overlay: lagging 10-Q, class shares, per-series
+    preferred, MSR, post-balance-sheet stock split) — the blob the chart
+    divides by. The overlays read per-accession caches that refresh-universe
+    warms for every bank before this job runs; without them SFBS's history
+    would pair pre-split book value with split-adjusted prices (2x)."""
     from data import cache, sec_client
-    return cache.get(sec_client.company_facts_cache_key(cik), max_age_s=None)
+    blob = cache.get(sec_client.company_facts_cache_key(cik), max_age_s=None)
+    return sec_client._overlay(int(cik), blob) if blob else blob
 
 
 # ── build ────────────────────────────────────────────────────────────────────

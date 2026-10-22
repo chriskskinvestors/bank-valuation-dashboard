@@ -77,6 +77,16 @@ def build_valuation_series(ends_all: list, ps: dict, facts: dict | None,
                       "form": (prov or {}).get("form"), "accn": (prov or {}).get("accn")})
     if not frows:
         return None
+    # The price history is split-adjusted by the vendor; a split declared
+    # after the latest balance sheet (facts["_stock_split"], SFBS 2:1
+    # 2026-08-21) leaves every FILED per-share figure pre-split — ÷ ratio so
+    # the history's P/TBV and P/E sit on the quote's basis.
+    split = facts.get("_stock_split") if facts else None
+    if split and split.get("ratio"):
+        for fr in frows:
+            for k in ("tbvps", "ttm_eps"):
+                if fr[k] is not None:
+                    fr[k] = fr[k] / split["ratio"]
     fund = (pd.DataFrame(frows).dropna(subset=["date"]).sort_values("date")
             .drop_duplicates("date", keep="last"))
 

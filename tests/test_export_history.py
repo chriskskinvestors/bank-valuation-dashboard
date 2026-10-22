@@ -177,11 +177,19 @@ class TestBankQuarterly(_StoreCase):
 class TestCacheOnlyFacts(unittest.TestCase):
     def test_blob_read_at_any_age(self):
         from data.sec_client import company_facts_cache_key
-        with patch("data.cache.get", return_value={"facts": {"us-gaap": {}}}) as get:
-            self.assertIsNotNone(th._cached_facts(42))
+        seen = []
+
+        def overlay(cik, blob):        # the dashboard's read-time overlays
+            seen.append(cik)
+            return dict(blob, _stock_split={"ratio": 2.0})
+        with patch("data.cache.get", return_value={"facts": {"us-gaap": {}}}) as get,                 patch("data.sec_client._overlay", overlay):
+            got = th._cached_facts(42)
         get.assert_called_once_with(company_facts_cache_key(42), max_age_s=None)
-        with patch("data.cache.get", return_value=None):
+        self.assertEqual(seen, [42])
+        self.assertEqual(got["_stock_split"], {"ratio": 2.0})   # overlaid blob served
+        with patch("data.cache.get", return_value=None),                 patch("data.sec_client._overlay") as ov:
             self.assertIsNone(th._cached_facts(42))
+        ov.assert_not_called()
 
 
 # ── holdco_quarterly ───────────────────────────────────────────────────────────

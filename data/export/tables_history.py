@@ -394,10 +394,15 @@ def build_bank_quarterly(tickers: list[str]) -> pd.DataFrame:
 def _cached_facts(cik: int) -> dict | None:
     """The slim companyfacts blob from the persistent store, at any age —
     None when it was never cached (never fetched here)."""
-    from data import cache
-    from data.sec_client import company_facts_cache_key
-    blob = cache.get(company_facts_cache_key(cik), max_age_s=None)
-    return blob if blob and blob.get("facts") else None
+    from data import cache, sec_client
+    blob = cache.get(sec_client.company_facts_cache_key(cik), max_age_s=None)
+    if not (blob and blob.get("facts")):
+        return None
+    # The dashboard's read-time overlays (lagging 10-Q, class shares,
+    # per-series preferred, MSR, stock split) — per-accession caches that
+    # refresh-universe warms for every bank before this job; they complete
+    # the latest quarter exactly as the dashboard sees it.
+    return sec_client._overlay(int(cik), blob)
 
 
 def _quarter_end_dates(facts: dict) -> list[str]:

@@ -263,6 +263,14 @@ def _overlay(cik: int, slim: dict) -> dict:
     except Exception as e:
         print(f"[SEC] MSR overlay skipped for CIK {cik}: "
               f"{type(e).__name__}: {e}")
+    # A split declared after the balance sheet (SFBS 2:1, 2026-08-21) —
+    # read from the filing's own instance; get_latest_fundamentals restates.
+    try:
+        from data.sec_facts_overlay import overlay_stock_split
+        slim = overlay_stock_split(cik, slim)
+    except Exception as e:
+        print(f"[SEC] stock-split overlay skipped for CIK {cik}: "
+              f"{type(e).__name__}: {e}")
     return slim
 
 
@@ -1241,6 +1249,13 @@ def get_latest_fundamentals(cik: int) -> dict:
                 and _cover_end > equity_date and not class_shares)
         else result.get("shares_outstanding"))
 
+    # A split declared after this balance sheet (data/sec_facts_overlay
+    # .overlay_stock_split): counts × ratio, per-share flows ÷ ratio, so the
+    # figures below sit on the share basis the quote trades on.
+    _apply_stock_split(result, facts, equity_date,
+                       {"shares_outstanding": equity_date,
+                        "shares_for_market_cap": _cover_end or equity_date})
+
     # Compute derived values
     equity = result.get("book_value_total")
     shares = result.get("shares_outstanding")
@@ -2094,6 +2109,49 @@ def _total_and_nci_same_filing(facts: dict, end: str) -> tuple | None:
     a = max(both, key=lambda a: tot[a].get("filed", ""))
     t = tot[a]
     return t["val"], mi[a]["val"], t.get("filed", ""), t.get("form", "")
+
+
+_SPLIT_PER_SHARE_KEYS = ("eps", "eps_ttm", "eps_latest_period",
+                         "eps_basic", "eps_basic_ttm", "eps_basic_latest_period",
+                         "dividends_per_share", "dividends_per_share_ttm",
+                         "dividends_per_share_latest_period")
+_SPLIT_POST_TOL = 0.03
+
+
+def _apply_stock_split(result: dict, facts: dict, equity_date: str | None,
+                       count_dates: dict) -> None:
+    """Restate `result` onto the post-split share basis when the blob carries
+    a "_stock_split" record dated after `equity_date` (SFBS: 2:1 declared
+    2026-07-20 against the 2026-06-30 balance sheet). A share count is
+    restated × ratio only when it is PRE-split: within _SPLIT_POST_TOL of
+    post_shares ÷ ratio when the filing gives the post-split count, else
+    when the count's own date is on/before the declaration. Per-share TTM
+    flows (EPS, dividends) ÷ ratio. Records result["stock_split"] =
+    {ratio, date, applied} for the labels; nothing when no record applies."""
+    rec = facts.get("_stock_split") or {}
+    ratio, date = rec.get("ratio"), rec.get("date")
+    if not ratio or not date or not equity_date or date <= equity_date:
+        return
+    post = rec.get("post_shares")
+    applied = []
+    for key, cdate in count_dates.items():
+        n = result.get(key)
+        if not n:
+            continue
+        if post:
+            pre = abs(n * ratio - post) / post <= _SPLIT_POST_TOL
+        else:
+            pre = bool(cdate) and cdate <= date
+        if pre:
+            result[key] = n * ratio
+            applied.append(key)
+    for key in _SPLIT_PER_SHARE_KEYS:
+        v = result.get(key)
+        if v is not None:
+            result[key] = v / ratio
+            applied.append(key)
+    result["stock_split"] = {"ratio": ratio, "date": date, "applied": applied,
+                             "post_shares": post}
 
 
 def _balance_sheet_date(facts: dict) -> str | None:

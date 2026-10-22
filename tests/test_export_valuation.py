@@ -136,6 +136,11 @@ class _Base(unittest.TestCase):
     def setUp(self):
         _clear()
         self.addCleanup(_clear)
+        # The dashboard's read-time overlays (they read per-accession SEC
+        # caches): a pass-through here; TestOverlay drives a real marker.
+        p = patch.object(sc, "_overlay", lambda cik, blob: blob)
+        p.start()
+        self.addCleanup(p.stop)
 
 
 class TestExportEqualsChart(_Base):
@@ -224,6 +229,28 @@ class TestStepAndGaps(_Base):
         # Before Q1-25 TTM can't form (needs four quarters) → P/E None, not 0.
         self.assertIsNone(df.loc[date(2025, 5, 6), "pe"])
         self.assertTrue((df["ptbv"].dropna() > 0).all())
+
+
+class TestOverlay(_Base):
+    def test_post_balance_sheet_split_reaches_the_export_like_the_chart(self):
+        """SFBS 2:1 after the balance sheet: the chart (overlaid facts) divides
+        filed TBV/EPS by the ratio; the export reads the same overlaid blob."""
+        _seed()
+        split = {"ratio": 2.0, "date": "2026-09-15"}
+
+        def with_split(cik, blob):
+            return dict(blob, _stock_split=split)
+        facts = with_split(CIK, _facts())
+        with patch.object(sc, "_overlay", with_split):
+            df = _export()
+        with patch("ui.history_range.load_hist_df_for_range",
+                   lambda *a, **k: pd.DataFrame(FDIC)),              patch("data.loaders.load_fdic_hist_df", lambda *a, **k: pd.DataFrame(FDIC)),              patch("data.fmp_client.get_history", lambda *a, **k: _px()),              patch.object(sc, "fetch_company_facts", lambda cik: facts):
+            chart = bd.valuation_series(T, INFO, "ALL").set_index("date")
+        last = df.iloc[-1]
+        self.assertAlmostEqual(last["tbv_ps"], 22.50 / 2, places=9)
+        self.assertAlmostEqual(last["eps_ttm"], 2.40 / 2, places=9)
+        self.assertAlmostEqual(last["ptbv"], chart.loc[pd.Timestamp(last["date"]), "ptbv"],
+                               places=12)
 
 
 class TestContract(_Base):
