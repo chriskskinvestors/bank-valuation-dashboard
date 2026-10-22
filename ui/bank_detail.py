@@ -169,6 +169,13 @@ def _ps_label(row, base, src_key):
     must never read as current (2026-09-22)."""
     if row.get(src_key) in ("company_release", "reported_8k"):
         return f"{base} (co. release)"
+    # A split declared after the balance sheet restated the filing's
+    # per-share figures (analysis/valuation stock_split; SFBS 2:1) — say so
+    # on a served reconstruction. A release figure is the bank's own
+    # post-split number and keeps its provenance above.
+    lab = _split_label(row)
+    if lab:
+        return f"{base} ({lab} split-adjusted)"
     if row.get(src_key) == "reconstructed_company_shares":
         return f"{base} (co. share basis)"
     if row.get(src_key) == "derived_no_holdco":
@@ -190,6 +197,16 @@ def _overlay_form(row) -> str | None:
     return None
 
 
+def _split_label(row) -> str | None:
+    """"2:1" / "1:10" for a row whose filing per-share figures were restated
+    for a split declared after the balance sheet, else None."""
+    split = row.get("stock_split") or {}
+    r = split.get("ratio")
+    if not r:
+        return None
+    return f"{r:g}:1" if r >= 1 else f"1:{1 / r:g}"
+
+
 def _eps_label(row):
     """"release_ttm" = release-anchored composite TTM (latest quarter from the
     bank's own earnings release + three Company-Reported quarters) — say so.
@@ -201,6 +218,9 @@ def _eps_label(row):
         # Non-SEC filer: four discrete quarters, each from one of the
         # bank's own releases (plural — no single release is the source).
         return "EPS (TTM, co. releases)"
+    lab = _split_label(row)
+    if lab:
+        return f"EPS (TTM, {lab} split-adjusted)"
     form = _overlay_form(row)
     if form:
         return f"EPS (TTM, co. {form})"
@@ -737,6 +757,16 @@ def valuation_series(ticker: str, info: dict, period: str = "1Y"):
         frows.append({"date": eff, "tbvps": tbvps, "ttm_eps": eps_ttm})
     if not frows:
         return None
+    # The price history is split-adjusted by the vendor; a split declared
+    # after the latest balance sheet (facts["_stock_split"], SFBS 2:1
+    # 2026-08-21) leaves every FILED per-share figure pre-split — ÷ ratio so
+    # the history's P/TBV and P/E sit on the quote's basis.
+    split = facts.get("_stock_split") if facts else None
+    if split and split.get("ratio"):
+        for fr in frows:
+            for k in ("tbvps", "ttm_eps"):
+                if fr[k] is not None:
+                    fr[k] = fr[k] / split["ratio"]
     fund = (pd.DataFrame(frows).dropna(subset=["date"]).sort_values("date")
             .drop_duplicates("date", keep="last"))
 

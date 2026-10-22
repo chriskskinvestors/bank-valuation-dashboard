@@ -763,8 +763,11 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # release-anchored composite TTM (analysis/release_eps) serves when it
     # cleanly assembles and agrees; see _resolve_eps for the band/conflict
     # semantics and the screen-build perf guard.
+    split = sec_data.get("stock_split") or None
+    release_scale = _release_split_scale(ticker, split)
     eps, eps_source, eps_conflict = _resolve_eps(
-        ticker, sec_data.get("eps"), sec_data.get("sec_as_of"))
+        ticker, sec_data.get("eps"), sec_data.get("sec_as_of"),
+        release_scale=release_scale, split=split)
     # Company-Reported principle (release-first, owner directive 2026-08-19):
     # prefer the bank's OWN reported per-share book values (from its earnings
     # release) over our reconstruction. The reconstruction is the FALLBACK
@@ -775,14 +778,18 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     reconstructed_bvps = sec_data.get("book_value_per_share")
     reconstructed_tbvps = sec_data.get("tangible_book_value_per_share")
     liq_gap = _liquidation_gap_per_share(sec_data)
+    # A split after the balance sheet (sec_data["stock_split"]): the
+    # reconstruction is already on the post-split basis; a release filed
+    # on/before the declaration is pre-split and is read ÷ ratio
+    # (_release_split_scale) — SFBS's Q2 release vs its post-split Q3 one.
     tbvps, tbvps_source, tbvps_conflict = _resolve_tbvps(
         ticker, reconstructed_tbvps, reconstructed_bvps,
         sec_as_of=sec_data.get("sec_as_of"),
         shares=sec_data.get("shares_outstanding"), liq_gap_ps=liq_gap,
-        fdic=fdic_data)
+        fdic=fdic_data, release_scale=release_scale)
     bvps, bvps_source, bvps_conflict = _resolve_bvps(
         ticker, reconstructed_bvps, tbvps, sec_as_of=sec_data.get("sec_as_of"),
-        liq_gap_ps=liq_gap)
+        liq_gap_ps=liq_gap, release_scale=release_scale)
     dps = sec_data.get("dividends_per_share")
     shares = sec_data.get("shares_outstanding")
     facts_lag = _sec_facts_lag(ticker, sec_data.get("sec_as_of"))
@@ -949,6 +956,14 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     # its preferred into 22.9M common after 6/30: 4.1M → 27.0M shares) the
     # per-share book and every price multiple on it compare two different
     # share bases — n/a, flagged, never 2.49x.
+    if split:
+        _r = split["ratio"]
+        _lab = (f"{_r:g}:1" if _r >= 1 else f"1:{1 / _r:g}")
+        for k in ("tbvps", "bvps", "eps", "dividends_per_share"):
+            notes.setdefault(k, f"{_lab} split-adjusted — the {_r:g}-for-1 "
+                             f"stock split declared {split['date']} after the "
+                             f"balance sheet is applied to the filing's "
+                             f"shares and per-share figures")
     div = sec_data.get("shares_cover_divergence_pct")
     basis_mismatch = div is not None and div > 10
     if basis_mismatch:
@@ -1044,6 +1059,10 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
         # {accession, form, report_date, filed} when the figures come from
         # the bank's own latest filing overlaid onto a lagging blob.
         "sec_facts_overlay": sec_data.get("sec_facts_overlay"),
+        # A split declared after the balance sheet (data/sec_facts_overlay
+        # .overlay_stock_split): {ratio, date, applied} when the per-share
+        # figures were restated onto the post-split basis (SFBS 2:1).
+        "stock_split": split,
         # True when the composite assembled, disagrees with the XBRL TTM
         # >=15%, AND the release quarter failed the plausibility gate (a
         # genuine YoY swing passes the gate and serves as release_ttm) —
@@ -1135,6 +1154,27 @@ def compute_all_valuations(price_data: dict, sec_data: dict, fdic_data: dict,
     }
 
 
+def _release_split_scale(ticker: str | None, split: dict | None) -> float:
+    """1.0, or the split ratio when the bank's latest earnings 8-K was filed
+    on/before the split's declaration date — its per-share figures are
+    PRE-split (SFBS's Q2 release, filed the day of the announcement) and
+    must be read ÷ ratio against the post-split reconstruction. A release
+    filed after the declaration is taken as post-split (SFBS's Q3 release).
+    A lookup failure is 1.0 (no restatement, never a guess)."""
+    if not split or not ticker or not split.get("ratio") or not split.get("date"):
+        return 1.0
+    try:
+        from data.bank_mapping import get_data_cik
+        from data.sec_earnings_8k import _latest_earnings_8k
+        cik = get_data_cik(ticker)
+        f8k = _latest_earnings_8k(cik) if cik else None
+        if f8k and f8k.get("date") and f8k["date"] <= split["date"]:
+            return float(split["ratio"])
+    except Exception:
+        pass
+    return 1.0
+
+
 def _liquidation_gap_per_share(sec_data: dict) -> float | None:
     """Per-share gap between the preferred LIQUIDATION preference and its
     carrying value (data/sec_client preferred_liquidation − preferred_stock,
@@ -1160,6 +1200,7 @@ def _resolve_tbvps(
     shares: float | None = None,
     liq_gap_ps: float | None = None,
     fdic: dict | None = None,
+    release_scale: float = 1.0,
 ) -> tuple[float | None, str | None]:
     """(Tangible book value per common share, source), preferring the bank's
     OWN reported figure (earnings-release non-GAAP line) over our
@@ -1201,20 +1242,24 @@ def _resolve_tbvps(
             cik, _newer_company_source(ticker, "tbv_ps", reconstructed, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_tbvps_status
+            # A pre-split release (release_scale = ratio) is gated against
+            # the reconstruction on ITS basis and served ÷ ratio.
+            rs = release_scale or 1.0
             reported, status = reported_tbvps_status(
-                cik, reconstructed=reconstructed, bvps=bvps)
+                cik, reconstructed=reconstructed * rs if reconstructed is not None else None,
+                bvps=bvps * rs if bvps is not None else None)
             if reported is not None:
-                return reported, "reported_8k", False
+                return reported / rs, "reported_8k", False
             if (status == "gate_rejected" and liq_gap_ps
                     and reconstructed is not None):
                 # The company's convention: preferred deducted at liquidation
                 # preference (_liquidation_gap_per_share) — re-gate the
                 # release against the reconstruction restated that way.
                 reported, status = reported_tbvps_status(
-                    cik, reconstructed=reconstructed - liq_gap_ps,
-                    bvps=bvps - liq_gap_ps if bvps is not None else None)
+                    cik, reconstructed=(reconstructed - liq_gap_ps) * rs,
+                    bvps=(bvps - liq_gap_ps) * rs if bvps is not None else None)
                 if reported is not None:
-                    return reported, "reported_8k", False
+                    return reported / rs, "reported_8k", False
             if status == "gate_rejected":
                 conflict = True
                 print(f"[valuation] TBVPS CONFLICT {ticker}: the release's own "
@@ -1275,6 +1320,7 @@ def _resolve_bvps(
     tbvps: float | None,
     sec_as_of: str | None = None,
     liq_gap_ps: float | None = None,
+    release_scale: float = 1.0,
 ) -> tuple[float | None, str | None, bool]:
     """(Book value per common share, source, conflict) — the BVPS sibling of
     _resolve_tbvps (release-first increment 1, owner directive 2026-08-19).
@@ -1293,17 +1339,20 @@ def _resolve_bvps(
             cik, _newer_company_source(ticker, "bv_ps", reconstructed, sec_as_of)):
         try:
             from data.sec_earnings_8k import reported_bvps_status
+            rs = release_scale or 1.0
             reported, status = reported_bvps_status(
-                cik, reconstructed=reconstructed, tbvps=tbvps)
+                cik, reconstructed=reconstructed * rs if reconstructed is not None else None,
+                tbvps=tbvps * rs if tbvps is not None else None)
             if reported is not None:
-                return reported, "reported_8k", False
+                return reported / rs, "reported_8k", False
             if (status == "gate_rejected" and liq_gap_ps
                     and reconstructed is not None):
                 # Same convention retry as _resolve_tbvps (BAFN's $4.83).
                 reported, status = reported_bvps_status(
-                    cik, reconstructed=reconstructed - liq_gap_ps, tbvps=tbvps)
+                    cik, reconstructed=(reconstructed - liq_gap_ps) * rs,
+                    tbvps=tbvps * rs if tbvps is not None else None)
                 if reported is not None:
-                    return reported, "reported_8k", False
+                    return reported / rs, "reported_8k", False
             if status == "gate_rejected":
                 conflict = True
                 print(f"[valuation] BVPS CONFLICT {ticker}: the release's own "
@@ -1338,6 +1387,8 @@ def _resolve_eps(
     ticker: str | None,
     reconstructed: float | None,
     sec_as_of: str | None,
+    release_scale: float = 1.0,
+    split: dict | None = None,
 ) -> tuple[float | None, str | None, bool]:
     """(TTM diluted EPS, source, conflict) — release-first increment 2
     (owner decision 2026-08-19). The site's EPS stays TTM-basis (a lone
@@ -1399,7 +1450,18 @@ def _resolve_eps(
         try:
             if _release_newer_than_filings(cik, sec_as_of):
                 from analysis.release_eps import composite_ttm_eps
-                composite, _, components = composite_ttm_eps(cik)
+                # Split after the balance sheet: the three filed prior
+                # quarters are pre-split. A POST-split release (scale 1.0)
+                # → priors ÷ ratio; a PRE-split release (scale = ratio) →
+                # the whole composite ÷ ratio.
+                rs = release_scale or 1.0
+                prior_scale = (float(split["ratio"])
+                               if split and split.get("ratio") and rs == 1.0
+                               else 1.0)
+                composite, _, components = composite_ttm_eps(
+                    cik, prior_scale=prior_scale)
+                if composite is not None and rs != 1.0:
+                    composite = composite / rs           # pre-split release
         except Exception as e:
             print(f"[valuation] composite eps lookup failed for {ticker}: "
                   f"{type(e).__name__}: {e}")

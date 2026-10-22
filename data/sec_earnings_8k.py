@@ -1275,15 +1275,23 @@ def extract_reported_tbvps_status(
     """
     rows = (_supplement_rows(ex991_html, period_end) if period_end
             else _book_value_rows(ex991_html))
-    # In-release reported book value per common share, the fallback cross-check
-    # anchor when the caller had none (same first-column / most-recent period).
+    # In-release reported book value per common share: the fallback cross-check
+    # anchor when the caller had none (same first-column / most-recent period),
+    # and the SAME-PERIOD tangible < book anchor beside the caller's — whose
+    # bvps is the prior quarter's reconstruction. A bank with thin intangibles
+    # whose book grew more than them in the quarter prints a tangible figure
+    # above LAST quarter's book (SFBS 3Q26: $18.51 vs the 2Q reconstruction's
+    # $18.09 on $0.12 of intangibles) and must not be rejected by that
+    # cross-period comparison when its own book row ($18.63) sits above it.
+    release_book = None
+    for cl, nums in rows:
+        # A blank latest-quarter book-value cell is None — it must not
+        # anchor (its prior-period value is a different date's book value).
+        if _match_bvps_label(cl) and nums[0] is not None:
+            release_book = nums[0]
+            break
     if bvps is None:
-        for cl, nums in rows:
-            # A blank latest-quarter book-value cell is None — it must not
-            # anchor (its prior-period value is a different date's book value).
-            if _match_bvps_label(cl) and nums[0] is not None:
-                bvps = nums[0]
-                break
+        bvps = release_book
     v, explicit = _tbvps_candidate(ex991_html, rows,
                                    prose=period_end is None)
     # No TBVPS disclosed, or a blank latest-quarter cell → n/a; never serve the
@@ -1302,7 +1310,10 @@ def extract_reported_tbvps_status(
     # ABOVE book is never admitted (BCTF: $12.94 vs a $11.56 reconstruction).
     no_intangibles = (reconstructed is not None and bvps is not None
                       and abs(reconstructed - bvps) < 0.005)
+    below_release_book = (release_book is not None and release_book > 0
+                          and v < release_book)
     if (bvps is not None and bvps > 0 and not (v < bvps)
+            and not below_release_book
             and not (no_intangibles and v <= bvps + 0.01)):
         return None, "not_disclosed"
     # Tie to the corrected reconstruction within a tight band. This is the
@@ -2219,7 +2230,10 @@ def reported_share_basis(cik, common_equity: float | None) -> float | None:
 # v15: offset sections of a multi-grid table re-based (SYBT/RBKB/UBSI —
 #      _rebase_offset_blocks).
 # v16: "common shares at end of period" ending-shares label (NPB tie-outs).
-_REPORTED_TBVPS_CKEY_V = "v16"
+# v17 (2026-10-22): the release's own same-period book row satisfies the
+# tangible < book gate (SFBS 3Q26 was "not_disclosed" against the prior
+# quarter's reconstruction BVPS).
+_REPORTED_TBVPS_CKEY_V = "v17"
 
 
 def reported_tbvps_status(
