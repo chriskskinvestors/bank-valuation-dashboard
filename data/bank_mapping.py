@@ -496,10 +496,37 @@ def get_data_cik(ticker: str) -> int | None:
     return cik if is_data_filer(ticker) else None
 
 
+_SUCCESSOR_MEMO: dict = {"at": 0.0, "map": None}
+_SUCCESSOR_TTL_S = 600
+
+
+def _successor_cik(ticker: str) -> int | None:
+    """The successor registrant's CIK for `ticker` from the nightly map
+    (data.bank_universe.run_cik_succession_guard: SEC's ticker file names a
+    different CIK with a newer 10-Q/10-K — CLBK's second-step holdco), or
+    None. One cached row, memoised; absent map → None (the curated map)."""
+    import time as _time
+    if _SUCCESSOR_MEMO["map"] is None or _time.time() - _SUCCESSOR_MEMO["at"] > _SUCCESSOR_TTL_S:
+        try:
+            from data import cache as _cache
+            rec = _cache.get("cik_successor:v1", max_age_s=None) or {}
+            m = {k.upper(): int(v["cik"]) for k, v in (rec.get("successors") or {}).items()
+                 if isinstance(v, dict) and v.get("cik")}
+        except Exception:
+            m = {}
+        _SUCCESSOR_MEMO["map"], _SUCCESSOR_MEMO["at"] = m, _time.time()
+    return _SUCCESSOR_MEMO["map"].get(ticker)
+
+
 def get_cik(ticker: str) -> int | None:
     """Return SEC CIK, in the same priority order as get_fdic_cert().
-    IDENTITY only — for data routing use get_data_cik."""
+    IDENTITY only — for data routing use get_data_cik. A successor
+    registrant recorded by the nightly succession guard outranks every
+    tier (_successor_cik)."""
     ticker = ticker.upper()
+    succ = _successor_cik(ticker)
+    if succ:
+        return succ
     if ticker in BANK_MAP:
         return BANK_MAP[ticker].get("cik")
     if ticker in _RESOLVED_FROM_JSON:

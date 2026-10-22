@@ -182,6 +182,10 @@ def main():
     # Curated cik=None banks that became SEC filers (PBAM class) — observe-only.
     from data.bank_universe import run_curated_cik_guard
     run_curated_cik_guard()
+    # Successor registrants (CLBK's second-step holdco): acts, by persisting
+    # the map data.bank_mapping.get_cik reads ahead of the curated tiers.
+    from data.bank_universe import run_cik_succession_guard
+    run_cik_succession_guard()
 
     universe = sorted(set(snapshot.keys()) | set(DEFAULT_WATCHLIST))
     print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] Refreshing {len(universe)} banks", flush=True)
