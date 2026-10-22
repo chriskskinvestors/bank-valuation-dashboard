@@ -45,3 +45,6 @@ tools/_*.log
 
 # Timestamped backups written by tools/resolve_all_mappings.py before an overwrite
 data/bank_map_resolved.bak-*.json
+
+# Agent dataset export parts (local dev; prod writes to GCS)
+export_out/

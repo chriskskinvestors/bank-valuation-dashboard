@@ -58,6 +58,29 @@ def _frame(rows: list[dict], columns: dict[str, str]) -> pd.DataFrame:
                         columns=list(columns))
 
 
+def _unify_types(df: pd.DataFrame) -> pd.DataFrame:
+    """One type per column, so Parquet/BigQuery can store it. Older snapshots
+    carry FDIC values as strings beside floats (cet1_current '0' on 36 banks,
+    reserve_coverage_pct on CBNA, 2026-09-22 local snapshot): a column whose
+    non-null cells are all numbers or numeric strings becomes float with the
+    SAME values ('0' → 0.0, never re-interpreted); any other mixed column is
+    stored as text. None stays None either way."""
+    for c in df.columns:
+        if df[c].dtype != object:
+            continue
+        vals = [v for v in df[c] if v is not None and not (isinstance(v, float) and v != v)]
+        kinds = {type(v) for v in vals}
+        if not vals or len(kinds) == 1:
+            continue
+        num = pd.to_numeric(pd.Series(vals, dtype=object), errors="coerce")
+        if not any(isinstance(v, bool) for v in vals) and not num.isna().any():
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        else:
+            df[c] = df[c].map(lambda v: None if v is None or (isinstance(v, float) and v != v)
+                              else str(v))
+    return df
+
+
 def _iso_date(v) -> date | None:
     """ISO date string / date / Timestamp -> datetime.date; None when absent
     or unparseable (never a guessed date)."""
@@ -722,7 +745,7 @@ def build_bank_metrics(tickers: list[str],
             if c in COLUMNS_BANK_METRICS and c not in out:
                 out[c] = _export_value(c, v)
         rows.append(out)
-    return _frame(rows, COLUMNS_BANK_METRICS)
+    return _unify_types(_frame(rows, COLUMNS_BANK_METRICS))
 
 
 # ══════════════════════════════════════════════════════════════════════════

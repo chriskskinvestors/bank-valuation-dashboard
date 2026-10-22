@@ -311,6 +311,26 @@ class TestBankMetrics(_StoreCase):
         self.assertTrue(pd.isna(df.iloc[0]["metric_notes"]))
         self.assertEqual(df.iloc[0]["as_of_date"], date.today())
 
+    def test_mixed_types_unified_and_parquet_writable(self):
+        # 2026-09-22 snapshot: cet1_current '0' (str) on 36 banks beside
+        # floats — the Parquet write failed ("could not convert '0'").
+        from data.export.tables_core import build_bank_metrics
+        from data.export.writer import to_parquet_bytes
+        self._put([{"ticker": "ZQAA", "cet1_current": "0", "metric_x": 1},
+                   {"ticker": "ZQBB", "cet1_current": 12.5},
+                   {"ticker": "ZQCC", "cet1_current": None}])
+        df = build_bank_metrics(["ZQAA", "ZQBB", "ZQCC"])
+        self.assertEqual(df["cet1_current"].iloc[0], 0.0)      # same value
+        self.assertEqual(df["cet1_current"].iloc[1], 12.5)
+        self.assertTrue(pd.isna(df["cet1_current"].iloc[2]))   # absent stays absent
+        to_parquet_bytes(df)                                    # writes
+
+    def test_mixed_nonnumeric_column_becomes_text(self):
+        from data.export.tables_core import _unify_types
+        df = _unify_types(pd.DataFrame({"a": [1.0, "n/a", None]}, dtype=object))
+        self.assertEqual(list(df["a"][:2]), ["1.0", "n/a"])
+        self.assertTrue(pd.isna(df["a"].iloc[2]))          # absent stays null
+
     def test_absent_snapshot_is_empty_frame(self):
         from data.export.tables_core import COLUMNS_BANK_METRICS, build_bank_metrics
         df = build_bank_metrics(["ZQAA"])
