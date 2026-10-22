@@ -692,7 +692,7 @@ def valuation_series(ticker: str, info: dict, period: str = "1Y"):
     if not cik:
         return None
     try:
-        from ui.financial_highlights import _per_share_for_ends, _flow_for, _sec_map
+        from ui.financial_highlights import _per_share_for_ends
         from data.fmp_client import get_history
     except Exception:
         return None
@@ -721,68 +721,11 @@ def valuation_series(ticker: str, info: dict, period: str = "1Y"):
         px = get_history(ticker, period)
     except Exception:
         return None
-    if px is None or px.empty or "close" not in px.columns:
-        return None
-    px = px.dropna(subset=["close"]).copy()
-    px["date"] = pd.to_datetime(px["date"], errors="coerce")
-    px = px.dropna(subset=["date"]).sort_values("date")
-
-    # Trailing-twelve-month diluted EPS at each quarter-end = sum of the four
-    # single-quarter EPS ending there (Q4 derived as FY − 9-mo). TTM is what makes
-    # P/E meaningful between reports; its latest value ties to the snapshot's
-    # "EPS (TTM)".
-    eps_q = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter") if facts else {}
-    eps_a = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="annual") if facts else {}
-    sq = [_flow_for(e, eps_q, eps_a, True)[0] for e in ends_all]
-    ttm = {}
-    for i, e in enumerate(ends_all):
-        w = sq[i - 3:i + 1]
-        ttm[e] = sum(w) if (i >= 3 and len(w) == 4 and None not in w) else None
-
-    # Each quarter's book value / TTM EPS steps in on the date its 10-Q/10-K was
-    # actually FILED (not the period-end), so a given day's multiple only uses
-    # fundamentals the market already had — no lookahead. The filing is the
-    # one that reported the equity TBVPS was built on (either equity tag).
-    frows = []
-    for e in ends_all:
-        rec = ps.get(e) or {}
-        tbvps, eps_ttm = rec.get("tbvps"), ttm.get(e)
-        if tbvps is None and eps_ttm is None:
-            continue
-        prov = rec.get("_eq_prov")
-        eff = (pd.to_datetime(prov["filed"], errors="coerce")
-               if (prov and prov.get("filed")) else pd.Timestamp(e))
-        if pd.isna(eff):
-            eff = pd.Timestamp(e)
-        frows.append({"date": eff, "tbvps": tbvps, "ttm_eps": eps_ttm})
-    if not frows:
-        return None
-    # The price history is split-adjusted by the vendor; a split declared
-    # after the latest balance sheet (facts["_stock_split"], SFBS 2:1
-    # 2026-08-21) leaves every FILED per-share figure pre-split — ÷ ratio so
-    # the history's P/TBV and P/E sit on the quote's basis.
-    split = facts.get("_stock_split") if facts else None
-    if split and split.get("ratio"):
-        for fr in frows:
-            for k in ("tbvps", "ttm_eps"):
-                if fr[k] is not None:
-                    fr[k] = fr[k] / split["ratio"]
-    fund = (pd.DataFrame(frows).dropna(subset=["date"]).sort_values("date")
-            .drop_duplicates("date", keep="last"))
-
-    # Daily valuation over the selected window: each trading day ÷ the most
-    # recently filed fundamentals (merge_asof backward). The window is whatever
-    # `period` returned; fundamentals reach back further only to seed the first
-    # day's lookup (so even 1W/1M start with the right book value / EPS).
-    px = px[px["date"] >= fund["date"].iloc[0]]
-    if px.empty:
-        return None
-    val = pd.merge_asof(px, fund, on="date", direction="backward").copy()
-    val["ptbv"] = (val["close"] / val["tbvps"]).where(val["tbvps"] > 0)
-    val["pe"] = (val["close"] / val["ttm_eps"]).where(val["ttm_eps"] > 0)
-    if val.empty or val["ptbv"].isna().all():
-        return None
-    return val
+    # The series itself (TTM EPS, filing-date step-in, daily multiples) is
+    # built in the data layer so the nightly agent export reproduces it
+    # from the same code (analysis.valuation_history).
+    from analysis.valuation_history import build_valuation_series
+    return build_valuation_series(ends_all, ps, facts, px)
 
 
 def _valuation_history_chart(ticker: str, info: dict, period: str = "1Y",

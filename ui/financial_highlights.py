@@ -280,11 +280,15 @@ def _recent_intangibles(end: str, *maps) -> bool:
     return bool(prior) and bool(max(prior)[1])
 
 
-def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False) -> dict:
-    """{end_date(datetime): {...per-share values + raw inputs for drill-down}}."""
+def _per_share_for_ends(cik, ends: list[datetime], quarterly: bool = False,
+                        facts: dict | None = None) -> dict:
+    """{end_date(datetime): {...per-share values + raw inputs for drill-down}}.
+    `facts`: an already-loaded companyfacts blob (the read-only agent export
+    passes the persisted cache entry); None → fetch_company_facts(cik)."""
     if not cik:
         return {}
-    facts = sec_client.fetch_company_facts(cik)
+    if facts is None:
+        facts = sec_client.fetch_company_facts(cik)
     if not facts:
         return {}
     eps_q = _sec_map(facts, "EarningsPerShareDiluted", instant=False, span="quarter")
