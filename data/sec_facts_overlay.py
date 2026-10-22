@@ -874,6 +874,113 @@ def overlay_msr(cik: int, slim: dict) -> dict:
     return out
 
 
+# ── Stock splits declared after the balance sheet ─────────────────────────────
+# A split (or stock dividend) effected AFTER the latest balance sheet leaves
+# every per-share figure in the filing — and the cover-page count, which is
+# usually pre-split too — on the old share basis while the quote and its
+# history are post-split. SFBS 2Q26 (10-Q 0001171843-26-005359, filed
+# 2026-08-07): a 2-for-1 split declared 2026-07-20, effective 2026-08-21; the
+# card showed TBV $35.94 / EPS $5.87 / 54.7M shares against a $38 post-split
+# quote — P/TBV 1.06x where 2.12x is true — and once the post-split Q3
+# release arrived the ±15% gate called the bank's own figure a conflict.
+# The cover-count divergence guard cannot see it (the Aug-4 cover is pre-
+# split). The filing itself tags the split as a SUBSEQUENT EVENT:
+# StockholdersEquityNoteStockSplitConversionRatio1 = 2 dated 2026-07-20 on
+# SubsequentEventTypeAxis, beside the post-split share count 109.3M —
+# dimensioned, so companyfacts drops it. This overlay reads it from the
+# instance (cached per accession; ~0.6s per filing once) and sec_client
+# restates counts × ratio and per-share flows ÷ ratio, labelled.
+_SPLIT_CKEY_V = "v1"
+_SPLIT_RATIO = "StockholdersEquityNoteStockSplitConversionRatio1"
+_SPLIT_COUNTS = ("CommonStockSharesOutstanding", "CommonStockSharesIssued")
+_SUBSEQUENT_AXIS = "SubsequentEventTypeAxis"
+_SPLIT_POST_TOL = 0.03
+
+
+def split_entries(cik: int, filing: dict) -> list[dict]:
+    """Split-ratio facts (any context) and the subsequent-event share counts
+    of `filing`'s iXBRL: [{concept, members, end, val}], cached immutably
+    by accession."""
+    from data import cache
+    from data.sec_filing_scraper import instance_facts
+    ckey = f"stock_split:{_SPLIT_CKEY_V}:{filing['accession']}"
+    hit = cache.get(ckey, max_age_s=None)
+    if hit is not None:
+        return hit.get("entries", [])
+    out = []
+    for f in instance_facts({"cik": int(cik), "accession": filing["accession"],
+                             "doc": filing["doc"]}):
+        concept = f.concept.split(":")[-1]
+        if not f.period_end:
+            continue
+        members = {a.split(":")[-1]: m.split(":")[-1] for a, m in f.members.items()}
+        if concept == _SPLIT_RATIO or (
+                concept in _SPLIT_COUNTS and _SUBSEQUENT_AXIS in members):
+            out.append({"concept": concept, "members": members,
+                        "end": f.period_end, "val": f.value})
+    try:
+        cache.put(ckey, {"entries": out})
+    except Exception:
+        pass
+    return out
+
+
+def resolve_stock_split(entries: list[dict], bs_end: str) -> dict | None:
+    """{ratio, date, post_shares} for a split whose ratio fact is dated AFTER
+    `bs_end` (the blob's balance sheet): the filing's figures predate it.
+    ratio > 1 is a forward split / stock dividend (2 = two-for-one, 1.05 =
+    a 5% stock dividend); ratio < 1 a reverse split. The latest such date
+    decides; two different ratios on it → None (never a guess). post_shares
+    is the subsequent-event CommonStockSharesOutstanding (else Issued) on
+    that date, or None. A ratio dated on/before bs_end is already in the
+    filing's figures → None."""
+    ratios = [e for e in entries if e["concept"] == _SPLIT_RATIO
+              and e["end"] > bs_end and e["val"] and e["val"] > 0 and e["val"] != 1]
+    if not ratios:
+        return None
+    date = max(e["end"] for e in ratios)
+    vals = {round(float(e["val"]), 6) for e in ratios if e["end"] == date}
+    if len(vals) != 1:
+        return None
+    ratio = vals.pop()
+    post = None
+    for concept in _SPLIT_COUNTS:
+        c = {e["val"] for e in entries if e["concept"] == concept
+             and e["end"] == date and e["val"]}
+        if len(c) == 1:
+            post = c.pop()
+            break
+    return {"ratio": ratio, "date": date, "post_shares": post}
+
+
+def overlay_stock_split(cik: int, slim: dict) -> dict:
+    """Return `slim` plus a top-level "_stock_split" record (see
+    resolve_stock_split, with the source accession/form) when the latest
+    filing's instance tags a split dated after the blob's balance sheet;
+    else `slim` itself. Nothing is written into the facts."""
+    if not slim or not slim.get("facts"):
+        return slim
+    from data.sec_client import _balance_sheet_date
+    from data.sec_filing_scraper import latest_filing
+    end = _balance_sheet_date(slim)
+    if not end:
+        return slim
+    meta = latest_filing(cik, forms=("10-Q", "10-K"))
+    if not meta:
+        return slim
+    rec = resolve_stock_split(split_entries(cik, meta), end)
+    if rec is None:
+        return slim
+    out = dict(slim)
+    out["_stock_split"] = {**rec, "accession": meta["accession"],
+                           "form": meta.get("form")}
+    print(f"[SEC] stock split: CIK {cik} ratio {rec['ratio']} declared "
+          f"{rec['date']} after the {end} balance sheet"
+          + (f", post-split shares {rec['post_shares']:,.0f}" if rec["post_shares"] else "")
+          + f" ({meta.get('form')} {meta['accession']})", flush=True)
+    return out
+
+
 # Flow concepts whose period ENDS reveal a skipped filing (any duration fact
 # ending at a quarter-end means companyfacts has that filing's flows).
 _FLOW_ANCHORS = ("NetIncomeLoss", "ProfitLoss", "EarningsPerShareDiluted")
